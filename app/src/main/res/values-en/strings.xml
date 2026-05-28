@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ViRouteFS</string>
+    <string name="app_tagline">Visual Route &amp; Flow Scanner</string>
+
+    <string name="screen_dashboard">Dashboard</string>
+    <string name="screen_vpn">VPN</string>
+    <string name="screen_dns">DNS</string>
+    <string name="screen_tools">Tools</string>
+    <string name="screen_logs">Logs</string>
+    <string name="screen_settings">Settings</string>
+
+    <string name="card_label_simple_explanation">Simple explanation</string>
+    <string name="card_label_technical_details">Technical details</string>
+    <string name="card_label_recommended_action">Recommended action</string>
+    <string name="label_placeholder">Placeholder</string>
+    <string name="action_check">Check</string>
+
+    <string name="dashboard_header_title">Local-first network overview</string>
+    <string name="dashboard_header_subtitle">A safe starting point for VPN routing, flow visibility, and diagnostics.</string>
+    <string name="dashboard_vpn_status_title">VPN router status</string>
+    <string name="dashboard_vpn_status_simple">The VPN router is not running yet.</string>
+    <string name="dashboard_vpn_status_details">A placeholder Android VpnService is declared, but no tunnel engines or routing rules are active.</string>
+    <string name="dashboard_vpn_status_action">Use this screen later to start routing after explicit user approval.</string>
+    <string name="dashboard_flow_title">Flow scanner preview</string>
+    <string name="dashboard_flow_simple">Human-readable flow events will appear in Logs.</string>
+    <string name="dashboard_flow_details">Future events can summarize DNS, TCP, TLS, HTTP, UDP, route, and MTU observations.</string>
+    <string name="dashboard_flow_action">Open Logs to view sample events for the first milestone.</string>
+    <string name="dashboard_privacy_title">Privacy boundary</string>
+    <string name="dashboard_privacy_simple">No analytics, telemetry, ads, or tracking SDKs are included.</string>
+    <string name="dashboard_privacy_details">Logs and future PCAP files should remain local unless the user explicitly exports them.</string>
+    <string name="dashboard_privacy_action">Review Settings before enabling future capture or export features.</string>
+
+    <string name="vpn_header_subtitle">Placeholder controls for a future single-VpnService router.</string>
+    <string name="vpn_service_title">ViRouteFsVpnService</string>
+    <string name="vpn_service_simple">The app can request Android VPN permission in a later milestone.</string>
+    <string name="vpn_service_details">The service is declared with android.permission.BIND_VPN_SERVICE and currently performs no routing.</string>
+    <string name="vpn_service_action">Do not rely on this build for traffic tunneling yet.</string>
+    <string name="vpn_future_rules_title">Future route rules</string>
+    <string name="vpn_future_rules_body">Per-app, CIDR, domain, and DNS-based routing will be designed here after the skeleton is stable.</string>
+
+    <string name="dns_default_domain">example.com</string>
+    <string name="dns_default_server">1.1.1.1</string>
+    <string name="dns_default_record_type">A</string>
+    <string name="dns_header_title">DNS checker</string>
+    <string name="dns_header_subtitle">Prepare safe DNS diagnostics without making network requests yet.</string>
+    <string name="dns_field_domain">Domain</string>
+    <string name="dns_field_server">DNS server</string>
+    <string name="dns_field_record_type">Record type</string>
+    <string name="dns_result_not_run">No lookup has been run. This is a UI placeholder and does not send DNS traffic yet.</string>
+    <string name="dns_result_prepared">Prepared %1$s lookup for %2$s using %3$s. Real DNS checks are not implemented yet.</string>
+    <string name="dns_result_title">Result</string>
+    <string name="dns_result_details">This placeholder only echoes the requested lookup fields and avoids network traffic.</string>
+    <string name="dns_result_action">In a later milestone, compare resolver answers and explain likely DNS issues.</string>
+
+    <string name="tools_header_subtitle">Safe diagnostic placeholders for the first milestone.</string>
+    <string name="tools_tcp_title">TCP check</string>
+    <string name="tools_tcp_simple">Test whether a host and port can accept TCP connections.</string>
+    <string name="tools_tcp_details">Future checks can record connect latency, timeout, and route selection.</string>
+    <string name="tools_tcp_action">Use only for systems you own or are authorized to test.</string>
+    <string name="tools_tls_title">TLS/SNI check</string>
+    <string name="tools_tls_simple">Verify that a TLS service presents an expected certificate.</string>
+    <string name="tools_tls_details">Future checks can show SNI, certificate issuer, expiry, and handshake errors.</string>
+    <string name="tools_tls_action">Use this to debug your own domains and privacy-safe connectivity issues.</string>
+    <string name="tools_http_title">HTTP check</string>
+    <string name="tools_http_simple">Inspect basic HTTP availability and response status.</string>
+    <string name="tools_http_details">Future checks can show status code, redirects, timing, and selected route.</string>
+    <string name="tools_http_action">Avoid sending secrets in diagnostic URLs.</string>
+    <string name="tools_mtu_title">MTU test</string>
+    <string name="tools_mtu_simple">Find packet size problems that can break VPN connections.</string>
+    <string name="tools_mtu_details">Future tests can estimate MTU/MSS and explain fragmentation symptoms.</string>
+    <string name="tools_mtu_action">Run this when websites stall or VPN traffic feels unreliable.</string>
+    <string name="tools_lan_title">LAN scanner</string>
+    <string name="tools_lan_simple">Discover devices on your local network with safe checks.</string>
+    <string name="tools_lan_details">Future discovery should be transparent, rate-limited, and limited to local networks.</string>
+    <string name="tools_lan_action">Scan only networks where you have permission.</string>
+    <string name="tools_audit_title">Security audit</string>
+    <string name="tools_audit_simple">Review defensive network posture without attack automation.</string>
+    <string name="tools_audit_details">Allowed checks include Wi-Fi encryption, WPS detection, DNS audit, and exposed local services.</string>
+    <string name="tools_audit_action">Treat findings as risks or misconfigurations, not proof of compromise.</string>
+
+    <string name="logs_header_subtitle">Human-readable sample flow events. Nothing is captured in this skeleton.</string>
+    <string name="logs_event_telegram">Telegram connected to 149.154.167.91:443. Rule: Telegram → Xray Germany. Status: sample success. Latency: 84 ms.</string>
+    <string name="logs_event_browser_dns">Browser requested example.com A record. DNS server: 1.1.1.1. Status: sample answer from cache.</string>
+    <string name="logs_event_banking">Banking app route selected Direct. Reason: trusted app rule. Status: sample policy decision.</string>
+    <string name="logs_event_mtu">MTU probe for VPN profile suggested 1380 bytes. Status: sample advisory, not measured.</string>
+    <string name="logs_event_wps">Security audit found WPS enabled on a saved Wi-Fi profile. Meaning: detected risk, not confirmed compromise.</string>
+    <string name="logs_event_details_placeholder">Technical details will be expandable in a later milestone.</string>
+
+    <string name="settings_header_subtitle">Privacy and safety defaults for future features.</string>
+    <string name="settings_local_first_title">Local-first by default</string>
+    <string name="settings_local_first_simple">Diagnostics, logs, and future captures should stay on this device.</string>
+    <string name="settings_local_first_details">This skeleton has no cloud upload paths, analytics SDKs, telemetry SDKs, ad SDKs, or tracking SDKs.</string>
+    <string name="settings_local_first_action">Only export logs or PCAP files after a clear user action.</string>
+    <string name="settings_safety_title">Safety boundary</string>
+    <string name="settings_safety_simple">ViRouteFS is for defensive diagnostics and VPN routing.</string>
+    <string name="settings_safety_details">Offensive features such as cracking, deauth, exploit automation, and brute force are out of scope.</string>
+    <string name="settings_safety_action">Keep future tools transparent, permission-based, and rate-limited.</string>
+</resources>

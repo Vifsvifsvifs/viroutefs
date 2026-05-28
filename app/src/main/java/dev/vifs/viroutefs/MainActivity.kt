@@ -2,6 +2,7 @@ package dev.vifs.viroutefs
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.annotation.StringRes
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -46,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.vifs.viroutefs.ui.theme.ViRouteFsTheme
@@ -64,15 +66,15 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class AppScreen(
-    val label: String,
+    @StringRes val labelResId: Int,
     val icon: ImageVector,
 ) {
-    Dashboard("Dashboard", Icons.Outlined.Home),
-    Vpn("VPN", Icons.Outlined.Shield),
-    Dns("DNS", Icons.Outlined.Dns),
-    Tools("Tools", Icons.Outlined.Build),
-    Logs("Logs", Icons.Outlined.Article),
-    Settings("Settings", Icons.Outlined.Settings),
+    Dashboard(R.string.screen_dashboard, Icons.Outlined.Home),
+    Vpn(R.string.screen_vpn, Icons.Outlined.Shield),
+    Dns(R.string.screen_dns, Icons.Outlined.Dns),
+    Tools(R.string.screen_tools, Icons.Outlined.Build),
+    Logs(R.string.screen_logs, Icons.Outlined.Article),
+    Settings(R.string.screen_settings, Icons.Outlined.Settings),
 }
 
 private data class InfoCardContent(
@@ -92,9 +94,9 @@ private fun ViRouteFsApp() {
             TopAppBar(
                 title = {
                     Column {
-                        Text(text = "ViRouteFS")
+                        Text(text = stringResource(R.string.app_name))
                         Text(
-                            text = "Visual Route & Flow Scanner",
+                            text = stringResource(R.string.app_tagline),
                             style = MaterialTheme.typography.labelMedium,
                         )
                     }
@@ -108,7 +110,7 @@ private fun ViRouteFsApp() {
                         selected = selectedScreen == screen,
                         onClick = { selectedScreen = screen },
                         icon = { Icon(screen.icon, contentDescription = null) },
-                        label = { Text(screen.label) },
+                        label = { Text(stringResource(screen.labelResId)) },
                     )
                 }
             }
@@ -130,37 +132,37 @@ private fun DashboardScreen(contentPadding: PaddingValues) {
     ScreenList(contentPadding = contentPadding) {
         item {
             SectionHeader(
-                title = "Local-first network overview",
-                subtitle = "A safe starting point for VPN routing, flow visibility, and diagnostics.",
+                title = stringResource(R.string.dashboard_header_title),
+                subtitle = stringResource(R.string.dashboard_header_subtitle),
             )
         }
         item {
             InfoCard(
                 InfoCardContent(
-                    title = "VPN router status",
-                    simpleExplanation = "The VPN router is not running yet.",
-                    technicalDetails = "A placeholder Android VpnService is declared, but no tunnel engines or routing rules are active.",
-                    recommendedAction = "Use this screen later to start routing after explicit user approval.",
+                    title = stringResource(R.string.dashboard_vpn_status_title),
+                    simpleExplanation = stringResource(R.string.dashboard_vpn_status_simple),
+                    technicalDetails = stringResource(R.string.dashboard_vpn_status_details),
+                    recommendedAction = stringResource(R.string.dashboard_vpn_status_action),
                 ),
             )
         }
         item {
             InfoCard(
                 InfoCardContent(
-                    title = "Flow scanner preview",
-                    simpleExplanation = "Human-readable flow events will appear in Logs.",
-                    technicalDetails = "Future events can summarize DNS, TCP, TLS, HTTP, UDP, route, and MTU observations.",
-                    recommendedAction = "Open Logs to view sample events for the first milestone.",
+                    title = stringResource(R.string.dashboard_flow_title),
+                    simpleExplanation = stringResource(R.string.dashboard_flow_simple),
+                    technicalDetails = stringResource(R.string.dashboard_flow_details),
+                    recommendedAction = stringResource(R.string.dashboard_flow_action),
                 ),
             )
         }
         item {
             InfoCard(
                 InfoCardContent(
-                    title = "Privacy boundary",
-                    simpleExplanation = "No analytics, telemetry, ads, or tracking SDKs are included.",
-                    technicalDetails = "Logs and future PCAP files should remain local unless the user explicitly exports them.",
-                    recommendedAction = "Review Settings before enabling future capture or export features.",
+                    title = stringResource(R.string.dashboard_privacy_title),
+                    simpleExplanation = stringResource(R.string.dashboard_privacy_simple),
+                    technicalDetails = stringResource(R.string.dashboard_privacy_details),
+                    recommendedAction = stringResource(R.string.dashboard_privacy_action),
                 ),
             )
         }
@@ -172,24 +174,24 @@ private fun VpnScreen(contentPadding: PaddingValues) {
     ScreenList(contentPadding = contentPadding) {
         item {
             SectionHeader(
-                title = "VPN",
-                subtitle = "Placeholder controls for a future single-VpnService router.",
+                title = stringResource(R.string.screen_vpn),
+                subtitle = stringResource(R.string.vpn_header_subtitle),
             )
         }
         item {
             InfoCard(
                 InfoCardContent(
-                    title = "ViRouteFsVpnService",
-                    simpleExplanation = "The app can request Android VPN permission in a later milestone.",
-                    technicalDetails = "The service is declared with android.permission.BIND_VPN_SERVICE and currently performs no routing.",
-                    recommendedAction = "Do not rely on this build for traffic tunneling yet.",
+                    title = stringResource(R.string.vpn_service_title),
+                    simpleExplanation = stringResource(R.string.vpn_service_simple),
+                    technicalDetails = stringResource(R.string.vpn_service_details),
+                    recommendedAction = stringResource(R.string.vpn_service_action),
                 ),
             )
         }
         item {
             PlaceholderCard(
-                title = "Future route rules",
-                body = "Per-app, CIDR, domain, and DNS-based routing will be designed here after the skeleton is stable.",
+                title = stringResource(R.string.vpn_future_rules_title),
+                body = stringResource(R.string.vpn_future_rules_body),
             )
         }
     }
@@ -197,18 +199,27 @@ private fun VpnScreen(contentPadding: PaddingValues) {
 
 @Composable
 private fun DnsScreen(contentPadding: PaddingValues) {
-    var domain by rememberSaveable { mutableStateOf("example.com") }
-    var dnsServer by rememberSaveable { mutableStateOf("1.1.1.1") }
-    var recordType by rememberSaveable { mutableStateOf("A") }
-    var result by rememberSaveable {
-        mutableStateOf("No lookup has been run. This is a UI placeholder and does not send DNS traffic yet.")
-    }
+    val defaultDomain = stringResource(R.string.dns_default_domain)
+    val defaultDnsServer = stringResource(R.string.dns_default_server)
+    val defaultRecordType = stringResource(R.string.dns_default_record_type)
+    val initialResult = stringResource(R.string.dns_result_not_run)
+
+    var domain by rememberSaveable { mutableStateOf(defaultDomain) }
+    var dnsServer by rememberSaveable { mutableStateOf(defaultDnsServer) }
+    var recordType by rememberSaveable { mutableStateOf(defaultRecordType) }
+    var result by rememberSaveable { mutableStateOf(initialResult) }
+    val preparedResult = stringResource(
+        R.string.dns_result_prepared,
+        recordType,
+        domain,
+        dnsServer,
+    )
 
     ScreenList(contentPadding = contentPadding) {
         item {
             SectionHeader(
-                title = "DNS checker",
-                subtitle = "Prepare safe DNS diagnostics without making network requests yet.",
+                title = stringResource(R.string.dns_header_title),
+                subtitle = stringResource(R.string.dns_header_subtitle),
             )
         }
         item {
@@ -220,31 +231,31 @@ private fun DnsScreen(contentPadding: PaddingValues) {
                     OutlinedTextField(
                         value = domain,
                         onValueChange = { domain = it },
-                        label = { Text("Domain") },
+                        label = { Text(stringResource(R.string.dns_field_domain)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
                         value = dnsServer,
                         onValueChange = { dnsServer = it },
-                        label = { Text("DNS server") },
+                        label = { Text(stringResource(R.string.dns_field_server)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
                         value = recordType,
                         onValueChange = { recordType = it.uppercase() },
-                        label = { Text("Record type") },
+                        label = { Text(stringResource(R.string.dns_field_record_type)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Button(
                         onClick = {
-                            result = "Prepared $recordType lookup for $domain using $dnsServer. Real DNS checks are not implemented yet."
+                            result = preparedResult
                         },
                         modifier = Modifier.align(Alignment.End),
                     ) {
-                        Text("Check")
+                        Text(stringResource(R.string.action_check))
                     }
                 }
             }
@@ -252,10 +263,10 @@ private fun DnsScreen(contentPadding: PaddingValues) {
         item {
             InfoCard(
                 InfoCardContent(
-                    title = "Result",
+                    title = stringResource(R.string.dns_result_title),
                     simpleExplanation = result,
-                    technicalDetails = "This placeholder only echoes the requested lookup fields and avoids network traffic.",
-                    recommendedAction = "In a later milestone, compare resolver answers and explain likely DNS issues.",
+                    technicalDetails = stringResource(R.string.dns_result_details),
+                    recommendedAction = stringResource(R.string.dns_result_action),
                 ),
             )
         }
@@ -266,48 +277,48 @@ private fun DnsScreen(contentPadding: PaddingValues) {
 private fun ToolsScreen(contentPadding: PaddingValues) {
     val tools = listOf(
         InfoCardContent(
-            title = "TCP check",
-            simpleExplanation = "Test whether a host and port can accept TCP connections.",
-            technicalDetails = "Future checks can record connect latency, timeout, and route selection.",
-            recommendedAction = "Use only for systems you own or are authorized to test.",
+            title = stringResource(R.string.tools_tcp_title),
+            simpleExplanation = stringResource(R.string.tools_tcp_simple),
+            technicalDetails = stringResource(R.string.tools_tcp_details),
+            recommendedAction = stringResource(R.string.tools_tcp_action),
         ),
         InfoCardContent(
-            title = "TLS/SNI check",
-            simpleExplanation = "Verify that a TLS service presents an expected certificate.",
-            technicalDetails = "Future checks can show SNI, certificate issuer, expiry, and handshake errors.",
-            recommendedAction = "Use this to debug your own domains and privacy-safe connectivity issues.",
+            title = stringResource(R.string.tools_tls_title),
+            simpleExplanation = stringResource(R.string.tools_tls_simple),
+            technicalDetails = stringResource(R.string.tools_tls_details),
+            recommendedAction = stringResource(R.string.tools_tls_action),
         ),
         InfoCardContent(
-            title = "HTTP check",
-            simpleExplanation = "Inspect basic HTTP availability and response status.",
-            technicalDetails = "Future checks can show status code, redirects, timing, and selected route.",
-            recommendedAction = "Avoid sending secrets in diagnostic URLs.",
+            title = stringResource(R.string.tools_http_title),
+            simpleExplanation = stringResource(R.string.tools_http_simple),
+            technicalDetails = stringResource(R.string.tools_http_details),
+            recommendedAction = stringResource(R.string.tools_http_action),
         ),
         InfoCardContent(
-            title = "MTU test",
-            simpleExplanation = "Find packet size problems that can break VPN connections.",
-            technicalDetails = "Future tests can estimate MTU/MSS and explain fragmentation symptoms.",
-            recommendedAction = "Run this when websites stall or VPN traffic feels unreliable.",
+            title = stringResource(R.string.tools_mtu_title),
+            simpleExplanation = stringResource(R.string.tools_mtu_simple),
+            technicalDetails = stringResource(R.string.tools_mtu_details),
+            recommendedAction = stringResource(R.string.tools_mtu_action),
         ),
         InfoCardContent(
-            title = "LAN scanner",
-            simpleExplanation = "Discover devices on your local network with safe checks.",
-            technicalDetails = "Future discovery should be transparent, rate-limited, and limited to local networks.",
-            recommendedAction = "Scan only networks where you have permission.",
+            title = stringResource(R.string.tools_lan_title),
+            simpleExplanation = stringResource(R.string.tools_lan_simple),
+            technicalDetails = stringResource(R.string.tools_lan_details),
+            recommendedAction = stringResource(R.string.tools_lan_action),
         ),
         InfoCardContent(
-            title = "Security audit",
-            simpleExplanation = "Review defensive network posture without attack automation.",
-            technicalDetails = "Allowed checks include Wi-Fi encryption, WPS detection, DNS audit, and exposed local services.",
-            recommendedAction = "Treat findings as risks or misconfigurations, not proof of compromise.",
+            title = stringResource(R.string.tools_audit_title),
+            simpleExplanation = stringResource(R.string.tools_audit_simple),
+            technicalDetails = stringResource(R.string.tools_audit_details),
+            recommendedAction = stringResource(R.string.tools_audit_action),
         ),
     )
 
     ScreenList(contentPadding = contentPadding) {
         item {
             SectionHeader(
-                title = "Tools",
-                subtitle = "Safe diagnostic placeholders for the first milestone.",
+                title = stringResource(R.string.screen_tools),
+                subtitle = stringResource(R.string.tools_header_subtitle),
             )
         }
         items(tools) { tool ->
@@ -319,18 +330,18 @@ private fun ToolsScreen(contentPadding: PaddingValues) {
 @Composable
 private fun LogsScreen(contentPadding: PaddingValues) {
     val events = listOf(
-        "Telegram connected to 149.154.167.91:443. Rule: Telegram → Xray Germany. Status: sample success. Latency: 84 ms.",
-        "Browser requested example.com A record. DNS server: 1.1.1.1. Status: sample answer from cache.",
-        "Banking app route selected Direct. Reason: trusted app rule. Status: sample policy decision.",
-        "MTU probe for VPN profile suggested 1380 bytes. Status: sample advisory, not measured.",
-        "Security audit found WPS enabled on a saved Wi-Fi profile. Meaning: detected risk, not confirmed compromise.",
+        stringResource(R.string.logs_event_telegram),
+        stringResource(R.string.logs_event_browser_dns),
+        stringResource(R.string.logs_event_banking),
+        stringResource(R.string.logs_event_mtu),
+        stringResource(R.string.logs_event_wps),
     )
 
     ScreenList(contentPadding = contentPadding) {
         item {
             SectionHeader(
-                title = "Logs",
-                subtitle = "Human-readable sample flow events. Nothing is captured in this skeleton.",
+                title = stringResource(R.string.screen_logs),
+                subtitle = stringResource(R.string.logs_header_subtitle),
             )
         }
         items(events) { event ->
@@ -344,7 +355,7 @@ private fun LogsScreen(contentPadding: PaddingValues) {
                         style = MaterialTheme.typography.bodyLarge,
                     )
                     Text(
-                        text = "Technical details will be expandable in a later milestone.",
+                        text = stringResource(R.string.logs_event_details_placeholder),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -358,27 +369,27 @@ private fun SettingsScreen(contentPadding: PaddingValues) {
     ScreenList(contentPadding = contentPadding) {
         item {
             SectionHeader(
-                title = "Settings",
-                subtitle = "Privacy and safety defaults for future features.",
+                title = stringResource(R.string.screen_settings),
+                subtitle = stringResource(R.string.settings_header_subtitle),
             )
         }
         item {
             InfoCard(
                 InfoCardContent(
-                    title = "Local-first by default",
-                    simpleExplanation = "Diagnostics, logs, and future captures should stay on this device.",
-                    technicalDetails = "This skeleton has no cloud upload paths, analytics SDKs, telemetry SDKs, ad SDKs, or tracking SDKs.",
-                    recommendedAction = "Only export logs or PCAP files after a clear user action.",
+                    title = stringResource(R.string.settings_local_first_title),
+                    simpleExplanation = stringResource(R.string.settings_local_first_simple),
+                    technicalDetails = stringResource(R.string.settings_local_first_details),
+                    recommendedAction = stringResource(R.string.settings_local_first_action),
                 ),
             )
         }
         item {
             InfoCard(
                 InfoCardContent(
-                    title = "Safety boundary",
-                    simpleExplanation = "ViRouteFS is for defensive diagnostics and VPN routing.",
-                    technicalDetails = "Offensive features such as cracking, deauth, exploit automation, and brute force are out of scope.",
-                    recommendedAction = "Keep future tools transparent, permission-based, and rate-limited.",
+                    title = stringResource(R.string.settings_safety_title),
+                    simpleExplanation = stringResource(R.string.settings_safety_simple),
+                    technicalDetails = stringResource(R.string.settings_safety_details),
+                    recommendedAction = stringResource(R.string.settings_safety_action),
                 ),
             )
         }
@@ -443,9 +454,18 @@ private fun InfoCard(content: InfoCardContent) {
                     fontWeight = FontWeight.SemiBold,
                 )
             }
-            LabeledText(label = "Simple explanation", body = content.simpleExplanation)
-            LabeledText(label = "Technical details", body = content.technicalDetails)
-            LabeledText(label = "Recommended action", body = content.recommendedAction)
+            LabeledText(
+                label = stringResource(R.string.card_label_simple_explanation),
+                body = content.simpleExplanation,
+            )
+            LabeledText(
+                label = stringResource(R.string.card_label_technical_details),
+                body = content.technicalDetails,
+            )
+            LabeledText(
+                label = stringResource(R.string.card_label_recommended_action),
+                body = content.recommendedAction,
+            )
         }
     }
 }
@@ -460,7 +480,7 @@ private fun PlaceholderCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            AssistChip(onClick = {}, label = { Text("Placeholder") })
+            AssistChip(onClick = {}, label = { Text(stringResource(R.string.label_placeholder)) })
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,

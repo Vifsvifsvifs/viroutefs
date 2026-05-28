@@ -1,4 +1,99 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ViRouteFS</string>
+    <string name="app_tagline">Визуальная маршрутизация и анализ потоков</string>
+
+    <string name="screen_dashboard">Главная</string>
+    <string name="screen_vpn">VPN</string>
+    <string name="screen_dns">DNS</string>
+    <string name="screen_tools">Инструменты</string>
+    <string name="screen_logs">Журнал</string>
+    <string name="screen_settings">Настройки</string>
+
+    <string name="card_label_simple_explanation">Простое объяснение</string>
+    <string name="card_label_technical_details">Технические детали</string>
+    <string name="card_label_recommended_action">Что сделать</string>
+    <string name="label_placeholder">Заготовка</string>
+    <string name="action_check">Проверить</string>
+
+    <string name="dashboard_header_title">Локальный обзор сети</string>
+    <string name="dashboard_header_subtitle">Безопасная отправная точка для VPN-маршрутизации, просмотра потоков и диагностики.</string>
+    <string name="dashboard_vpn_status_title">Состояние VPN-маршрутизатора</string>
+    <string name="dashboard_vpn_status_simple">VPN-маршрутизатор пока не запущен.</string>
+    <string name="dashboard_vpn_status_details">В приложении объявлена заготовка Android VpnService, но туннельные движки и правила маршрутизации не активны.</string>
+    <string name="dashboard_vpn_status_action">Позже здесь можно будет запускать маршрутизацию только после явного разрешения пользователя.</string>
+    <string name="dashboard_flow_title">Предпросмотр анализа потоков</string>
+    <string name="dashboard_flow_simple">Понятные события сетевых подключений появятся в журнале.</string>
+    <string name="dashboard_flow_details">Будущие события смогут кратко описывать DNS, TCP, TLS, HTTP, UDP, маршруты и наблюдения по MTU.</string>
+    <string name="dashboard_flow_action">Откройте журнал, чтобы посмотреть примеры событий для первого этапа.</string>
+    <string name="dashboard_privacy_title">Граница приватности</string>
+    <string name="dashboard_privacy_simple">В приложении нет аналитики, телеметрии, рекламы и SDK для отслеживания.</string>
+    <string name="dashboard_privacy_details">Журналы и будущие PCAP-файлы должны оставаться на устройстве, пока пользователь явно не экспортирует их.</string>
+    <string name="dashboard_privacy_action">Проверьте настройки перед включением будущего захвата или экспорта данных.</string>
+
+    <string name="vpn_header_subtitle">Заготовка управления для будущего маршрутизатора на одном VpnService.</string>
+    <string name="vpn_service_title">ViRouteFsVpnService</string>
+    <string name="vpn_service_simple">В следующем этапе приложение сможет запрашивать разрешение Android VPN.</string>
+    <string name="vpn_service_details">Сервис объявлен с android.permission.BIND_VPN_SERVICE и сейчас не выполняет маршрутизацию.</string>
+    <string name="vpn_service_action">Не используйте эту сборку для реального туннелирования трафика.</string>
+    <string name="vpn_future_rules_title">Будущие правила маршрутизации</string>
+    <string name="vpn_future_rules_body">Здесь будут проектироваться маршруты по приложениям, CIDR, доменам и DNS после стабилизации каркаса.</string>
+
+    <string name="dns_default_domain">example.com</string>
+    <string name="dns_default_server">1.1.1.1</string>
+    <string name="dns_default_record_type">A</string>
+    <string name="dns_header_title">Проверка DNS</string>
+    <string name="dns_header_subtitle">Подготовка безопасной DNS-диагностики без сетевых запросов на этом этапе.</string>
+    <string name="dns_field_domain">Домен</string>
+    <string name="dns_field_server">DNS-сервер</string>
+    <string name="dns_field_record_type">Тип записи</string>
+    <string name="dns_result_not_run">Проверка ещё не запускалась. Это заготовка интерфейса, она пока не отправляет DNS-трафик.</string>
+    <string name="dns_result_prepared">Подготовлена проверка записи %1$s для %2$s через %3$s. Реальная DNS-проверка пока не реализована.</string>
+    <string name="dns_result_title">Результат</string>
+    <string name="dns_result_details">Эта заготовка только показывает выбранные поля запроса и не отправляет сетевой трафик.</string>
+    <string name="dns_result_action">В следующем этапе здесь можно будет сравнивать ответы резолверов и объяснять вероятные DNS-проблемы.</string>
+
+    <string name="tools_header_subtitle">Безопасные заготовки диагностических инструментов для первого этапа.</string>
+    <string name="tools_tcp_title">Проверка TCP</string>
+    <string name="tools_tcp_simple">Проверить, может ли узел и порт принимать TCP-подключения.</string>
+    <string name="tools_tcp_details">Будущие проверки смогут показывать задержку подключения, тайм-аут и выбранный маршрут.</string>
+    <string name="tools_tcp_action">Используйте только для своих систем или там, где у вас есть разрешение на проверку.</string>
+    <string name="tools_tls_title">Проверка TLS/SNI</string>
+    <string name="tools_tls_simple">Проверить, что TLS-сервис показывает ожидаемый сертификат.</string>
+    <string name="tools_tls_details">Будущие проверки смогут показывать SNI, издателя сертификата, срок действия и ошибки рукопожатия.</string>
+    <string name="tools_tls_action">Используйте для отладки своих доменов и безопасных для приватности проблем соединения.</string>
+    <string name="tools_http_title">Проверка HTTP</string>
+    <string name="tools_http_simple">Проверить базовую доступность HTTP и статус ответа.</string>
+    <string name="tools_http_details">Будущие проверки смогут показывать код статуса, перенаправления, время ответа и выбранный маршрут.</string>
+    <string name="tools_http_action">Не отправляйте секреты в диагностических URL.</string>
+    <string name="tools_mtu_title">Проверка MTU</string>
+    <string name="tools_mtu_simple">Найти проблемы с размером пакетов, из-за которых могут ломаться VPN-подключения.</string>
+    <string name="tools_mtu_details">Будущие тесты смогут оценивать MTU/MSS и объяснять симптомы фрагментации.</string>
+    <string name="tools_mtu_action">Запускайте, если сайты зависают или VPN-трафик кажется нестабильным.</string>
+    <string name="tools_lan_title">Сканер LAN</string>
+    <string name="tools_lan_simple">Находить устройства в локальной сети с помощью безопасных проверок.</string>
+    <string name="tools_lan_details">Будущее обнаружение должно быть прозрачным, ограниченным по частоте и работать только в локальных сетях.</string>
+    <string name="tools_lan_action">Сканируйте только сети, где у вас есть разрешение.</string>
+    <string name="tools_audit_title">Аудит безопасности</string>
+    <string name="tools_audit_simple">Оценить защитные настройки сети без автоматизации атак.</string>
+    <string name="tools_audit_details">Разрешённые проверки: шифрование Wi‑Fi, обнаружение WPS, аудит DNS и открытые локальные сервисы.</string>
+    <string name="tools_audit_action">Воспринимайте результаты как риски или ошибки настройки, а не как доказательство взлома.</string>
+
+    <string name="logs_header_subtitle">Понятные примеры событий сетевых подключений. В этом каркасе ничего не захватывается.</string>
+    <string name="logs_event_telegram">Telegram подключился к 149.154.167.91:443. Правило: Telegram → Xray Германия. Статус: пример успешного события. Задержка: 84 мс.</string>
+    <string name="logs_event_browser_dns">Браузер запросил A-запись example.com. DNS-сервер: 1.1.1.1. Статус: пример ответа из кеша.</string>
+    <string name="logs_event_banking">Для банковского приложения выбран прямой маршрут. Причина: правило для доверенного приложения. Статус: пример решения политики.</string>
+    <string name="logs_event_mtu">Проба MTU для VPN-профиля предложила 1380 байт. Статус: пример рекомендации, измерение не выполнялось.</string>
+    <string name="logs_event_wps">Аудит безопасности нашёл включённый WPS в сохранённом профиле Wi‑Fi. Значение: обнаружен риск, взлом не подтверждён.</string>
+    <string name="logs_event_details_placeholder">Технические детали можно будет раскрывать в следующем этапе.</string>
+
+    <string name="settings_header_subtitle">Настройки приватности и безопасности по умолчанию для будущих функций.</string>
+    <string name="settings_local_first_title">Локально по умолчанию</string>
+    <string name="settings_local_first_simple">Диагностика, журналы и будущие захваты должны оставаться на этом устройстве.</string>
+    <string name="settings_local_first_details">В этом каркасе нет облачной отправки, SDK аналитики, телеметрии, рекламы или отслеживания.</string>
+    <string name="settings_local_first_action">Экспортируйте журналы или PCAP-файлы только после понятного действия пользователя.</string>
+    <string name="settings_safety_title">Граница безопасности</string>
+    <string name="settings_safety_simple">ViRouteFS предназначен для защитной диагностики и VPN-маршрутизации.</string>
+    <string name="settings_safety_details">Атакующие функции — взлом паролей, deauth, автоматизация эксплойтов и перебор — не входят в область проекта.</string>
+    <string name="settings_safety_action">Будущие инструменты должны быть прозрачными, требовать разрешения и иметь ограничение частоты.</string>
 </resources>
