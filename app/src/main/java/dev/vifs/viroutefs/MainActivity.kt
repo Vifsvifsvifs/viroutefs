@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AltRoute
 import androidx.compose.material.icons.outlined.Article
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Dns
@@ -42,6 +43,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -50,6 +52,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import dev.vifs.viroutefs.routing.RouteDecision
+import dev.vifs.viroutefs.routing.RouteEngine
+import dev.vifs.viroutefs.routing.RouteRule
+import dev.vifs.viroutefs.routing.RouteRuleType
+import dev.vifs.viroutefs.routing.TunnelProfile
+import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.ui.theme.ViRouteFsTheme
 
 class MainActivity : ComponentActivity() {
@@ -71,6 +79,7 @@ private enum class AppScreen(
 ) {
     Dashboard(R.string.screen_dashboard, Icons.Outlined.Home),
     Vpn(R.string.screen_vpn, Icons.Outlined.Shield),
+    Routes(R.string.screen_routes, Icons.Outlined.AltRoute),
     Dns(R.string.screen_dns, Icons.Outlined.Dns),
     Tools(R.string.screen_tools, Icons.Outlined.Build),
     Logs(R.string.screen_logs, Icons.Outlined.Article),
@@ -82,6 +91,11 @@ private data class InfoCardContent(
     val simpleExplanation: String,
     val technicalDetails: String,
     val recommendedAction: String,
+)
+
+private data class RouteSampleData(
+    val tunnelProfiles: List<TunnelProfile>,
+    val routeRules: List<RouteRule>,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -119,6 +133,7 @@ private fun ViRouteFsApp() {
         when (selectedScreen) {
             AppScreen.Dashboard -> DashboardScreen(innerPadding)
             AppScreen.Vpn -> VpnScreen(innerPadding)
+            AppScreen.Routes -> RoutesScreen(innerPadding)
             AppScreen.Dns -> DnsScreen(innerPadding)
             AppScreen.Tools -> ToolsScreen(innerPadding)
             AppScreen.Logs -> LogsScreen(innerPadding)
@@ -192,6 +207,286 @@ private fun VpnScreen(contentPadding: PaddingValues) {
             PlaceholderCard(
                 title = stringResource(R.string.vpn_future_rules_title),
                 body = stringResource(R.string.vpn_future_rules_body),
+            )
+        }
+    }
+}
+
+@Composable
+private fun RoutesScreen(contentPadding: PaddingValues) {
+    val sampleData = rememberRouteSampleData()
+    val routeEngine = RouteEngine(sampleData.tunnelProfiles, sampleData.routeRules)
+    val defaultInput = stringResource(R.string.routes_default_input)
+    var simulatorInput by rememberSaveable { mutableStateOf(defaultInput) }
+    var routeDecision by remember { mutableStateOf(routeEngine.simulate(defaultInput)) }
+
+    ScreenList(contentPadding = contentPadding) {
+        item {
+            SectionHeader(
+                title = stringResource(R.string.screen_routes),
+                subtitle = stringResource(R.string.routes_header_subtitle),
+            )
+        }
+        item {
+            PlaceholderCard(
+                title = stringResource(R.string.routes_mock_title),
+                body = stringResource(R.string.routes_mock_body),
+            )
+        }
+        item {
+            Text(
+                text = stringResource(R.string.routes_tunnels_title),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        items(sampleData.tunnelProfiles) { tunnelProfile ->
+            TunnelProfileCard(tunnelProfile)
+        }
+        item {
+            Text(
+                text = stringResource(R.string.routes_rules_title),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        items(sampleData.routeRules) { routeRule ->
+            RouteRuleCard(routeRule, sampleData.tunnelProfiles)
+        }
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.routes_simulator_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    OutlinedTextField(
+                        value = simulatorInput,
+                        onValueChange = { simulatorInput = it },
+                        label = { Text(stringResource(R.string.routes_simulator_input_label)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = {
+                            routeDecision = routeEngine.simulate(simulatorInput)
+                        },
+                        modifier = Modifier.align(Alignment.End),
+                    ) {
+                        Text(stringResource(R.string.routes_simulator_button))
+                    }
+                }
+            }
+        }
+        item {
+            RouteDecisionCard(routeDecision)
+        }
+    }
+}
+
+@Composable
+private fun rememberRouteSampleData(): RouteSampleData {
+    val tunnelProfiles = listOf(
+        TunnelProfile(
+            id = "direct",
+            name = stringResource(R.string.routes_tunnel_direct_name),
+            type = TunnelType.Direct,
+            description = stringResource(R.string.routes_tunnel_direct_description),
+        ),
+        TunnelProfile(
+            id = "block",
+            name = stringResource(R.string.routes_tunnel_block_name),
+            type = TunnelType.Block,
+            description = stringResource(R.string.routes_tunnel_block_description),
+        ),
+        TunnelProfile(
+            id = "xray_de",
+            name = stringResource(R.string.routes_tunnel_xray_germany_name),
+            type = TunnelType.Xray,
+            description = stringResource(R.string.routes_tunnel_xray_germany_description),
+        ),
+        TunnelProfile(
+            id = "hysteria2_nl",
+            name = stringResource(R.string.routes_tunnel_hysteria2_nl_name),
+            type = TunnelType.Hysteria2,
+            description = stringResource(R.string.routes_tunnel_hysteria2_nl_description),
+        ),
+        TunnelProfile(
+            id = "openvpn_work",
+            name = stringResource(R.string.routes_tunnel_openvpn_work_name),
+            type = TunnelType.OpenVpn,
+            description = stringResource(R.string.routes_tunnel_openvpn_work_description),
+        ),
+    )
+    val routeRules = listOf(
+        RouteRule(
+            id = "banking_direct",
+            name = stringResource(R.string.routes_rule_banking_name),
+            type = RouteRuleType.APP_GROUP,
+            targetTunnelId = "direct",
+            priority = 10,
+            matchers = listOf("sber", "tinkoff", "bank"),
+            reason = stringResource(R.string.routes_rule_banking_reason),
+            technicalDetails = stringResource(R.string.routes_rule_technical, RouteRuleType.APP_GROUP.name, 10, "sber, tinkoff, bank"),
+            recommendedAction = stringResource(R.string.routes_rule_banking_action),
+        ),
+        RouteRule(
+            id = "telegram_xray",
+            name = stringResource(R.string.routes_rule_telegram_name),
+            type = RouteRuleType.APP_GROUP,
+            targetTunnelId = "xray_de",
+            priority = 20,
+            matchers = listOf("telegram", "tg"),
+            reason = stringResource(R.string.routes_rule_telegram_reason),
+            technicalDetails = stringResource(R.string.routes_rule_technical, RouteRuleType.APP_GROUP.name, 20, "telegram, tg"),
+            recommendedAction = stringResource(R.string.routes_rule_telegram_action),
+        ),
+        RouteRule(
+            id = "youtube_hysteria2",
+            name = stringResource(R.string.routes_rule_youtube_name),
+            type = RouteRuleType.DOMAIN,
+            targetTunnelId = "hysteria2_nl",
+            priority = 30,
+            matchers = listOf("youtube", "youtu.be", "googlevideo"),
+            reason = stringResource(R.string.routes_rule_youtube_reason),
+            technicalDetails = stringResource(R.string.routes_rule_technical, RouteRuleType.DOMAIN.name, 30, "youtube, youtu.be, googlevideo"),
+            recommendedAction = stringResource(R.string.routes_rule_youtube_action),
+        ),
+        RouteRule(
+            id = "work_10",
+            name = stringResource(R.string.routes_rule_work_10_name),
+            type = RouteRuleType.CIDR,
+            targetTunnelId = "openvpn_work",
+            priority = 40,
+            matchers = listOf("10.0.0.0/8"),
+            reason = stringResource(R.string.routes_rule_work_10_reason),
+            technicalDetails = stringResource(R.string.routes_rule_technical, RouteRuleType.CIDR.name, 40, "10.0.0.0/8"),
+            recommendedAction = stringResource(R.string.routes_rule_work_action),
+        ),
+        RouteRule(
+            id = "work_172",
+            name = stringResource(R.string.routes_rule_work_172_name),
+            type = RouteRuleType.CIDR,
+            targetTunnelId = "openvpn_work",
+            priority = 50,
+            matchers = listOf("172.16.1.0/22"),
+            reason = stringResource(R.string.routes_rule_work_172_reason),
+            technicalDetails = stringResource(R.string.routes_rule_technical, RouteRuleType.CIDR.name, 50, "172.16.1.0/22"),
+            recommendedAction = stringResource(R.string.routes_rule_work_action),
+        ),
+        RouteRule(
+            id = "blocked_domain",
+            name = stringResource(R.string.routes_rule_blocked_name),
+            type = RouteRuleType.DOMAIN,
+            targetTunnelId = "block",
+            priority = 60,
+            matchers = listOf("blocked.example", "suspicious.example", "malware.test"),
+            reason = stringResource(R.string.routes_rule_blocked_reason),
+            technicalDetails = stringResource(R.string.routes_rule_technical, RouteRuleType.DOMAIN.name, 60, "blocked.example, suspicious.example, malware.test"),
+            recommendedAction = stringResource(R.string.routes_rule_blocked_action),
+        ),
+        RouteRule(
+            id = "default_direct",
+            name = stringResource(R.string.routes_rule_default_name),
+            type = RouteRuleType.DEFAULT,
+            targetTunnelId = "direct",
+            priority = 1000,
+            matchers = listOf("*"),
+            reason = stringResource(R.string.routes_rule_default_reason),
+            technicalDetails = stringResource(R.string.routes_rule_technical, RouteRuleType.DEFAULT.name, 1000, "*"),
+            recommendedAction = stringResource(R.string.routes_rule_default_action),
+        ),
+    )
+
+    return RouteSampleData(tunnelProfiles, routeRules)
+}
+
+@Composable
+private fun TunnelProfileCard(tunnelProfile: TunnelProfile) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.AltRoute, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = tunnelProfile.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            AssistChip(onClick = {}, label = { Text(tunnelProfile.type.name) })
+            Text(text = tunnelProfile.description)
+        }
+    }
+}
+
+@Composable
+private fun RouteRuleCard(
+    routeRule: RouteRule,
+    tunnelProfiles: List<TunnelProfile>,
+) {
+    val targetTunnelName = tunnelProfiles.first { it.id == routeRule.targetTunnelId }.name
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = routeRule.name,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(text = stringResource(R.string.routes_rule_target, targetTunnelName))
+            Text(text = stringResource(R.string.routes_rule_matchers, routeRule.matchers.joinToString()))
+            Text(text = stringResource(R.string.routes_rule_priority, routeRule.type.name, routeRule.priority))
+        }
+    }
+}
+
+@Composable
+private fun RouteDecisionCard(routeDecision: RouteDecision) {
+    InfoCard(
+        InfoCardContent(
+            title = stringResource(R.string.routes_result_title),
+            simpleExplanation = stringResource(
+                R.string.routes_result_simple,
+                routeDecision.input,
+                routeDecision.tunnelProfile.name,
+            ),
+            technicalDetails = stringResource(
+                R.string.routes_result_details,
+                routeDecision.matchedRule.name,
+                routeDecision.technicalDetails,
+            ),
+            recommendedAction = routeDecision.recommendedAction,
+        ),
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            LabeledText(
+                label = stringResource(R.string.routes_result_matched_rule),
+                body = routeDecision.matchedRule.name,
+            )
+            LabeledText(
+                label = stringResource(R.string.routes_result_reason),
+                body = routeDecision.plainReason,
             )
         }
     }
