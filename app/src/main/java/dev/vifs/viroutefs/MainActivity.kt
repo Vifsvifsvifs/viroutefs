@@ -6,6 +6,7 @@ import androidx.annotation.StringRes
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +43,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,8 +53,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import dev.vifs.viroutefs.BuildConfig
+import dev.vifs.viroutefs.diagnostics.DiagnosticResult
+import dev.vifs.viroutefs.diagnostics.DiagnosticStatus
+import dev.vifs.viroutefs.diagnostics.DnsDiagnostic
+import dev.vifs.viroutefs.diagnostics.HttpDiagnostic
+import dev.vifs.viroutefs.diagnostics.TcpDiagnostic
+import dev.vifs.viroutefs.diagnostics.TlsDiagnostic
 import dev.vifs.viroutefs.routing.RouteDecision
 import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.routing.RouteRule
@@ -59,6 +70,7 @@ import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.ui.theme.ViRouteFsTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -497,24 +509,26 @@ private fun DnsScreen(contentPadding: PaddingValues) {
     val defaultDomain = stringResource(R.string.dns_default_domain)
     val defaultDnsServer = stringResource(R.string.dns_default_server)
     val defaultRecordType = stringResource(R.string.dns_default_record_type)
-    val initialResult = stringResource(R.string.dns_result_not_run)
+    val scope = rememberCoroutineScope()
+    val diagnostic = remember { DnsDiagnostic() }
 
     var domain by rememberSaveable { mutableStateOf(defaultDomain) }
     var dnsServer by rememberSaveable { mutableStateOf(defaultDnsServer) }
     var recordType by rememberSaveable { mutableStateOf(defaultRecordType) }
-    var result by rememberSaveable { mutableStateOf(initialResult) }
-    val preparedResult = stringResource(
-        R.string.dns_result_prepared,
-        recordType,
-        domain,
-        dnsServer,
-    )
+    var isRunning by rememberSaveable { mutableStateOf(false) }
+    var result by remember { mutableStateOf<DiagnosticResult?>(null) }
 
     ScreenList(contentPadding = contentPadding) {
         item {
             SectionHeader(
                 title = stringResource(R.string.dns_header_title),
                 subtitle = stringResource(R.string.dns_header_subtitle),
+            )
+        }
+        item {
+            PlaceholderCard(
+                title = stringResource(R.string.dns_system_resolver_title),
+                body = stringResource(R.string.dns_system_resolver_body),
             )
         }
         item {
@@ -546,23 +560,25 @@ private fun DnsScreen(contentPadding: PaddingValues) {
                     )
                     Button(
                         onClick = {
-                            result = preparedResult
+                            isRunning = true
+                            scope.launch {
+                                result = diagnostic.lookup(domain, dnsServer, recordType)
+                                isRunning = false
+                            }
                         },
+                        enabled = !isRunning,
                         modifier = Modifier.align(Alignment.End),
                     ) {
-                        Text(stringResource(R.string.action_check))
+                        Text(if (isRunning) stringResource(R.string.action_checking) else stringResource(R.string.action_check))
                     }
                 }
             }
         }
         item {
-            InfoCard(
-                InfoCardContent(
-                    title = stringResource(R.string.dns_result_title),
-                    simpleExplanation = result,
-                    technicalDetails = stringResource(R.string.dns_result_details),
-                    recommendedAction = stringResource(R.string.dns_result_action),
-                ),
+            DiagnosticResultCard(
+                title = stringResource(R.string.dns_result_title),
+                result = result,
+                notRunText = stringResource(R.string.dns_result_not_run),
             )
         }
     }
@@ -570,44 +586,26 @@ private fun DnsScreen(contentPadding: PaddingValues) {
 
 @Composable
 private fun ToolsScreen(contentPadding: PaddingValues) {
-    val tools = listOf(
-        InfoCardContent(
-            title = stringResource(R.string.tools_tcp_title),
-            simpleExplanation = stringResource(R.string.tools_tcp_simple),
-            technicalDetails = stringResource(R.string.tools_tcp_details),
-            recommendedAction = stringResource(R.string.tools_tcp_action),
-        ),
-        InfoCardContent(
-            title = stringResource(R.string.tools_tls_title),
-            simpleExplanation = stringResource(R.string.tools_tls_simple),
-            technicalDetails = stringResource(R.string.tools_tls_details),
-            recommendedAction = stringResource(R.string.tools_tls_action),
-        ),
-        InfoCardContent(
-            title = stringResource(R.string.tools_http_title),
-            simpleExplanation = stringResource(R.string.tools_http_simple),
-            technicalDetails = stringResource(R.string.tools_http_details),
-            recommendedAction = stringResource(R.string.tools_http_action),
-        ),
-        InfoCardContent(
-            title = stringResource(R.string.tools_mtu_title),
-            simpleExplanation = stringResource(R.string.tools_mtu_simple),
-            technicalDetails = stringResource(R.string.tools_mtu_details),
-            recommendedAction = stringResource(R.string.tools_mtu_action),
-        ),
-        InfoCardContent(
-            title = stringResource(R.string.tools_lan_title),
-            simpleExplanation = stringResource(R.string.tools_lan_simple),
-            technicalDetails = stringResource(R.string.tools_lan_details),
-            recommendedAction = stringResource(R.string.tools_lan_action),
-        ),
-        InfoCardContent(
-            title = stringResource(R.string.tools_audit_title),
-            simpleExplanation = stringResource(R.string.tools_audit_simple),
-            technicalDetails = stringResource(R.string.tools_audit_details),
-            recommendedAction = stringResource(R.string.tools_audit_action),
-        ),
-    )
+    val scope = rememberCoroutineScope()
+    val tcpDiagnostic = remember { TcpDiagnostic() }
+    val tlsDiagnostic = remember { TlsDiagnostic() }
+    val httpDiagnostic = remember { HttpDiagnostic() }
+
+    var tcpHost by rememberSaveable { mutableStateOf("example.com") }
+    var tcpPort by rememberSaveable { mutableStateOf("443") }
+    var tcpTimeout by rememberSaveable { mutableStateOf("5") }
+    var tcpRunning by rememberSaveable { mutableStateOf(false) }
+    var tcpResult by remember { mutableStateOf<DiagnosticResult?>(null) }
+
+    var tlsHost by rememberSaveable { mutableStateOf("example.com") }
+    var tlsPort by rememberSaveable { mutableStateOf("443") }
+    var tlsSni by rememberSaveable { mutableStateOf("example.com") }
+    var tlsRunning by rememberSaveable { mutableStateOf(false) }
+    var tlsResult by remember { mutableStateOf<DiagnosticResult?>(null) }
+
+    var httpUrl by rememberSaveable { mutableStateOf("https://example.com") }
+    var httpRunning by rememberSaveable { mutableStateOf(false) }
+    var httpResult by remember { mutableStateOf<DiagnosticResult?>(null) }
 
     ScreenList(contentPadding = contentPadding) {
         item {
@@ -616,8 +614,137 @@ private fun ToolsScreen(contentPadding: PaddingValues) {
                 subtitle = stringResource(R.string.tools_header_subtitle),
             )
         }
-        items(tools) { tool ->
-            InfoCard(content = tool)
+        item {
+            PlaceholderCard(
+                title = stringResource(R.string.tools_safety_title),
+                body = stringResource(R.string.tools_safety_body),
+            )
+        }
+        item {
+            DiagnosticInputCard(title = stringResource(R.string.tools_tcp_title)) {
+                OutlinedTextField(
+                    value = tcpHost,
+                    onValueChange = { tcpHost = it },
+                    label = { Text(stringResource(R.string.tools_field_host)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = tcpPort,
+                        onValueChange = { tcpPort = it.filter(Char::isDigit) },
+                        label = { Text(stringResource(R.string.tools_field_port)) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = tcpTimeout,
+                        onValueChange = { tcpTimeout = it.filter(Char::isDigit) },
+                        label = { Text(stringResource(R.string.tools_field_timeout)) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Button(
+                    onClick = {
+                        tcpRunning = true
+                        scope.launch {
+                            tcpResult = tcpDiagnostic.check(tcpHost, tcpPort, tcpTimeout)
+                            tcpRunning = false
+                        }
+                    },
+                    enabled = !tcpRunning,
+                    modifier = Modifier.align(Alignment.End),
+                ) {
+                    Text(if (tcpRunning) stringResource(R.string.action_checking) else stringResource(R.string.tools_tcp_button))
+                }
+            }
+        }
+        item {
+            DiagnosticResultCard(
+                title = stringResource(R.string.tools_tcp_result_title),
+                result = tcpResult,
+                notRunText = stringResource(R.string.tools_result_not_run),
+            )
+        }
+        item {
+            DiagnosticInputCard(title = stringResource(R.string.tools_tls_title)) {
+                OutlinedTextField(
+                    value = tlsHost,
+                    onValueChange = { tlsHost = it },
+                    label = { Text(stringResource(R.string.tools_field_host)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = tlsPort,
+                    onValueChange = { tlsPort = it.filter(Char::isDigit) },
+                    label = { Text(stringResource(R.string.tools_field_port)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = tlsSni,
+                    onValueChange = { tlsSni = it },
+                    label = { Text(stringResource(R.string.tools_field_sni)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = {
+                        tlsRunning = true
+                        scope.launch {
+                            tlsResult = tlsDiagnostic.check(tlsHost, tlsPort, tlsSni)
+                            tlsRunning = false
+                        }
+                    },
+                    enabled = !tlsRunning,
+                    modifier = Modifier.align(Alignment.End),
+                ) {
+                    Text(if (tlsRunning) stringResource(R.string.action_checking) else stringResource(R.string.tools_tls_button))
+                }
+            }
+        }
+        item {
+            DiagnosticResultCard(
+                title = stringResource(R.string.tools_tls_result_title),
+                result = tlsResult,
+                notRunText = stringResource(R.string.tools_result_not_run),
+            )
+        }
+        item {
+            DiagnosticInputCard(title = stringResource(R.string.tools_http_title)) {
+                OutlinedTextField(
+                    value = httpUrl,
+                    onValueChange = { httpUrl = it },
+                    label = { Text(stringResource(R.string.tools_field_url)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(
+                    onClick = {
+                        httpRunning = true
+                        scope.launch {
+                            httpResult = httpDiagnostic.check(httpUrl)
+                            httpRunning = false
+                        }
+                    },
+                    enabled = !httpRunning,
+                    modifier = Modifier.align(Alignment.End),
+                ) {
+                    Text(if (httpRunning) stringResource(R.string.action_checking) else stringResource(R.string.tools_http_button))
+                }
+            }
+        }
+        item {
+            DiagnosticResultCard(
+                title = stringResource(R.string.tools_http_result_title),
+                result = httpResult,
+                notRunText = stringResource(R.string.tools_result_not_run),
+            )
         }
     }
 }
@@ -688,7 +815,77 @@ private fun SettingsScreen(contentPadding: PaddingValues) {
                 ),
             )
         }
+        item {
+            InfoCard(
+                InfoCardContent(
+                    title = stringResource(R.string.settings_version_title),
+                    simpleExplanation = stringResource(R.string.settings_version_simple, BuildConfig.VERSION_NAME),
+                    technicalDetails = stringResource(R.string.settings_version_details, BuildConfig.VERSION_CODE),
+                    recommendedAction = stringResource(R.string.settings_version_action),
+                ),
+            )
+        }
     }
+}
+
+
+@Composable
+private fun DiagnosticInputCard(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            content()
+        }
+    }
+}
+
+@Composable
+private fun DiagnosticResultCard(
+    title: String,
+    result: DiagnosticResult?,
+    notRunText: String,
+) {
+    val content = if (result == null) {
+        InfoCardContent(
+            title = title,
+            simpleExplanation = notRunText,
+            technicalDetails = stringResource(R.string.diagnostic_not_run_details),
+            recommendedAction = stringResource(R.string.diagnostic_not_run_action),
+        )
+    } else {
+        InfoCardContent(
+            title = title,
+            simpleExplanation = result.simpleExplanation,
+            technicalDetails = result.technicalDetailsWithElapsed(),
+            recommendedAction = result.recommendedAction,
+        )
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        result?.let { diagnosticResult ->
+            AssistChip(
+                onClick = {},
+                label = { Text(diagnosticResult.status.toRussianLabel()) },
+            )
+        }
+        InfoCard(content = content)
+    }
+}
+
+private fun DiagnosticStatus.toRussianLabel(): String = when (this) {
+    DiagnosticStatus.SUCCESS -> "Успех"
+    DiagnosticStatus.WARNING -> "Предупреждение"
+    DiagnosticStatus.ERROR -> "Ошибка"
 }
 
 @Composable
