@@ -147,4 +147,28 @@
     <string name="routes_rule_default_reason">The default route will be used: Direct.</string>
     <string name="routes_rule_default_action">If another route was expected, add a more specific rule above the default rule.</string>
 
+    <string name="action_checking">Checking…</string>
+    <string name="dns_system_resolver_title">0.2-alpha limitation</string>
+    <string name="dns_system_resolver_body">This version uses Android system DNS. Custom DNS server selection will be connected later.</string>
+    <string name="diagnostic_not_run_details">Diagnostics are not run automatically: ViRouteFS waits for the user to press a button.</string>
+    <string name="diagnostic_not_run_action">Run checks only for your own resources or networks where you have permission.</string>
+    <string name="tools_safety_title">Safe use</string>
+    <string name="tools_safety_body">Check only your own resources or networks where you have permission.</string>
+    <string name="tools_field_host">Host</string>
+    <string name="tools_field_port">Port</string>
+    <string name="tools_field_timeout">Timeout, sec.</string>
+    <string name="tools_field_sni">SNI / server name</string>
+    <string name="tools_field_url">URL</string>
+    <string name="tools_tcp_button">Check TCP</string>
+    <string name="tools_tls_button">Check TLS</string>
+    <string name="tools_http_button">Check HTTP</string>
+    <string name="tools_tcp_result_title">TCP result</string>
+    <string name="tools_tls_result_title">TLS/SNI result</string>
+    <string name="tools_http_result_title">HTTP result</string>
+    <string name="tools_result_not_run">This check has not run yet. Fill in the fields and press the check button.</string>
+    <string name="settings_version_title">App version</string>
+    <string name="settings_version_simple">ViRouteFS version %1$s is installed.</string>
+    <string name="settings_version_details">versionCode: %1$d. Milestone: 0.2-alpha — basic user-triggered DNS/TCP/TLS/HTTP diagnostics.</string>
+    <string name="settings_version_action">Update the app only from a trusted source and review the changelog before installing.</string>
+
 </resources>
