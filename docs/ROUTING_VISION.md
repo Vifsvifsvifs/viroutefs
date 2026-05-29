@@ -55,9 +55,15 @@ Every route decision should include:
 
 The app should remain useful for non-experts while still exposing enough detail for troubleshooting.
 
+## Route diagnostics in 0.3-alpha
+
+The `0.3.0-alpha` milestone attaches defensive diagnostics to a simulated route decision. A user enters a target, port, and optional SNI; ViRouteFS selects a mock route with `RouteEngine`, explains the matched rule, and then checks the target through the current Android network.
+
+This is intentionally not real VPN routing: selected tunnels are mock profiles, and diagnostics do not travel through Xray, Hysteria2, OpenVPN, or packet-capture logic. Reports stay local unless the user explicitly copies or shares them, and the last five reports are stored only in memory for the current app session.
+
 ## Future diagnostics per route
 
-Later milestones can attach defensive diagnostics to a selected route, including:
+Later milestones can attach defensive diagnostics to a real selected route, including:
 
 - DNS checks.
 - TCP connectivity checks.
@@ -69,8 +75,8 @@ Diagnostics must stay defensive, transparent, permission-based, and local-first.
 
 ## Current milestone scope
 
-This milestone is mock/simulation only. It adds the Russian "Маршруты" screen, sample tunnel profiles, sample route rules, and an in-memory route engine for explanation previews. It does not implement real VPN routing, packet capture, Xray, Hysteria2, or OpenVPN behavior.
+The current milestone remains simulation-first. It has the Russian "Маршруты" screen, sample tunnel profiles, sample route rules, an in-memory route engine, and Route Diagnostics reports that combine simulated route selection with real current-network DNS/TCP/TLS/HTTP checks. It does not implement real VPN routing, packet capture, Xray, Hysteria2, or OpenVPN behavior.
 
 ## Launcher icon assets
 
-The launcher icon in this milestone is XML/vector only. ViRouteFS avoids PNG, JPG, WebP, and other binary icon assets in Codex-generated pull requests so changes remain reviewable in text diffs.
+The launcher icon in this milestone is XML/vector only. ViRouteFS avoids PNG, JPG, WebP, and other binary icon assets in text-focused pull requests so changes remain reviewable in text diffs.

@@ -46,7 +46,7 @@ class DnsDiagnostic(
             return@withContext DiagnosticResult(
                 status = DiagnosticStatus.ERROR,
                 simpleExplanation = "Тип DNS-записи пока не поддерживается.",
-                technicalDetails = "Запрошен тип «$normalizedType». В версии 0.2-alpha поддерживаются только A и AAAA.",
+                technicalDetails = "Запрошен тип «$normalizedType». В версии 0.3-alpha поддерживаются только A и AAAA.",
                 recommendedAction = "Выберите A для IPv4-адресов или AAAA для IPv6-адресов.",
             )
         }
