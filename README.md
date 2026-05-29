@@ -1,10 +1,10 @@
 # ViRouteFS
 
-ViRouteFS (Visual Route & Flow Scanner) is an open-source Android VPN router, flow scanner, and network diagnostics toolkit.
+ViRouteFS (Visual Route & Flow Scanner) is an open-source Android app for human-readable traffic routing explanations and safe network diagnostics.
 
-The project is local-first and defensive by design. This initial milestone provides a Jetpack Compose skeleton only; it does **not** implement real VPN routing, packet capture, cloud upload, analytics, telemetry, ads, tracking, or offensive security features.
+The project is local-first and defensive by design. Version `0.2.0-alpha` adds real basic diagnostics that run only after the user presses a button. It still does **not** implement real VPN routing, Xray, OpenVPN, packet capture, cloud upload, analytics, telemetry, ads, tracking, or offensive security features.
 
-## Current skeleton
+## Current milestone: 0.2-alpha
 
 - Kotlin Android app using Gradle Kotlin DSL.
 - Jetpack Compose UI with Material 3.
@@ -13,14 +13,36 @@ The project is local-first and defensive by design. This initial milestone provi
 - Bottom navigation screens:
   - Dashboard
   - VPN
+  - Routes / route simulator
   - DNS
   - Tools
   - Logs
   - Settings
 - Placeholder `ViRouteFsVpnService` declared in `AndroidManifest.xml` with `android.permission.BIND_VPN_SERVICE`.
-- DNS checker UI placeholder with domain, DNS server, record type, Check button, and result card.
-- Tools placeholders for TCP, TLS/SNI, HTTP, MTU, LAN scanner, and Security audit checks.
+- Real user-triggered DNS lookup for `A` and `AAAA` records through Android system DNS.
+- Real user-triggered TCP connection check.
+- Real user-triggered TLS/SNI handshake check with protocol, cipher, and certificate details when available.
+- Real user-triggered HTTP/HTTPS check with status code, redirects, content type, and elapsed time.
+- App version shown on the Settings screen.
 - Sample human-readable flow events on the Logs screen.
+
+## Diagnostics behavior
+
+All diagnostics are manual and user-controlled:
+
+- No automatic background checks.
+- No background scanning.
+- No telemetry or analytics.
+- No cloud upload of diagnostic results.
+- No port scanner, vulnerability scanner, brute force, exploit automation, or offensive network behavior.
+
+The DNS screen currently uses Android's system resolver. The DNS server field remains visible for the product flow, but direct custom DNS server querying is planned for a later milestone and is clearly labeled in the UI.
+
+See [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) for detailed behavior and safety boundaries.
+
+## Route simulator status
+
+The Route Simulator is still a mock/simulation-only feature. It explains how future routing decisions should be presented to users, but it does not change device routing and does not start a real VPN tunnel.
 
 ## Safety and privacy boundaries
 
@@ -50,13 +72,13 @@ sdk.dir=/path/to/android/sdk
 ### Build from the command line
 
 ```bash
-gradle :app:assembleDebug
+gradle :app:assembleDebug --stacktrace
 ```
 
 If you generate the Gradle wrapper locally, you can also use:
 
 ```bash
-./gradlew :app:assembleDebug
+./gradlew :app:assembleDebug --stacktrace
 ```
 
 ### Open in Android Studio
@@ -69,5 +91,7 @@ If you generate the Gradle wrapper locally, you can also use:
 ## Development notes
 
 - Real VPN routing is intentionally not implemented yet.
+- Xray and OpenVPN engines are intentionally not implemented yet.
+- Packet capture is intentionally not implemented yet.
 - Keep logs and future PCAP exports local unless the user explicitly exports them.
 - Prefer small, compiling pull requests with clear commit messages.
