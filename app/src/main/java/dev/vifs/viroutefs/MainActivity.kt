@@ -1,6 +1,11 @@
 package dev.vifs.viroutefs
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.annotation.StringRes
 import androidx.activity.compose.setContent
@@ -43,8 +48,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -52,9 +57,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import dev.vifs.viroutefs.BuildConfig
 import dev.vifs.viroutefs.diagnostics.DiagnosticResult
@@ -63,6 +69,9 @@ import dev.vifs.viroutefs.diagnostics.DnsDiagnostic
 import dev.vifs.viroutefs.diagnostics.HttpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TcpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TlsDiagnostic
+import dev.vifs.viroutefs.route.RouteDiagnosticReport
+import dev.vifs.viroutefs.route.RouteDiagnosticRunner
+import dev.vifs.viroutefs.route.RouteDiagnosticStep
 import dev.vifs.viroutefs.routing.RouteDecision
 import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.routing.RouteRule
@@ -226,11 +235,22 @@ private fun VpnScreen(contentPadding: PaddingValues) {
 
 @Composable
 private fun RoutesScreen(contentPadding: PaddingValues) {
+    val context = LocalContext.current
     val sampleData = rememberRouteSampleData()
-    val routeEngine = RouteEngine(sampleData.tunnelProfiles, sampleData.routeRules)
+    val routeEngine = remember(sampleData) { RouteEngine(sampleData.tunnelProfiles, sampleData.routeRules) }
+    val routeDiagnosticRunner = remember(routeEngine) { RouteDiagnosticRunner(routeEngine) }
     val defaultInput = stringResource(R.string.routes_default_input)
+    val scope = rememberCoroutineScope()
+
     var simulatorInput by rememberSaveable { mutableStateOf(defaultInput) }
     var routeDecision by remember { mutableStateOf(routeEngine.simulate(defaultInput)) }
+
+    var diagnosticTarget by rememberSaveable { mutableStateOf("example.com") }
+    var diagnosticPort by rememberSaveable { mutableStateOf("443") }
+    var diagnosticSni by rememberSaveable { mutableStateOf("example.com") }
+    var routeDiagnosticRunning by rememberSaveable { mutableStateOf(false) }
+    var routeDiagnosticReport by remember { mutableStateOf<RouteDiagnosticReport?>(null) }
+    var routeDiagnosticHistory by remember { mutableStateOf<List<RouteDiagnosticReport>>(emptyList()) }
 
     ScreenList(contentPadding = contentPadding) {
         item {
@@ -296,6 +316,67 @@ private fun RoutesScreen(contentPadding: PaddingValues) {
         }
         item {
             RouteDecisionCard(routeDecision)
+        }
+        item {
+            RouteDiagnosticsInputCard(
+                target = diagnosticTarget,
+                port = diagnosticPort,
+                sni = diagnosticSni,
+                isRunning = routeDiagnosticRunning,
+                onTargetChange = { diagnosticTarget = it },
+                onPortChange = { diagnosticPort = it.filter(Char::isDigit) },
+                onSniChange = { diagnosticSni = it },
+                onRun = {
+                    routeDiagnosticRunning = true
+                    scope.launch {
+                        val report = routeDiagnosticRunner.run(
+                            target = diagnosticTarget,
+                            portText = diagnosticPort,
+                            sni = diagnosticSni,
+                            appVersion = BuildConfig.VERSION_NAME,
+                        )
+                        routeDiagnosticReport = report
+                        routeDiagnosticHistory = (listOf(report) + routeDiagnosticHistory).take(5)
+                        routeDiagnosticRunning = false
+                    }
+                },
+            )
+        }
+        item {
+            routeDiagnosticReport?.let { report ->
+                RouteDiagnosticReportCard(
+                    report = report,
+                    onCopy = {
+                        context.copyRouteReport(report)
+                    },
+                    onShare = {
+                        context.shareRouteReport(report)
+                    },
+                )
+            } ?: InfoCard(
+                InfoCardContent(
+                    title = "Итог",
+                    simpleExplanation = "Диагностика маршрута ещё не запускалась.",
+                    technicalDetails = "Проверки выполняются только после нажатия кнопки и используют текущее подключение Android.",
+                    recommendedAction = "Проверяйте только свои ресурсы или сети, где у вас есть разрешение.",
+                ),
+            )
+        }
+        item {
+            Text(
+                text = "Последние проверки",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        if (routeDiagnosticHistory.isEmpty()) {
+            item {
+                Text("История текущей сессии пока пуста. Отчёты не сохраняются в файлы или базу данных.")
+            }
+        } else {
+            items(routeDiagnosticHistory) { report ->
+                RouteDiagnosticHistoryCard(report)
+            }
         }
     }
 }
@@ -502,6 +583,194 @@ private fun RouteDecisionCard(routeDecision: RouteDecision) {
             )
         }
     }
+}
+
+
+@Composable
+private fun RouteDiagnosticsInputCard(
+    target: String,
+    port: String,
+    sni: String,
+    isRunning: Boolean,
+    onTargetChange: (String) -> Unit,
+    onPortChange: (String) -> Unit,
+    onSniChange: (String) -> Unit,
+    onRun: () -> Unit,
+) {
+    DiagnosticInputCard(title = "Диагностика маршрута") {
+        Text("Проверяйте только свои ресурсы или сети, где у вас есть разрешение.")
+        Text("В этой версии диагностика выполняется через текущее подключение Android. Выбранный маршрут пока симулируется.")
+        OutlinedTextField(
+            value = target,
+            onValueChange = onTargetChange,
+            label = { Text("Домен, IP или приложение") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedTextField(
+                value = port,
+                onValueChange = onPortChange,
+                label = { Text("Порт") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedTextField(
+                value = sni,
+                onValueChange = onSniChange,
+                label = { Text("SNI / имя сервера") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Button(
+            onClick = onRun,
+            enabled = !isRunning,
+            modifier = Modifier.align(Alignment.End),
+        ) {
+            Text(if (isRunning) stringResource(R.string.action_checking) else "Проверить маршрут")
+        }
+    }
+}
+
+@Composable
+private fun RouteDiagnosticReportCard(
+    report: RouteDiagnosticReport,
+    onCopy: () -> Unit,
+    onShare: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        InfoCard(
+            InfoCardContent(
+                title = "Итог",
+                simpleExplanation = report.finalSummary,
+                technicalDetails = "Цель: ${report.inputTarget}\nХост проверки: ${report.hostForDiagnostics}\nПорт: ${report.port}\nВремя выполнения: ${report.elapsedMs} мс",
+                recommendedAction = report.recommendedNextAction,
+            ),
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+            ),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                LabeledText(label = "Выбранный маршрут", body = report.selectedTunnel)
+                LabeledText(label = "Сработавшее правило", body = report.matchedRule)
+                LabeledText(label = "Почему выбран", body = report.routeExplanation)
+            }
+        }
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "Проверки",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                report.checks().forEach { step ->
+                    RouteDiagnosticStepRow(step)
+                }
+            }
+        }
+        InfoCard(
+            InfoCardContent(
+                title = "Ограничение версии",
+                simpleExplanation = report.limitationNote,
+                technicalDetails = "Реальное VPN-маршрутизирование, Xray, OpenVPN и захват пакетов не подключены в этом отчёте.",
+                recommendedAction = "Сравнивайте сетевые ошибки с этим ограничением: текущая Android-сеть может отличаться от будущего VPN-маршрута.",
+            ),
+        )
+        InfoCard(
+            InfoCardContent(
+                title = "Рекомендация",
+                simpleExplanation = report.recommendedNextAction,
+                technicalDetails = report.safetyNote,
+                recommendedAction = "Копируйте или отправляйте отчёт только вручную, если хотите передать результат другому человеку.",
+            ),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Button(onClick = onCopy) {
+                Text("Скопировать отчёт")
+            }
+            Button(onClick = onShare) {
+                Text("Поделиться отчётом")
+            }
+        }
+    }
+}
+
+@Composable
+private fun RouteDiagnosticStepRow(step: RouteDiagnosticStep) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = step.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                AssistChip(
+                    onClick = {},
+                    label = { Text(step.result?.status?.toRussianLabel() ?: "Не запускалась") },
+                )
+            }
+            Text(step.result?.simpleExplanation ?: step.skippedReason.orEmpty())
+            step.result?.let { result ->
+                LabeledText(
+                    label = "Технические детали",
+                    body = result.technicalDetailsWithElapsed(),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RouteDiagnosticHistoryCard(report: RouteDiagnosticReport) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = report.inputTarget,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text("Маршрут: ${report.selectedTunnel}")
+            Text(report.finalSummary.lineSequence().firstOrNull().orEmpty())
+        }
+    }
+}
+
+private fun Context.copyRouteReport(report: RouteDiagnosticReport) {
+    val clipboard = getSystemService(ClipboardManager::class.java)
+    clipboard.setPrimaryClip(ClipData.newPlainText("ViRouteFS route report", report.toPlainText()))
+    Toast.makeText(this, "Отчёт скопирован", Toast.LENGTH_SHORT).show()
+}
+
+private fun Context.shareRouteReport(report: RouteDiagnosticReport) {
+    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, report.toPlainText())
+    }
+    startActivity(Intent.createChooser(shareIntent, "Поделиться отчётом"))
 }
 
 @Composable

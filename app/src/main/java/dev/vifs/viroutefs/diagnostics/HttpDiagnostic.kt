@@ -114,7 +114,7 @@ class HttpDiagnostic(
                 readTimeout = timeoutMs
                 instanceFollowRedirects = false
                 requestMethod = "HEAD"
-                setRequestProperty("User-Agent", "ViRouteFS/0.2-alpha")
+                setRequestProperty("User-Agent", "ViRouteFS/0.3-alpha")
             }
             try {
                 val status = connection.responseCode
