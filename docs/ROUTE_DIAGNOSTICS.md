@@ -1,23 +1,24 @@
 # Route diagnostics
 
-ViRouteFS `0.3.0-alpha` adds route diagnostics to the Russian **Маршруты** screen.
+ViRouteFS `0.4.0-alpha` keeps user-triggered route diagnostics and connects route selection to the saved editable routing configuration.
 
-The feature answers three user questions in one report:
+## What the user enters
 
-1. Which route would ViRouteFS select for this target?
-2. Which mock rule caused that selection?
-3. What do DNS, TCP, TLS/SNI, and HTTP checks show over the current Android network?
+On the **Маршруты** screen the user can enter:
 
-## Current behavior
+- target domain, IP, URL, app keyword, package-like name, process-like name, or executable-like name;
+- port;
+- optional SNI / server name.
 
-Route diagnostics combine two different layers:
+The route engine first selects a simulated route from local config. Then diagnostics run over the current Android network only.
 
-- **Simulated routing:** the existing in-memory `RouteEngine` selects one of the sample tunnel profiles and explains the matched rule.
-- **Real current-network diagnostics:** when the user presses **Проверить маршрут**, ViRouteFS runs defensive DNS/TCP/TLS/HTTP checks through the device's current Android connection.
+## Current-network limitation
 
-The app shows this limitation directly in the UI:
+Route diagnostics do not send traffic through the selected profile yet. The app shows this limitation directly in the UI:
 
 > В этой версии диагностика выполняется через текущее подключение Android. Выбранный маршрут пока симулируется.
+
+The selected route can include a mock profile and DNS policy warning, but real VPN routing and real DNS routing are not implemented yet.
 
 ## What is included in a report
 
@@ -27,9 +28,11 @@ A copied or shared report is plain text and includes:
 - input target;
 - host and port used by diagnostics;
 - optional SNI / server name;
-- selected mock route;
-- matched rule;
+- selected simulated route;
+- matched rule and priority context;
+- DNS policy metadata;
 - plain-language route explanation;
+- mock profile and DNS leak warnings;
 - DNS result when the target looks like a domain;
 - TCP result for the target and port;
 - TLS/SNI result when port `443` is used or SNI is provided;
@@ -50,31 +53,21 @@ ViRouteFS does not create files, does not use a database for this history, and d
 
 ## Limitations
 
-Route diagnostics in `0.3.0-alpha` do **not** prove whether a future VPN route works, because real VPN routing is not implemented yet.
+Route diagnostics in `0.4.0-alpha` do **not** prove whether a future VPN route works, because real VPN routing is not implemented yet.
 
 Current limitations:
 
-- selected tunnels are mock profiles only;
+- non-Direct/Block tunnels are mock profiles only;
 - Xray is not implemented;
+- Hysteria2 is not implemented;
 - OpenVPN is not implemented;
+- WireGuard is not implemented;
+- SOCKS5 proxying is not implemented;
 - packet capture is not implemented;
 - Android `VpnService` routing is not connected to the route engine;
+- DNS policy is metadata only;
 - diagnostics use the current Android network, not a selected mock tunnel.
-
-For example, if a mock OpenVPN work route is selected but TCP fails through the current Android network, the report explains that this does not necessarily mean the future OpenVPN route is broken.
 
 ## Safety and privacy
 
-Route diagnostics are local-first and user-controlled:
-
-- no background checks;
-- no telemetry;
-- no analytics;
-- no ad tracking;
-- no cloud upload;
-- no automatic report export;
-- no packet capture;
-- no scanners;
-- no offensive security features.
-
-Users should check only their own resources or networks where they have permission.
+Route diagnostics are local-first and user-controlled: no background checks, telemetry, analytics, ad tracking, cloud upload, automatic report export, packet capture, scanners, or offensive security features.
