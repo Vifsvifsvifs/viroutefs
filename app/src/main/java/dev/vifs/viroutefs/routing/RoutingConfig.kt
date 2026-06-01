@@ -253,10 +253,27 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
         if (rule.targetProfileId !in profileIds) add("Правило ${rule.name}: профиль ${rule.targetProfileId} не найден.")
         rule.dnsPolicyId?.takeIf { it !in dnsPolicyIds }?.let { add("Правило ${rule.name}: DNS-политика $it не найдена.") }
         if (rule.type == RouteRuleType.CIDR) {
-            rule.matchers.filterNot { isValidCidr(it) }.forEach { add("Правило ${rule.name}: некорректный CIDR $it.") }
+   if (rule.type == RouteRuleType.CIDR) {
+            rule.matchers
+                .filterNot { isValidCidr(it) }
+                .forEach { add("Правило ${rule.name}: некорректный CIDR $it.") }
+        }
         }
     }
     if (config.rules.count { it.enabled && it.type == RouteRuleType.DEFAULT } != 1) {
         add("Должно быть активно ровно одно правило DEFAULT.")
     }
+}
+fun isValidCidr(text: String): Boolean {
+    val parts = text.split('/')
+    if (parts.size != 2) return false
+
+    val prefix = parts[1].toIntOrNull()?.takeIf { it in 0..32 } ?: return false
+    val octets = parts[0].split('.')
+
+    return prefix in 0..32 &&
+        octets.size == 4 &&
+        octets.all { octet ->
+            octet.toIntOrNull()?.let { value -> value in 0..255 } == true
+        }
 }
