@@ -2,29 +2,26 @@
 
 ViRouteFS (Visual Route & Flow Scanner) is an open-source Android app for human-readable traffic routing explanations and safe network diagnostics.
 
-The project is local-first and defensive by design. Version `0.3.0-alpha` adds route diagnostics: simulated route selection plus real DNS/TCP/TLS/HTTP checks over the current Android network after the user presses a button. It still does **not** implement real VPN routing, Xray, OpenVPN, packet capture, cloud upload, analytics, telemetry, ads, tracking, or offensive security features.
+The project is local-first and defensive by design. Version `0.4.0-alpha` adds editable local routing configuration: platform-neutral tunnel profiles, DNS policy metadata, route rules, scenarios, and clipboard JSON import/export. Route diagnostics still run only after a user action and still use the current Android network. ViRouteFS does **not** implement real VPN routing, Xray, OpenVPN, Hysteria2, WireGuard, SOCKS5 proxying, packet capture, cloud upload, analytics, telemetry, ads, tracking, or offensive security features.
 
-## Current milestone: 0.3-alpha
+## Current milestone: 0.4-alpha
 
 - Kotlin Android app using Gradle Kotlin DSL.
 - Jetpack Compose UI with Material 3.
 - Minimum SDK 26.
 - Package name: `dev.vifs.viroutefs`.
-- Bottom navigation screens:
-  - Dashboard
-  - VPN
-  - Routes / route simulator
-  - DNS
-  - Tools
-  - Logs
-  - Settings
-- Placeholder `ViRouteFsVpnService` declared in `AndroidManifest.xml` with `android.permission.BIND_VPN_SERVICE`.
-- Real user-triggered DNS lookup for `A` and `AAAA` records through Android system DNS.
-- Real user-triggered TCP connection check.
-- Real user-triggered TLS/SNI handshake check with protocol, cipher, and certificate details when available.
-- Real user-triggered HTTP/HTTPS check with status code, redirects, content type, and elapsed time.
-- Route Diagnostics section on the Routes screen with target, port, optional SNI, selected mock route, matched rule, current-network checks, copy/share report actions, and last five in-memory reports for the current session.
 - App version shown on the Settings screen.
+- Bottom navigation screens: Dashboard, VPN, Routes, DNS, Tools, Logs, Settings.
+- Placeholder `ViRouteFsVpnService` declared with `android.permission.BIND_VPN_SERVICE`.
+- Editable **Маршруты** screen with sections for simulator, route diagnostics, route profiles, DNS policies, rules, scenarios, and import/export.
+- Platform-neutral routing model for Android, Linux, Windows, macOS, and `any` text/app matchers.
+- Local app-private JSON persistence for routing configuration.
+- Clipboard JSON export/import; no storage permission and no cloud sync.
+- Default route profiles: Direct, Block, Xray Germany mock, Hysteria2 NL mock, OpenVPN Work mock, and SOCKS5 Work VM mock.
+- DNS policies as simulation/config metadata: System DNS, Direct DNS, Work DNS mock, and Tunnel DNS mock.
+- Route rules with enabled state, priority, target profile, optional DNS policy, APP_GROUP/APP/DOMAIN/CIDR/DEFAULT types, validation, and reset to defaults.
+- User-triggered DNS/TCP/TLS/HTTP diagnostics and route diagnostic reports with copy/share actions.
+- Last five route diagnostic reports kept in memory for the current session only.
 - Sample human-readable flow events on the Logs screen.
 
 ## Diagnostics behavior
@@ -37,13 +34,13 @@ All diagnostics are manual and user-controlled:
 - No cloud upload of diagnostic results.
 - No port scanner, vulnerability scanner, brute force, exploit automation, or offensive network behavior.
 
-The DNS screen currently uses Android's system resolver. The DNS server field remains visible for the product flow, but direct custom DNS server querying is planned for a later milestone and is clearly labeled in the UI.
+The DNS screen currently uses Android's system resolver. Per-route DNS policy is now stored in the routing config, but it is still explanation and leak-risk metadata only. Real DNS routing will be added later.
 
-See [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) and [docs/ROUTE_DIAGNOSTICS.md](docs/ROUTE_DIAGNOSTICS.md) for detailed behavior and safety boundaries.
+See [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md), [docs/ROUTE_DIAGNOSTICS.md](docs/ROUTE_DIAGNOSTICS.md), [docs/ROUTING_CONFIG.md](docs/ROUTING_CONFIG.md), and [docs/DNS_POLICY.md](docs/DNS_POLICY.md) for detailed behavior and safety boundaries.
 
 ## Route simulator status
 
-The Route Simulator and Route Diagnostics route selection are still mock/simulation-only features. They explain how future routing decisions should be presented to users, but they do not change device routing and do not start a real VPN tunnel. Route Diagnostics network checks run through the current Android connection only.
+The Route Simulator and Route Diagnostics route selection use the saved local routing configuration. They explain how future routing decisions should be presented to users, but they do not change device routing and do not start a real VPN tunnel. Route Diagnostics network checks run through the current Android connection only.
 
 ## Safety and privacy boundaries
 
@@ -59,7 +56,7 @@ Out of scope: WPS PIN brute force, password cracking, deauthentication attacks, 
 
 Install:
 
-- JDK 17 or newer.
+- JDK 17.
 - Android SDK command-line tools or Android Studio.
 - Android SDK Platform 36.
 - Android SDK Build Tools.
@@ -92,7 +89,8 @@ If you generate the Gradle wrapper locally, you can also use:
 ## Development notes
 
 - Real VPN routing is intentionally not implemented yet.
-- Xray and OpenVPN engines are intentionally not implemented yet.
+- Xray, Hysteria2, OpenVPN, WireGuard, and SOCKS5 engines are intentionally not implemented yet.
 - Packet capture is intentionally not implemented yet.
+- Routing configuration is local app-private JSON unless the user explicitly copies it.
 - Keep logs and future PCAP exports local unless the user explicitly exports them.
 - Prefer small, compiling pull requests with clear commit messages.
