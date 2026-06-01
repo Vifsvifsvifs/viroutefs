@@ -148,7 +148,7 @@
     <string name="routes_rule_default_action">Если ожидался другой маршрут, добавьте более конкретное правило выше правила по умолчанию.</string>
 
     <string name="action_checking">Проверяем…</string>
-    <string name="dns_system_resolver_title">Ограничение версии 0.3-alpha</string>
+    <string name="dns_system_resolver_title">Ограничение версии 0.4-alpha</string>
     <string name="dns_system_resolver_body">В этой версии используется системный DNS Android. Выбор DNS-сервера будет подключён позже.</string>
     <string name="diagnostic_not_run_details">Диагностика не выполнялась автоматически: ViRouteFS ждёт нажатия кнопки пользователем.</string>
     <string name="diagnostic_not_run_action">Запускайте проверки только для своих ресурсов или сетей, где у вас есть разрешение.</string>
@@ -168,7 +168,7 @@
     <string name="tools_result_not_run">Проверка ещё не запускалась. Заполните поля и нажмите кнопку проверки.</string>
     <string name="settings_version_title">Версия приложения</string>
     <string name="settings_version_simple">Установлена версия ViRouteFS %1$s.</string>
-    <string name="settings_version_details">versionCode: %1$d. Веха: 0.3-alpha — диагностика маршрута с симуляцией выбора и проверками текущей сети.</string>
+    <string name="settings_version_details">versionCode: %1$d. Веха: 0.4-alpha — редактируемая локальная конфигурация маршрутов и DNS-политик.</string>
     <string name="settings_version_action">Обновляйте приложение только из доверенного источника и проверяйте список изменений перед установкой.</string>
 
 </resources>

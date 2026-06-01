@@ -130,7 +130,9 @@ class RouteDiagnosticRunner(
         } else {
             "Проверка через текущее подключение Android успешна: ${runResults.joinToString { it.first }} отвечают без критических ошибок."
         }
-        return "$routeText\n$statusText\nТак как реальное VPN-маршрутизирование ещё не подключено, результат сетевой проверки не доказывает, что будущий маршрут работает или сломан."
+        val dnsText = "DNS-политика: ${routeDecision.dnsPolicySummary}. ${routeDecision.dnsLeakSummary}"
+        val warningsText = routeDecision.warnings.joinToString("\n") { "Предупреждение: $it" }
+        return "$routeText\n$dnsText\n$statusText\n$warningsText\nТак как реальное VPN-маршрутизирование ещё не подключено, результат сетевой проверки не доказывает, что будущий маршрут работает или сломан."
     }
 
     private fun buildRecommendation(
@@ -139,7 +141,7 @@ class RouteDiagnosticRunner(
     ): String {
         val firstError = steps.firstOrNull { it.result?.status == DiagnosticStatus.ERROR }?.result
         return firstError?.recommendedAction
-            ?: routeDecision.recommendedAction + " Проверьте правило и повторите диагностику после подключения реального VPN-маршрута в будущих версиях."
+            ?: routeDecision.recommendedAction + " DNS-политика сейчас используется только для объяснения риска утечки. Проверьте правило и повторите диагностику после подключения реального VPN-маршрута в будущих версиях."
     }
 
     private data class ParsedTarget(
