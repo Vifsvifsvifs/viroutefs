@@ -3,7 +3,6 @@ package dev.vifs.viroutefs
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -72,7 +71,6 @@ import dev.vifs.viroutefs.diagnostics.TcpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TlsDiagnostic
 import dev.vifs.viroutefs.route.RouteDiagnosticReport
 import dev.vifs.viroutefs.route.RouteDiagnosticRunner
-import dev.vifs.viroutefs.route.RouteDiagnosticStep
 import dev.vifs.viroutefs.routing.RouteDecision
 import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.routing.RouteRule
