@@ -30,6 +30,7 @@ data class RouteDiagnosticReport(
     val selectedTunnel: String = routeDecision.tunnelProfile.name
     val matchedRule: String = routeDecision.matchedRule.name
     val routeExplanation: String = routeDecision.plainReason
+    val dnsPolicy: String = routeDecision.dnsPolicySummary
     val limitationNote: String = VERSION_LIMITATION_NOTE
     val safetyNote: String = SAFETY_NOTE
 
@@ -45,7 +46,9 @@ data class RouteDiagnosticReport(
         appendLine()
         appendLine("Выбранный маршрут: $selectedTunnel")
         appendLine("Сработавшее правило: $matchedRule")
+        appendLine("DNS-политика: $dnsPolicy")
         appendLine("Почему выбран: $routeExplanation")
+        routeDecision.warnings.forEach { appendLine("Предупреждение: $it") }
         appendLine()
         appendLine("Проверки:")
         checks().forEach { step ->

@@ -48,6 +48,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
@@ -112,11 +113,6 @@ private data class InfoCardContent(
     val simpleExplanation: String,
     val technicalDetails: String,
     val recommendedAction: String,
-)
-
-private data class RouteSampleData(
-    val tunnelProfiles: List<TunnelProfile>,
-    val routeRules: List<RouteRule>,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -236,11 +232,16 @@ private fun VpnScreen(contentPadding: PaddingValues) {
 @Composable
 private fun RoutesScreen(contentPadding: PaddingValues) {
     val context = LocalContext.current
-    val sampleData = rememberRouteSampleData()
-    val routeEngine = remember(sampleData) { RouteEngine(sampleData.tunnelProfiles, sampleData.routeRules) }
-    val routeDiagnosticRunner = remember(routeEngine) { RouteDiagnosticRunner(routeEngine) }
-    val defaultInput = stringResource(R.string.routes_default_input)
+    val repository = remember(context) { dev.vifs.viroutefs.routing.RoutingConfigRepository(context.applicationContext) }
     val scope = rememberCoroutineScope()
+    val defaultInput = stringResource(R.string.routes_default_input)
+
+    var routingConfig by remember { mutableStateOf(dev.vifs.viroutefs.routing.RoutingConfigDefaults.defaultConfig()) }
+    var configMessage by remember { mutableStateOf<String?>(null) }
+    var loaded by remember { mutableStateOf(false) }
+    val validationErrors = remember(routingConfig) { dev.vifs.viroutefs.routing.validateRoutingConfig(routingConfig) }
+    val routeEngine = remember(routingConfig) { RouteEngine(routingConfig) }
+    val routeDiagnosticRunner = remember(routeEngine) { RouteDiagnosticRunner(routeEngine) }
 
     var simulatorInput by rememberSaveable { mutableStateOf(defaultInput) }
     var routeDecision by remember { mutableStateOf(routeEngine.simulate(defaultInput)) }
@@ -252,50 +253,44 @@ private fun RoutesScreen(contentPadding: PaddingValues) {
     var routeDiagnosticReport by remember { mutableStateOf<RouteDiagnosticReport?>(null) }
     var routeDiagnosticHistory by remember { mutableStateOf<List<RouteDiagnosticReport>>(emptyList()) }
 
+    fun applyConfig(newConfig: dev.vifs.viroutefs.routing.RoutingConfig, message: String) {
+        routingConfig = newConfig
+        routeDecision = RouteEngine(newConfig).simulate(simulatorInput)
+        configMessage = message
+        scope.launch { repository.save(newConfig) }
+    }
+
+    LaunchedEffect(Unit) {
+        val result = repository.load()
+        routingConfig = result.config
+        routeDecision = RouteEngine(result.config).simulate(simulatorInput)
+        configMessage = result.errorMessage
+        loaded = true
+    }
+
     ScreenList(contentPadding = contentPadding) {
         item {
             SectionHeader(
                 title = stringResource(R.string.screen_routes),
-                subtitle = stringResource(R.string.routes_header_subtitle),
+                subtitle = "Редактируемая локальная конфигурация 0.4: симулятор, диагностика, профили, DNS-политики, правила, сценарии и JSON-импорт/экспорт.",
             )
         }
         item {
             PlaceholderCard(
-                title = stringResource(R.string.routes_mock_title),
-                body = stringResource(R.string.routes_mock_body),
+                title = "Локально и без скрытых проверок",
+                body = "Конфигурация хранится только в app-private JSON. Реальное VPN/DNS-маршрутизирование, Xray, OpenVPN, WireGuard, Hysteria2, SOCKS5 и захват пакетов пока не реализованы.",
             )
         }
-        item {
-            Text(
-                text = stringResource(R.string.routes_tunnels_title),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
+        configMessage?.let { message ->
+            item { PlaceholderCard(title = "Статус конфигурации", body = message) }
         }
-        items(sampleData.tunnelProfiles) { tunnelProfile ->
-            TunnelProfileCard(tunnelProfile)
-        }
-        item {
-            Text(
-                text = stringResource(R.string.routes_rules_title),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-        items(sampleData.routeRules) { routeRule ->
-            RouteRuleCard(routeRule, sampleData.tunnelProfiles)
+        if (validationErrors.isNotEmpty()) {
+            item { PlaceholderCard(title = "Ошибки проверки", body = validationErrors.joinToString("\n")) }
         }
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.routes_simulator_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Симулятор", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     OutlinedTextField(
                         value = simulatorInput,
                         onValueChange = { simulatorInput = it },
@@ -303,20 +298,13 @@ private fun RoutesScreen(contentPadding: PaddingValues) {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Button(
-                        onClick = {
-                            routeDecision = routeEngine.simulate(simulatorInput)
-                        },
-                        modifier = Modifier.align(Alignment.End),
-                    ) {
+                    Button(onClick = { routeDecision = routeEngine.simulate(simulatorInput) }, modifier = Modifier.align(Alignment.End)) {
                         Text(stringResource(R.string.routes_simulator_button))
                     }
                 }
             }
         }
-        item {
-            RouteDecisionCard(routeDecision)
-        }
+        item { RouteDecisionCard(routeDecision) }
         item {
             RouteDiagnosticsInputCard(
                 target = diagnosticTarget,
@@ -344,15 +332,7 @@ private fun RoutesScreen(contentPadding: PaddingValues) {
         }
         item {
             routeDiagnosticReport?.let { report ->
-                RouteDiagnosticReportCard(
-                    report = report,
-                    onCopy = {
-                        context.copyRouteReport(report)
-                    },
-                    onShare = {
-                        context.shareRouteReport(report)
-                    },
-                )
+                RouteDiagnosticReportCard(report = report, onCopy = { context.copyRouteReport(report) }, onShare = { context.shareRouteReport(report) })
             } ?: InfoCard(
                 InfoCardContent(
                     title = "Итог",
@@ -362,416 +342,256 @@ private fun RoutesScreen(contentPadding: PaddingValues) {
                 ),
             )
         }
+        item { SectionTitle("Профили маршрутов") }
+        items(routingConfig.profiles) { profile ->
+            EditableProfileCard(
+                profile = profile,
+                usedByRules = routingConfig.rules.any { it.enabled && it.targetProfileId == profile.id },
+                onChange = { updated ->
+                    applyConfig(routingConfig.copy(profiles = routingConfig.profiles.map { if (it.id == profile.id) updated else it }), "Профиль сохранён")
+                },
+                onDelete = {
+                    applyConfig(routingConfig.copy(profiles = routingConfig.profiles.filterNot { it.id == profile.id }), "Профиль удалён")
+                },
+            )
+        }
         item {
-            Text(
-                text = "Последние проверки",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
+            Button(onClick = {
+                val id = "profile_${System.currentTimeMillis()}"
+                applyConfig(
+                    routingConfig.copy(profiles = routingConfig.profiles + TunnelProfile(id, "Новый профиль", TunnelType.Direct, "Описание профиля", mockOnly = false)),
+                    "Создан новый профиль",
+                )
+            }) { Text("Создать профиль") }
+        }
+        item { SectionTitle("DNS-политики") }
+        items(routingConfig.dnsPolicies) { policy ->
+            DnsPolicyCard(policy, routingConfig.profiles)
+        }
+        item { Text(dev.vifs.viroutefs.routing.DNS_POLICY_LIMITATION) }
+        item { SectionTitle("Правила маршрутизации") }
+        items(routingConfig.rules.sortedBy { it.priority }) { rule ->
+            EditableRouteRuleCard(
+                rule = rule,
+                profiles = routingConfig.profiles,
+                dnsPolicies = routingConfig.dnsPolicies,
+                onChange = { updated ->
+                    applyConfig(routingConfig.copy(rules = routingConfig.rules.map { if (it.id == rule.id) updated else it }), "Правило сохранено")
+                },
+                onDelete = { applyConfig(routingConfig.copy(rules = routingConfig.rules.filterNot { it.id == rule.id }), "Правило удалено") },
             )
         }
+        item {
+            Button(onClick = {
+                val id = "rule_${System.currentTimeMillis()}"
+                val profileId = routingConfig.profiles.firstOrNull()?.id.orEmpty()
+                val dnsId = routingConfig.dnsPolicies.firstOrNull()?.id
+                applyConfig(
+                    routingConfig.copy(rules = routingConfig.rules + RouteRule(id, "Новое правило", RouteRuleType.DOMAIN, profileId, dnsId, 100, listOf("example.com"), reason = "Пользовательское правило.", technicalDetails = "Создано в редакторе маршрутов.", recommendedAction = "Проверьте правило симулятором.")),
+                    "Создано новое правило",
+                )
+            }) { Text("Создать правило") }
+        }
+        item { SectionTitle("Сценарии") }
+        item {
+            ScenarioButtons(onApply = { name, config -> applyConfig(config, "Применён сценарий: $name") })
+        }
+        item { SectionTitle("Импорт/экспорт") }
+        item {
+            ImportExportCard(
+                canExport = loaded,
+                onCopy = {
+                    val json = repository.exportJson(routingConfig)
+                    context.copyText("ViRouteFS routing config", json)
+                    configMessage = "Конфигурация скопирована в буфер обмена"
+                },
+                onPaste = {
+                    val text = context.readClipboardText()
+                    if (text.isBlank()) {
+                        configMessage = "Буфер обмена пуст или содержит не текст"
+                    } else {
+                        repository.importJson(text).onSuccess { imported ->
+                            applyConfig(imported, "Конфигурация импортирована")
+                        }.onFailure { error ->
+                            configMessage = "Импорт не выполнен: ${error.message.orEmpty()}"
+                        }
+                    }
+                },
+                onReset = { applyConfig(dev.vifs.viroutefs.routing.RoutingConfigDefaults.defaultConfig(), "Восстановлены настройки по умолчанию") },
+            )
+        }
+        item { SectionTitle("Последние проверки") }
         if (routeDiagnosticHistory.isEmpty()) {
-            item {
-                Text("История текущей сессии пока пуста. Отчёты не сохраняются в файлы или базу данных.")
-            }
+            item { Text("История текущей сессии пока пуста. Отчёты не сохраняются в файлы или базу данных.") }
         } else {
-            items(routeDiagnosticHistory) { report ->
-                RouteDiagnosticHistoryCard(report)
-            }
+            items(routeDiagnosticHistory) { report -> RouteDiagnosticHistoryCard(report) }
         }
     }
 }
 
 @Composable
-private fun rememberRouteSampleData(): RouteSampleData {
-    val tunnelProfiles = listOf(
-        TunnelProfile(
-            id = "direct",
-            name = stringResource(R.string.routes_tunnel_direct_name),
-            type = TunnelType.Direct,
-            description = stringResource(R.string.routes_tunnel_direct_description),
-        ),
-        TunnelProfile(
-            id = "block",
-            name = stringResource(R.string.routes_tunnel_block_name),
-            type = TunnelType.Block,
-            description = stringResource(R.string.routes_tunnel_block_description),
-        ),
-        TunnelProfile(
-            id = "xray_de",
-            name = stringResource(R.string.routes_tunnel_xray_germany_name),
-            type = TunnelType.Xray,
-            description = stringResource(R.string.routes_tunnel_xray_germany_description),
-        ),
-        TunnelProfile(
-            id = "hysteria2_nl",
-            name = stringResource(R.string.routes_tunnel_hysteria2_nl_name),
-            type = TunnelType.Hysteria2,
-            description = stringResource(R.string.routes_tunnel_hysteria2_nl_description),
-        ),
-        TunnelProfile(
-            id = "openvpn_work",
-            name = stringResource(R.string.routes_tunnel_openvpn_work_name),
-            type = TunnelType.OpenVpn,
-            description = stringResource(R.string.routes_tunnel_openvpn_work_description),
-        ),
-    )
-    val routeRules = listOf(
-        RouteRule(
-            id = "banking_direct",
-            name = stringResource(R.string.routes_rule_banking_name),
-            type = RouteRuleType.APP_GROUP,
-            targetTunnelId = "direct",
-            priority = 10,
-            matchers = listOf("sber", "tinkoff", "bank"),
-            reason = stringResource(R.string.routes_rule_banking_reason),
-            technicalDetails = stringResource(R.string.routes_rule_technical, RouteRuleType.APP_GROUP.name, 10, "sber, tinkoff, bank"),
-            recommendedAction = stringResource(R.string.routes_rule_banking_action),
-        ),
-        RouteRule(
-            id = "telegram_xray",
-            name = stringResource(R.string.routes_rule_telegram_name),
-            type = RouteRuleType.APP_GROUP,
-            targetTunnelId = "xray_de",
-            priority = 20,
-            matchers = listOf("telegram", "tg"),
-            reason = stringResource(R.string.routes_rule_telegram_reason),
-            technicalDetails = stringResource(R.string.routes_rule_technical, RouteRuleType.APP_GROUP.name, 20, "telegram, tg"),
-            recommendedAction = stringResource(R.string.routes_rule_telegram_action),
-        ),
-        RouteRule(
-            id = "youtube_hysteria2",
-            name = stringResource(R.string.routes_rule_youtube_name),
-            type = RouteRuleType.DOMAIN,
-            targetTunnelId = "hysteria2_nl",
-            priority = 30,
-            matchers = listOf("youtube", "youtu.be", "googlevideo"),
-            reason = stringResource(R.string.routes_rule_youtube_reason),
-            technicalDetails = stringResource(R.string.routes_rule_technical, RouteRuleType.DOMAIN.name, 30, "youtube, youtu.be, googlevideo"),
-            recommendedAction = stringResource(R.string.routes_rule_youtube_action),
-        ),
-        RouteRule(
-            id = "work_10",
-            name = stringResource(R.string.routes_rule_work_10_name),
-            type = RouteRuleType.CIDR,
-            targetTunnelId = "openvpn_work",
-            priority = 40,
-            matchers = listOf("10.0.0.0/8"),
-            reason = stringResource(R.string.routes_rule_work_10_reason),
-            technicalDetails = stringResource(R.string.routes_rule_technical, RouteRuleType.CIDR.name, 40, "10.0.0.0/8"),
-            recommendedAction = stringResource(R.string.routes_rule_work_action),
-        ),
-        RouteRule(
-            id = "work_172",
-            name = stringResource(R.string.routes_rule_work_172_name),
-            type = RouteRuleType.CIDR,
-            targetTunnelId = "openvpn_work",
-            priority = 50,
-            matchers = listOf("172.16.1.0/22"),
-            reason = stringResource(R.string.routes_rule_work_172_reason),
-            technicalDetails = stringResource(R.string.routes_rule_technical, RouteRuleType.CIDR.name, 50, "172.16.1.0/22"),
-            recommendedAction = stringResource(R.string.routes_rule_work_action),
-        ),
-        RouteRule(
-            id = "blocked_domain",
-            name = stringResource(R.string.routes_rule_blocked_name),
-            type = RouteRuleType.DOMAIN,
-            targetTunnelId = "block",
-            priority = 60,
-            matchers = listOf("blocked.example", "suspicious.example", "malware.test"),
-            reason = stringResource(R.string.routes_rule_blocked_reason),
-            technicalDetails = stringResource(R.string.routes_rule_technical, RouteRuleType.DOMAIN.name, 60, "blocked.example, suspicious.example, malware.test"),
-            recommendedAction = stringResource(R.string.routes_rule_blocked_action),
-        ),
-        RouteRule(
-            id = "default_direct",
-            name = stringResource(R.string.routes_rule_default_name),
-            type = RouteRuleType.DEFAULT,
-            targetTunnelId = "direct",
-            priority = 1000,
-            matchers = listOf("*"),
-            reason = stringResource(R.string.routes_rule_default_reason),
-            technicalDetails = stringResource(R.string.routes_rule_technical, RouteRuleType.DEFAULT.name, 1000, "*"),
-            recommendedAction = stringResource(R.string.routes_rule_default_action),
-        ),
-    )
-
-    return RouteSampleData(tunnelProfiles, routeRules)
+private fun SectionTitle(text: String) {
+    Text(text = text, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
 }
 
 @Composable
-private fun TunnelProfileCard(tunnelProfile: TunnelProfile) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.AltRoute, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = tunnelProfile.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            AssistChip(onClick = {}, label = { Text(tunnelProfile.type.name) })
-            Text(text = tunnelProfile.description)
-        }
-    }
-}
-
-@Composable
-private fun RouteRuleCard(
-    routeRule: RouteRule,
-    tunnelProfiles: List<TunnelProfile>,
+private fun EditableProfileCard(
+    profile: TunnelProfile,
+    usedByRules: Boolean,
+    onChange: (TunnelProfile) -> Unit,
+    onDelete: () -> Unit,
 ) {
-    val targetTunnelName = tunnelProfiles.first { it.id == routeRule.targetTunnelId }.name
-
+    var name by remember(profile.id) { mutableStateOf(profile.name) }
+    var description by remember(profile.id) { mutableStateOf(profile.description) }
+    var type by remember(profile.id) { mutableStateOf(profile.type) }
+    var enabled by remember(profile.id) { mutableStateOf(profile.enabled) }
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = routeRule.name,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(text = stringResource(R.string.routes_rule_target, targetTunnelName))
-            Text(text = stringResource(R.string.routes_rule_matchers, routeRule.matchers.joinToString()))
-            Text(text = stringResource(R.string.routes_rule_priority, routeRule.type.name, routeRule.priority))
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("${profile.id}", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                Text("Вкл.")
+                androidx.compose.material3.Switch(checked = enabled, onCheckedChange = { enabled = it })
+            }
+            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Имя") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            CycleEnumRow(label = "Тип", value = type.label, onNext = { type = TunnelType.entries[(type.ordinal + 1) % TunnelType.entries.size] })
+            OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text("Описание") }, modifier = Modifier.fillMaxWidth())
+            if (type.isMockOnly) Text(dev.vifs.viroutefs.routing.MOCK_PROFILE_LIMITATION)
+            profile.platformNotes?.let { Text(it) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { onChange(profile.copy(name = name.trim(), description = description.trim(), type = type, enabled = enabled, mockOnly = type.isMockOnly)) }) { Text("Сохранить") }
+                Button(onClick = onDelete, enabled = !usedByRules) { Text("Удалить") }
+            }
+            if (usedByRules) Text("Нельзя удалить: активные правила используют этот профиль.")
         }
     }
 }
 
 @Composable
-private fun RouteDecisionCard(routeDecision: RouteDecision) {
-    InfoCard(
-        InfoCardContent(
-            title = stringResource(R.string.routes_result_title),
-            simpleExplanation = stringResource(
-                R.string.routes_result_simple,
-                routeDecision.input,
-                routeDecision.tunnelProfile.name,
-            ),
-            technicalDetails = stringResource(
-                R.string.routes_result_details,
-                routeDecision.matchedRule.name,
-                routeDecision.technicalDetails,
-            ),
-            recommendedAction = routeDecision.recommendedAction,
-        ),
-    )
-    Spacer(modifier = Modifier.height(8.dp))
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-        ),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            LabeledText(
-                label = stringResource(R.string.routes_result_matched_rule),
-                body = routeDecision.matchedRule.name,
-            )
-            LabeledText(
-                label = stringResource(R.string.routes_result_reason),
-                body = routeDecision.plainReason,
-            )
-        }
-    }
-}
-
-
-@Composable
-private fun RouteDiagnosticsInputCard(
-    target: String,
-    port: String,
-    sni: String,
-    isRunning: Boolean,
-    onTargetChange: (String) -> Unit,
-    onPortChange: (String) -> Unit,
-    onSniChange: (String) -> Unit,
-    onRun: () -> Unit,
-) {
-    DiagnosticInputCard(title = "Диагностика маршрута") {
-        Text("Проверяйте только свои ресурсы или сети, где у вас есть разрешение.")
-        Text("В этой версии диагностика выполняется через текущее подключение Android. Выбранный маршрут пока симулируется.")
-        OutlinedTextField(
-            value = target,
-            onValueChange = onTargetChange,
-            label = { Text("Домен, IP или приложение") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(
-                value = port,
-                onValueChange = onPortChange,
-                label = { Text("Порт") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
-            OutlinedTextField(
-                value = sni,
-                onValueChange = onSniChange,
-                label = { Text("SNI / имя сервера") },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Button(
-            onClick = onRun,
-            enabled = !isRunning,
-            modifier = Modifier.align(Alignment.End),
-        ) {
-            Text(if (isRunning) stringResource(R.string.action_checking) else "Проверить маршрут")
-        }
-    }
-}
-
-@Composable
-private fun RouteDiagnosticReportCard(
-    report: RouteDiagnosticReport,
-    onCopy: () -> Unit,
-    onShare: () -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        InfoCard(
-            InfoCardContent(
-                title = "Итог",
-                simpleExplanation = report.finalSummary,
-                technicalDetails = "Цель: ${report.inputTarget}\nХост проверки: ${report.hostForDiagnostics}\nПорт: ${report.port}\nВремя выполнения: ${report.elapsedMs} мс",
-                recommendedAction = report.recommendedNextAction,
-            ),
-        )
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-            ),
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                LabeledText(label = "Выбранный маршрут", body = report.selectedTunnel)
-                LabeledText(label = "Сработавшее правило", body = report.matchedRule)
-                LabeledText(label = "Почему выбран", body = report.routeExplanation)
-            }
-        }
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    text = "Проверки",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                report.checks().forEach { step ->
-                    RouteDiagnosticStepRow(step)
-                }
-            }
-        }
-        InfoCard(
-            InfoCardContent(
-                title = "Ограничение версии",
-                simpleExplanation = report.limitationNote,
-                technicalDetails = "Реальное VPN-маршрутизирование, Xray, OpenVPN и захват пакетов не подключены в этом отчёте.",
-                recommendedAction = "Сравнивайте сетевые ошибки с этим ограничением: текущая Android-сеть может отличаться от будущего VPN-маршрута.",
-            ),
-        )
-        InfoCard(
-            InfoCardContent(
-                title = "Рекомендация",
-                simpleExplanation = report.recommendedNextAction,
-                technicalDetails = report.safetyNote,
-                recommendedAction = "Копируйте или отправляйте отчёт только вручную, если хотите передать результат другому человеку.",
-            ),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = onCopy) {
-                Text("Скопировать отчёт")
-            }
-            Button(onClick = onShare) {
-                Text("Поделиться отчётом")
-            }
-        }
-    }
-}
-
-@Composable
-private fun RouteDiagnosticStepRow(step: RouteDiagnosticStep) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        ),
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = step.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
-                )
-                AssistChip(
-                    onClick = {},
-                    label = { Text(step.result?.status?.toRussianLabel() ?: "Не запускалась") },
-                )
-            }
-            Text(step.result?.simpleExplanation ?: step.skippedReason.orEmpty())
-            step.result?.let { result ->
-                LabeledText(
-                    label = "Технические детали",
-                    body = result.technicalDetailsWithElapsed(),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun RouteDiagnosticHistoryCard(report: RouteDiagnosticReport) {
+private fun DnsPolicyCard(policy: dev.vifs.viroutefs.routing.DnsPolicy, profiles: List<TunnelProfile>) {
+    val profileName = policy.resolveThroughProfileId?.let { id -> profiles.firstOrNull { it.id == id }?.name ?: id }
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = report.inputTarget,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text("Маршрут: ${report.selectedTunnel}")
-            Text(report.finalSummary.lineSequence().firstOrNull().orEmpty())
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(policy.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(policy.type.label)
+            Text(policy.description)
+            policy.serverText?.let { Text("Сервер: $it") }
+            profileName?.let { Text("Ожидаемый профиль: $it") }
+            Text(if (policy.enabled) "Включена" else "Отключена")
         }
     }
 }
 
-private fun Context.copyRouteReport(report: RouteDiagnosticReport) {
+@Composable
+private fun EditableRouteRuleCard(
+    rule: RouteRule,
+    profiles: List<TunnelProfile>,
+    dnsPolicies: List<dev.vifs.viroutefs.routing.DnsPolicy>,
+    onChange: (RouteRule) -> Unit,
+    onDelete: () -> Unit,
+) {
+    var name by remember(rule.id) { mutableStateOf(rule.name) }
+    var type by remember(rule.id) { mutableStateOf(rule.type) }
+    var matchersText by remember(rule.id) { mutableStateOf(rule.matchers.joinToString(", ")) }
+    var targetProfileId by remember(rule.id) { mutableStateOf(rule.targetProfileId) }
+    var dnsPolicyId by remember(rule.id) { mutableStateOf(rule.dnsPolicyId.orEmpty()) }
+    var priorityText by remember(rule.id) { mutableStateOf(rule.priority.toString()) }
+    var enabled by remember(rule.id) { mutableStateOf(rule.enabled) }
+    val priority = priorityText.toIntOrNull()
+    val matchers = matchersText.split(',').map { it.trim() }.filter { it.isNotBlank() }
+    val errors = buildList {
+        if (name.isBlank()) add("имя пустое")
+        if (type != RouteRuleType.DEFAULT && matchers.isEmpty()) add("нет матчеров")
+        if (priority == null || priority < 0) add("приоритет некорректен")
+        if (targetProfileId !in profiles.map { it.id }) add("профиль не найден")
+        if (dnsPolicyId.isNotBlank() && dnsPolicyId !in dnsPolicies.map { it.id }) add("DNS-политика не найдена")
+        if (type == RouteRuleType.CIDR) matchers.filterNot { dev.vifs.viroutefs.routing.isValidCidr(it) }.forEach { add("CIDR $it некорректен") }
+    }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(rule.id, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                Text("Вкл.")
+                androidx.compose.material3.Switch(checked = enabled, onCheckedChange = { enabled = it })
+            }
+            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Имя правила") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            CycleEnumRow(label = "Тип", value = type.name, onNext = { type = RouteRuleType.entries[(type.ordinal + 1) % RouteRuleType.entries.size] })
+            OutlinedTextField(value = matchersText, onValueChange = { matchersText = it }, label = { Text("Матчеры через запятую") }, modifier = Modifier.fillMaxWidth())
+            CycleChoiceRow("Профиль", profiles, targetProfileId, { it.name }) { targetProfileId = it.id }
+            CycleChoiceRow("DNS", dnsPolicies, dnsPolicyId, { it.name }) { dnsPolicyId = it.id }
+            OutlinedTextField(value = priorityText, onValueChange = { priorityText = it.filter(Char::isDigit) }, label = { Text("Приоритет") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
+            Text("Причина: ${rule.reason}")
+            if (errors.isNotEmpty()) Text("Ошибки: ${errors.joinToString()}", color = MaterialTheme.colorScheme.error)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        onChange(rule.copy(name = name.trim(), type = type, matchers = matchers, targetProfileId = targetProfileId, dnsPolicyId = dnsPolicyId.takeIf { it.isNotBlank() }, priority = priority ?: rule.priority, enabled = enabled))
+                    },
+                    enabled = errors.isEmpty(),
+                ) { Text("Сохранить") }
+                Button(onClick = onDelete) { Text("Удалить") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun <T> CycleChoiceRow(label: String, values: List<T>, currentId: String, name: (T) -> String, onSelect: (T) -> Unit) where T : Any {
+    val currentIndex = values.indexOfFirst { item ->
+        when (item) {
+            is TunnelProfile -> item.id == currentId
+            is dev.vifs.viroutefs.routing.DnsPolicy -> item.id == currentId
+            else -> false
+        }
+    }.coerceAtLeast(0)
+    val currentName = values.getOrNull(currentIndex)?.let(name) ?: "не выбрано"
+    CycleEnumRow(label = label, value = currentName, onNext = {
+        if (values.isNotEmpty()) onSelect(values[(currentIndex + 1) % values.size])
+    })
+}
+
+@Composable
+private fun CycleEnumRow(label: String, value: String, onNext: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("$label: $value", modifier = Modifier.weight(1f))
+        Button(onClick = onNext) { Text("Выбрать") }
+    }
+}
+
+@Composable
+private fun ScenarioButtons(onApply: (String, dev.vifs.viroutefs.routing.RoutingConfig) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Сценарии заменяют текущую конфигурацию преднастроенным локальным набором. Перед применением скопируйте JSON, если хотите сохранить текущие правила.")
+        Button(onClick = { onApply("Работа и личное", dev.vifs.viroutefs.routing.RoutingConfigDefaults.workPersonalConfig()) }) { Text("Работа и личное") }
+        Text("Корпоративные домены и рабочие CIDR идут через OpenVPN Work mock, личное остаётся по правилам.")
+        Button(onClick = { onApply("Медиа через быстрый тоннель", dev.vifs.viroutefs.routing.RoutingConfigDefaults.mediaFastTunnelConfig()) }) { Text("Медиа через быстрый тоннель") }
+        Text("YouTube/googlevideo получают высокий приоритет Hysteria2 NL mock.")
+        Button(onClick = { onApply("Банки напрямую", dev.vifs.viroutefs.routing.RoutingConfigDefaults.banksDirectConfig()) }) { Text("Банки напрямую") }
+        Text("Банки, госуслуги и платежи получают максимальный приоритет Direct DNS/Direct.")
+        Button(onClick = { onApply("Безопасный дефолт", dev.vifs.viroutefs.routing.RoutingConfigDefaults.safeDefaultConfig()) }) { Text("Безопасный дефолт") }
+        Text("Неизвестные направления блокируются, пока пользователь не добавит явное правило.")
+    }
+}
+
+@Composable
+private fun ImportExportCard(canExport: Boolean, onCopy: () -> Unit, onPaste: () -> Unit, onReset: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("JSON включает version, profiles, dnsPolicies и rules. Буфер обмена используется только по нажатию кнопки.")
+            Button(onClick = onCopy, enabled = canExport) { Text("Скопировать конфигурацию") }
+            Button(onClick = onPaste) { Text("Вставить конфигурацию") }
+            Button(onClick = onReset) { Text("Сбросить к настройкам по умолчанию") }
+        }
+    }
+}
+
+private fun Context.copyText(label: String, text: String) {
     val clipboard = getSystemService(ClipboardManager::class.java)
-    clipboard.setPrimaryClip(ClipData.newPlainText("ViRouteFS route report", report.toPlainText()))
-    Toast.makeText(this, "Отчёт скопирован", Toast.LENGTH_SHORT).show()
+    clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+    Toast.makeText(this, "Скопировано", Toast.LENGTH_SHORT).show()
 }
 
-private fun Context.shareRouteReport(report: RouteDiagnosticReport) {
-    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_TEXT, report.toPlainText())
-    }
-    startActivity(Intent.createChooser(shareIntent, "Поделиться отчётом"))
-}
+private fun Context.readClipboardText(): String =
+    getSystemService(ClipboardManager::class.java).primaryClip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
 
 @Composable
 private fun DnsScreen(contentPadding: PaddingValues) {
