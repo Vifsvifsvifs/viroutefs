@@ -860,7 +860,7 @@ private fun SettingsScreen(
                     updateChecking = true
                     scope.launch {
                         try {
-                            updateResult = UpdateChecker().check(BuildConfig.VERSION_NAME)
+                            updateResult = UpdateChecker().check(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
                         } finally {
                             updateChecking = false
                         }
@@ -948,6 +948,7 @@ private fun ReleaseResult(text: UiText, release: ReleaseInfo, title: String) {
     val context = LocalContext.current
     Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
     Text(release.name, style = MaterialTheme.typography.bodySmall)
+    release.versionCode?.let { Text("versionCode $it", style = MaterialTheme.typography.bodySmall) }
     release.publishedAt?.let { Text(text.publishedAt(it), style = MaterialTheme.typography.bodySmall) }
     release.notes?.let { Details(text.details, it) }
     OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.htmlUrl))) }) {

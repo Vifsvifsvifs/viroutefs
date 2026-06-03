@@ -33,6 +33,7 @@ internal data class AppVersion(
 
 internal data class ReleaseInfo(
     val version: AppVersion,
+    val versionCode: Int?,
     val displayVersion: String,
     val name: String,
     val publishedAt: String?,
@@ -50,15 +51,15 @@ internal sealed interface UpdateCheckResult {
 internal class UpdateChecker(
     private val apiUrl: String = GITHUB_RELEASES_API_URL,
 ) {
-    suspend fun check(currentVersionName: String): UpdateCheckResult = withContext(Dispatchers.IO) {
+    suspend fun check(currentVersionName: String, currentVersionCode: Int): UpdateCheckResult = withContext(Dispatchers.IO) {
         runCatching {
             val currentVersion = parseAppVersion(currentVersionName)
                 ?: return@withContext UpdateCheckResult.Error("Current app version is not parseable: $currentVersionName")
             val releases = fetchReleases()
-            val latest = releases.maxByOrNull { it.version }
+            val latest = releases.maxWithOrNull(compareBy<ReleaseInfo> { it.version }.thenBy { it.versionCode ?: -1 })
                 ?: return@withContext UpdateCheckResult.NoReleaseFound
 
-            if (latest.version > currentVersion) {
+            if (isNewerRelease(latest, currentVersion, currentVersionCode)) {
                 UpdateCheckResult.NewerRelease(latest)
             } else {
                 UpdateCheckResult.UpToDate(latest)
@@ -99,13 +100,15 @@ internal fun parseReleases(json: String): List<ReleaseInfo> {
             val releaseName = release.optString("name")
             val versionText = listOf(tagName, releaseName).firstNotNullOfOrNull(::parseAppVersion) ?: continue
             val displayVersion = tagName.ifBlank { versionText.toString() }
+            val body = release.optString("body")
             val publishedAt = release.optString("published_at").takeIf { it.isNotBlank() }?.let(::formatPublishedAt)
-            val notes = release.optString("body").takeIf { it.isNotBlank() }?.let(::shortReleaseNotes)
+            val notes = body.takeIf { it.isNotBlank() }?.let(::shortReleaseNotes)
             val htmlUrl = release.optString("html_url").takeIf { it.isNotBlank() } ?: GITHUB_RELEASES_WEB_URL
 
             add(
                 ReleaseInfo(
                     version = versionText,
+                    versionCode = parseVersionCode(listOf(tagName, releaseName, body).joinToString("\n")),
                     displayVersion = displayVersion,
                     name = releaseName.ifBlank { displayVersion },
                     publishedAt = publishedAt,
@@ -115,6 +118,18 @@ internal fun parseReleases(json: String): List<ReleaseInfo> {
             )
         }
     }
+}
+
+internal fun parseVersionCode(value: String): Int? {
+    val match = Regex("""\bversionCode\s*[:=]?\s*(\d+)\b""", RegexOption.IGNORE_CASE).find(value) ?: return null
+    return match.groupValues[1].toIntOrNull()
+}
+
+private fun isNewerRelease(release: ReleaseInfo, currentVersion: AppVersion, currentVersionCode: Int): Boolean = when {
+    release.version > currentVersion -> true
+    release.version < currentVersion -> false
+    release.versionCode != null -> release.versionCode > currentVersionCode
+    else -> false
 }
 
 internal fun parseAppVersion(value: String): AppVersion? {
