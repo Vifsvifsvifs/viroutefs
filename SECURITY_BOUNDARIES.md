@@ -53,4 +53,9 @@ When network control is off, Android works normally and ViRouteFS does not contr
 - ViRouteFS has no background update checks.
 - ViRouteFS has no telemetry, analytics, tracking SDKs, ads, or cloud upload.
 - The manual update checker contacts the public GitHub Releases API only after the user taps **Check for updates** in Settings.
-- The update checker sends no device identifiers and does not auto-download or auto-install APK files.
+- The update checker sends no device identifiers.
+- There are no background update checks and no automatic update checks at app startup.
+- ViRouteFS never auto-downloads APK files; APK download starts only after the user taps **Download APK**.
+- ViRouteFS never silently installs APK files. After download, **Install update** opens Android's system package installer and the user must confirm installation in system UI.
+- Android enforces package signature compatibility for package updates.
+- Downloaded APKs stay in app-specific cache/files storage unless the user explicitly exports or installs them.

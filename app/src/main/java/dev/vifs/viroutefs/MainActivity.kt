@@ -92,13 +92,18 @@ import dev.vifs.viroutefs.ui.FlowScannerScreen
 import dev.vifs.viroutefs.ui.VpnScreen
 import dev.vifs.viroutefs.ui.theme.ViRouteFsTheme
 import dev.vifs.viroutefs.update.GITHUB_RELEASES_WEB_URL
+import dev.vifs.viroutefs.update.DownloadProgress
 import dev.vifs.viroutefs.update.ReleaseInfo
+import dev.vifs.viroutefs.update.UpdateApkDownloader
+import dev.vifs.viroutefs.update.UpdateDownloadState
 import dev.vifs.viroutefs.update.UpdateCheckResult
+import dev.vifs.viroutefs.update.formatBytes
 import dev.vifs.viroutefs.update.UpdateChecker
 import dev.vifs.viroutefs.vpn.VpnServiceController
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.Locale
 import java.util.UUID
 
@@ -803,7 +808,9 @@ private fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var updateResult by remember { mutableStateOf<UpdateCheckResult?>(null) }
+    var updateDownloadState by remember { mutableStateOf<UpdateDownloadState>(UpdateDownloadState.Idle) }
     var updateChecking by remember { mutableStateOf(false) }
+    val apkDownloader = remember(context) { UpdateApkDownloader(context.applicationContext) }
     var supportExpanded by rememberSaveable { mutableStateOf(false) }
     var helpExpanded by rememberSaveable { mutableStateOf(true) }
     var beginnerExpanded by rememberSaveable { mutableStateOf(false) }
@@ -855,16 +862,45 @@ private fun SettingsScreen(
                 text = text,
                 result = updateResult,
                 checking = updateChecking,
+                downloadState = updateDownloadState,
+                canRequestPackageInstalls = apkDownloader.canRequestPackageInstalls(),
                 onCheck = {
                     updateResult = null
+                    updateDownloadState = UpdateDownloadState.Checking
                     updateChecking = true
                     scope.launch {
                         try {
                             updateResult = UpdateChecker().check(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
+                            updateDownloadState = when (val checked = updateResult) {
+                                is UpdateCheckResult.NewerRelease -> UpdateDownloadState.UpdateAvailable(checked.release)
+                                is UpdateCheckResult.UpToDate -> UpdateDownloadState.UpToDate
+                                UpdateCheckResult.NoReleaseFound -> UpdateDownloadState.NoRelease
+                                is UpdateCheckResult.Error -> UpdateDownloadState.Idle
+                                null -> UpdateDownloadState.Idle
+                            }
                         } finally {
                             updateChecking = false
                         }
                     }
+                },
+                onDownloadApk = { release ->
+                    scope.launch {
+                        updateDownloadState = UpdateDownloadState.Downloading(release, DownloadProgress(0L, release.apkAsset?.sizeBytes))
+                        updateDownloadState = apkDownloader.download(release) { progress ->
+                            updateDownloadState = UpdateDownloadState.Downloading(release, progress)
+                        }
+                    }
+                },
+                onInstallApk = { file ->
+                    runCatching { context.startActivity(apkDownloader.installIntent(file)) }
+                        .onFailure { updateDownloadState = UpdateDownloadState.DownloadFailed((updateResult as? UpdateCheckResult.NewerRelease)?.release, it.message ?: it::class.java.simpleName) }
+                },
+                onDeleteApk = { file ->
+                    apkDownloader.delete(file)
+                    updateDownloadState = (updateResult as? UpdateCheckResult.NewerRelease)?.release?.let(UpdateDownloadState::UpdateAvailable) ?: UpdateDownloadState.Idle
+                },
+                onOpenInstallPermissionSettings = {
+                    context.startActivity(apkDownloader.unknownAppSourcesIntent())
                 },
                 onOpenReleases = {
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_RELEASES_WEB_URL)))
@@ -918,7 +954,13 @@ private fun UpdateSettingsCard(
     text: UiText,
     result: UpdateCheckResult?,
     checking: Boolean,
+    downloadState: UpdateDownloadState,
+    canRequestPackageInstalls: Boolean,
     onCheck: () -> Unit,
+    onDownloadApk: (ReleaseInfo) -> Unit,
+    onInstallApk: (File) -> Unit,
+    onDeleteApk: (File) -> Unit,
+    onOpenInstallPermissionSettings: () -> Unit,
     onOpenReleases: () -> Unit,
 ) = CardBlock {
     Text(text.updates, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
@@ -928,31 +970,80 @@ private fun UpdateSettingsCard(
         Button(onClick = onCheck) { Text(text.checkForUpdates) }
         OutlinedButton(onClick = onOpenReleases) { Text(text.openGithubReleases) }
     }
-    UpdateResultView(text, result, checking)
+    UpdateResultView(text, result, checking, downloadState, canRequestPackageInstalls, onDownloadApk, onInstallApk, onDeleteApk, onOpenInstallPermissionSettings)
 }
 
 @Composable
-private fun UpdateResultView(text: UiText, result: UpdateCheckResult?, checking: Boolean) {
+private fun UpdateResultView(
+    text: UiText,
+    result: UpdateCheckResult?,
+    checking: Boolean,
+    downloadState: UpdateDownloadState,
+    canRequestPackageInstalls: Boolean,
+    onDownloadApk: (ReleaseInfo) -> Unit,
+    onInstallApk: (File) -> Unit,
+    onDeleteApk: (File) -> Unit,
+    onOpenInstallPermissionSettings: () -> Unit,
+) {
     when {
         checking -> Text(text.updateChecking, style = MaterialTheme.typography.bodySmall)
         result == null -> Text(text.updateManualOnly, style = MaterialTheme.typography.bodySmall)
         result is UpdateCheckResult.Error -> WarningText(text.updateError(result.message))
-        result is UpdateCheckResult.NewerRelease -> ReleaseResult(text, result.release, text.updateAvailable(result.release.displayVersion))
+        result is UpdateCheckResult.NewerRelease -> ReleaseResult(text, result.release, text.updateAvailable(result.release.displayVersion), downloadState, canRequestPackageInstalls, onDownloadApk, onInstallApk, onDeleteApk, onOpenInstallPermissionSettings)
         result == UpdateCheckResult.NoReleaseFound -> Text(text.noReleaseFound, style = MaterialTheme.typography.bodySmall)
         result is UpdateCheckResult.UpToDate -> Text(text.upToDate, style = MaterialTheme.typography.bodySmall)
     }
 }
 
 @Composable
-private fun ReleaseResult(text: UiText, release: ReleaseInfo, title: String) {
+private fun ReleaseResult(
+    text: UiText,
+    release: ReleaseInfo,
+    title: String,
+    downloadState: UpdateDownloadState,
+    canRequestPackageInstalls: Boolean,
+    onDownloadApk: (ReleaseInfo) -> Unit,
+    onInstallApk: (File) -> Unit,
+    onDeleteApk: (File) -> Unit,
+    onOpenInstallPermissionSettings: () -> Unit,
+) {
     val context = LocalContext.current
     Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
     Text(release.name, style = MaterialTheme.typography.bodySmall)
+    Text(text.releaseVersionName(release.versionName), style = MaterialTheme.typography.bodySmall)
     release.versionCode?.let { Text("versionCode $it", style = MaterialTheme.typography.bodySmall) }
     release.publishedAt?.let { Text(text.publishedAt(it), style = MaterialTheme.typography.bodySmall) }
+    val apkAsset = release.apkAsset
+    if (apkAsset != null) {
+        Text(text.apkAssetName(apkAsset.name), style = MaterialTheme.typography.bodySmall)
+        apkAsset.sizeBytes?.let { Text(text.apkAssetSize(formatBytes(it)), style = MaterialTheme.typography.bodySmall) }
+    } else {
+        WarningText(text.apkAssetNotFound)
+    }
+    Text(text.unknownAppsHelp, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (!canRequestPackageInstalls) {
+        OutlinedButton(onClick = onOpenInstallPermissionSettings) { Text(text.openInstallPermissionSettings) }
+    }
+    when (downloadState) {
+        is UpdateDownloadState.Downloading -> Text(text.downloadProgress(downloadState.progress.bytesDownloaded, downloadState.progress.totalBytes, downloadState.progress.percent), style = MaterialTheme.typography.bodySmall)
+        is UpdateDownloadState.ReadyToInstall -> {
+            Text(text.apkDownloaded(formatBytes(downloadState.file.length())), style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { onInstallApk(downloadState.file) }) { Text(text.installUpdate) }
+                OutlinedButton(onClick = { onDeleteApk(downloadState.file) }) { Text(text.deleteDownloadedApk) }
+            }
+        }
+        is UpdateDownloadState.DownloadFailed -> WarningText(text.downloadFailed(downloadState.message))
+        else -> Unit
+    }
     release.notes?.let { Details(text.details, it) }
-    OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.htmlUrl))) }) {
-        Text(text.openReleasePage)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        if (apkAsset != null && downloadState !is UpdateDownloadState.Downloading && downloadState !is UpdateDownloadState.ReadyToInstall) {
+            Button(onClick = { onDownloadApk(release) }) { Text(text.downloadApk) }
+        }
+        OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.htmlUrl))) }) {
+            Text(text.openReleasePage)
+        }
     }
 }
 
@@ -1291,6 +1382,12 @@ Packets are dropped after counting""",
     val updateChecking = t("Проверяем GitHub Releases…", "Checking GitHub Releases…", "正在检查 GitHub Releases…")
     val upToDate = t("Установлена актуальная версия для этого канала.", "You are up to date for this channel.", "当前频道已是最新版本。")
     val noReleaseFound = t("Опубликованных релизов пока нет. APK можно установить из артефактов GitHub Actions.", "No published release found yet. You can still install APK artifacts from GitHub Actions.", "尚未找到已发布版本。仍可从 GitHub Actions 构建产物安装 APK。")
+    val downloadApk = t("Скачать APK", "Download APK", "下载 APK")
+    val installUpdate = t("Установить обновление", "Install update", "安装更新")
+    val deleteDownloadedApk = t("Удалить скачанный APK", "Delete downloaded APK", "删除已下载 APK")
+    val apkAssetNotFound = t("Найдена новая версия, но APK-файл в релизе не найден.", "Newer release found, but APK asset was not found.", "找到了新版本，但未找到 APK 资源。")
+    val unknownAppsHelp = t("Android может попросить разрешить ViRouteFS устанавливать неизвестные приложения. Это нужно только для открытия скачанного APK в системном установщике.", "Android may ask you to allow ViRouteFS to install unknown apps. This is required only to open the downloaded APK in the system installer.", "Android 可能会要求允许 ViRouteFS 安装未知应用。这只用于在系统安装程序中打开已下载的 APK。")
+    val openInstallPermissionSettings = t("Открыть разрешение установки", "Open install permission settings", "打开安装权限设置")
     val actionPrefix = t("Что сделать: ", "Recommended action: ", "建议操作：")
 
     fun screen(screen: AppScreen): String = when (screen) {
@@ -1320,7 +1417,33 @@ Packets are dropped after counting""",
         t("Текущая версия: $versionName (versionCode $versionCode)", "Current version: $versionName (versionCode $versionCode)", "当前版本：$versionName (versionCode $versionCode)")
 
     fun updateAvailable(version: String): String =
-        t("Доступна новая версия: $version", "Newer version available: $version", "有新版本可用：$version")
+        t("Доступна новая версия: $version", "New version available: $version", "有新版本可用：$version")
+
+    fun releaseVersionName(version: String): String =
+        t("Версия: $version", "Version name: $version", "版本名称：$version")
+
+    fun apkAssetName(name: String): String =
+        t("APK: $name", "APK asset: $name", "APK 资源：$name")
+
+    fun apkAssetSize(size: String): String =
+        t("Размер APK: $size", "APK size: $size", "APK 大小：$size")
+
+    fun apkDownloaded(size: String): String =
+        t("APK скачан: $size", "APK downloaded: $size", "APK 已下载：$size")
+
+    fun downloadFailed(message: String): String =
+        t("Ошибка скачивания APK: $message", "APK download failed: $message", "APK 下载失败：$message")
+
+    fun downloadProgress(bytesDownloaded: Long, totalBytes: Long?, percent: Int?): String {
+        val downloaded = formatBytes(bytesDownloaded)
+        val total = totalBytes?.let(::formatBytes)
+        val percentText = percent?.let { " ($it%)" } ?: ""
+        return if (total != null) {
+            t("Скачивание: $downloaded / $total$percentText", "Downloading: $downloaded / $total$percentText", "正在下载：$downloaded / $total$percentText")
+        } else {
+            t("Скачивание: $downloaded", "Downloading: $downloaded", "正在下载：$downloaded")
+        }
+    }
 
     fun publishedAt(value: String): String =
         t("Опубликовано: $value", "Published: $value", "发布时间：$value")

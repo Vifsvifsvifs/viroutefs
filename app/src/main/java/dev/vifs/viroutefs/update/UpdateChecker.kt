@@ -31,14 +31,22 @@ internal data class AppVersion(
     }
 }
 
+internal data class ReleaseAsset(
+    val name: String,
+    val downloadUrl: String,
+    val sizeBytes: Long?,
+)
+
 internal data class ReleaseInfo(
     val version: AppVersion,
     val versionCode: Int?,
+    val versionName: String,
     val displayVersion: String,
     val name: String,
     val publishedAt: String?,
     val notes: String?,
     val htmlUrl: String,
+    val apkAsset: ReleaseAsset?,
 )
 
 internal sealed interface UpdateCheckResult {
@@ -104,20 +112,49 @@ internal fun parseReleases(json: String): List<ReleaseInfo> {
             val publishedAt = release.optString("published_at").takeIf { it.isNotBlank() }?.let(::formatPublishedAt)
             val notes = body.takeIf { it.isNotBlank() }?.let(::shortReleaseNotes)
             val htmlUrl = release.optString("html_url").takeIf { it.isNotBlank() } ?: GITHUB_RELEASES_WEB_URL
+            val apkAsset = selectApkAsset(parseReleaseAssets(release.optJSONArray("assets")))
 
             add(
                 ReleaseInfo(
                     version = versionText,
                     versionCode = parseVersionCode(listOf(tagName, releaseName, body).joinToString("\n")),
+                    versionName = versionText.toString(),
                     displayVersion = displayVersion,
                     name = releaseName.ifBlank { displayVersion },
                     publishedAt = publishedAt,
                     notes = notes,
                     htmlUrl = htmlUrl,
+                    apkAsset = apkAsset,
                 ),
             )
         }
     }
+}
+
+internal fun parseReleaseAssets(assets: JSONArray?): List<ReleaseAsset> {
+    if (assets == null) return emptyList()
+    return buildList {
+        for (index in 0 until assets.length()) {
+            val asset = assets.optJSONObject(index) ?: continue
+            val name = asset.optString("name").takeIf { it.isNotBlank() } ?: continue
+            val downloadUrl = asset.optString("browser_download_url").takeIf { it.isNotBlank() } ?: continue
+            val sizeBytes = asset.optLong("size", -1L).takeIf { it > 0L }
+            add(ReleaseAsset(name = name, downloadUrl = downloadUrl, sizeBytes = sizeBytes))
+        }
+    }
+}
+
+internal fun selectApkAsset(assets: List<ReleaseAsset>): ReleaseAsset? = assets
+    .filter { it.name.endsWith(".apk", ignoreCase = true) && it.downloadUrl.startsWith("https://", ignoreCase = true) }
+    .maxByOrNull { scoreApkAssetName(it.name) }
+
+private fun scoreApkAssetName(name: String): Int {
+    val lower = name.lowercase()
+    var score = 0
+    if (lower.endsWith(".apk")) score += 10
+    if ("viroutefs" in lower) score += 5
+    if ("debug" !in lower) score += 1
+    return score
 }
 
 internal fun parseVersionCode(value: String): Int? {
