@@ -20,6 +20,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,7 +52,9 @@ internal fun VpnScreen(
     text: UiText,
     config: RoutingConfig,
     vpnState: VpnServiceUiState,
+    tunTestRoutePreviewEnabled: Boolean,
     onVpnSwitch: (Boolean) -> Unit,
+    onTunTestRoutePreview: (Boolean) -> Unit,
     onConfig: (RoutingConfig, String?) -> Unit,
 ) {
     var adding by rememberSaveable { mutableStateOf(false) }
@@ -109,8 +112,14 @@ internal fun VpnScreen(
         item {
             CardBlock {
                 Text(text.vpnNoHiddenInterception, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                StatusChip(if (vpnState.status == VpnServiceStatus.TunPreviewActive) text.vpnTunActive else text.vpnTunInactive)
+                StatusChip(if (vpnState.status == VpnServiceStatus.TunPreviewActive || vpnState.status == VpnServiceStatus.TunTestRouteActive) text.vpnTunActive else text.vpnTunInactive)
                 Details(text.details, text.vpnLifecycleOnlyDetails)
+                TestRoutePreviewControls(
+                    text = text,
+                    vpnState = vpnState,
+                    enabled = tunTestRoutePreviewEnabled,
+                    onEnabledChange = onTunTestRoutePreview,
+                )
                 vpnState.detail?.let { WarningText(it) }
             }
         }
@@ -129,6 +138,33 @@ internal fun VpnScreen(
             )
         }
     }
+}
+
+@Composable
+private fun TestRoutePreviewControls(
+    text: UiText,
+    vpnState: VpnServiceUiState,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    TextButton(onClick = { open = !open }, contentPadding = PaddingValues(0.dp)) {
+        Text(if (open) "− ${text.vpnTestRoutePreview}" else "+ ${text.vpnTestRoutePreview}")
+    }
+    if (!open) return
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(text.vpnTestRoute, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+            Text(text.vpnNormalInternetUnchanged, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = enabled, onCheckedChange = onEnabledChange)
+    }
+    Text(testRoutePreviewDetails(text, vpnState), style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable
@@ -310,7 +346,8 @@ private fun TunnelTypeDropdown(text: UiText, value: TunnelType, onSelect: (Tunne
 private val VpnServiceUiState.switchChecked: Boolean
     get() = status == VpnServiceStatus.Starting ||
         status == VpnServiceStatus.ServiceActiveNoTun ||
-        status == VpnServiceStatus.TunPreviewActive
+        status == VpnServiceStatus.TunPreviewActive ||
+        status == VpnServiceStatus.TunTestRouteActive
 
 private fun VpnServiceUiState.label(text: UiText): String = when (status) {
     VpnServiceStatus.Off -> text.off
@@ -319,6 +356,15 @@ private fun VpnServiceUiState.label(text: UiText): String = when (status) {
     VpnServiceStatus.Starting -> text.vpnStarting
     VpnServiceStatus.ServiceActiveNoTun -> text.vpnLocalServiceActive
     VpnServiceStatus.TunPreviewActive -> text.vpnTunPreviewActive
+    VpnServiceStatus.TunTestRouteActive -> text.vpnTunPreviewActive
     VpnServiceStatus.Stopped -> text.vpnStopped
     VpnServiceStatus.Error -> text.vpnError
+}
+
+private fun testRoutePreviewDetails(text: UiText, vpnState: VpnServiceUiState): String = buildString {
+    appendLine(text.vpnTestRoute)
+    appendLine("${text.vpnPacketsRead}: ${vpnState.packetsRead}")
+    appendLine("${text.vpnBytesRead}: ${vpnState.bytesRead}")
+    appendLine(text.vpnNormalInternetUnchanged)
+    append(text.vpnHowToTestTun)
 }
