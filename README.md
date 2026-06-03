@@ -17,9 +17,9 @@ ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project 
 - No hidden interception of third-party traffic.
 - No offensive security features.
 
-## Current status: 0.6.9-alpha
+## Current status: 0.6.10-alpha
 
-Version `0.6.9-alpha` adds GitHub Releases publishing for user-facing APK distribution, aligns the manual Settings update checker with published Releases, and refreshes the launcher icon resources without changing runtime VPN/TUN routing behavior. Home content remains in Settings → Help, and the main VPN concept remains Networks / Сети.
+Version `0.6.10-alpha` extends the manual Settings update flow so a user can check GitHub Releases, manually download an APK asset such as `ViRouteFS-0.6.10-alpha.apk`, and open Android's system package installer. The user must confirm installation in Android system UI. There are still no background update checks, no auto-downloads, no silent installs, and no runtime VPN/TUN routing behavior changes.
 
 What exists now:
 
@@ -30,9 +30,9 @@ What exists now:
 - Flow Scanner can show local counters when developer diagnostics explicitly enable the TEST-NET preview.
 - The app has Compose screens for Networks, Routes, DNS, Flow Scanner, Tools, and Settings with Help.
 - GitHub Actions builds APK artifacts with dynamic version-based names.
-- Manual release publishing attaches a friendly APK asset, such as `ViRouteFS-0.6.9-alpha.apk`, to GitHub Releases.
+- Published releases contain friendly APK assets, such as `ViRouteFS-0.6.10-alpha.apk`, attached to GitHub Releases.
 - Stable update-over-install for alpha APKs requires the alpha signing secrets documented in [`docs/ALPHA_SIGNING.md`](docs/ALPHA_SIGNING.md).
-- Settings includes a manual update checker that contacts GitHub Releases only after the user taps **Check for updates**.
+- Settings includes a manual update checker that contacts GitHub Releases only after the user taps **Check for updates**. When a newer release has an APK asset, the user can tap **Download APK** and then **Install update** to open Android's system package installer.
 - Routing configuration, DNS policy metadata, diagnostics reports, and logs are local-first.
 - The built-in System / Система route is the safe internal default for apps without explicit rules in the ViRouteFS model; it is not bypass when network control is active.
 
@@ -45,11 +45,11 @@ What is intentionally not implemented yet:
 - No forwarding or proxying.
 - No Xray, OpenVPN, WireGuard, Hysteria2, or SOCKS5 proxy engines yet.
 - No Play Store or F-Droid release is claimed yet.
-- No background update checks, automatic APK downloads, package installer permission, or auto-install behavior.
+- No background update checks, automatic APK downloads, silent install behavior, telemetry, analytics, tracking, ads, or cloud upload.
 
 ## Releases
 
-Stable APK downloads should come from [GitHub Releases](https://github.com/Vifsvifsvifs/viroutefs/releases). GitHub Releases are the user-facing distribution channel and include friendly APK assets such as `ViRouteFS-0.6.9-alpha.apk` plus release notes.
+Stable APK downloads should come from [GitHub Releases](https://github.com/Vifsvifsvifs/viroutefs/releases). GitHub Releases are the user-facing distribution channel and include friendly APK assets such as `ViRouteFS-0.6.10-alpha.apk` plus release notes.
 
 GitHub Actions artifacts are mainly CI artifacts for maintainers and testers. They are useful for validating pull requests and pushes, but Releases should be preferred for normal alpha APK downloads because they are published intentionally with a changelog and attached APK asset.
 
@@ -57,9 +57,9 @@ GitHub Actions artifacts are mainly CI artifacts for maintainers and testers. Th
 
 APK artifacts are built by GitHub Actions. To make alpha artifacts updateable over previous alpha APKs, CI must be configured with the stable alpha signing secrets. Without those secrets, artifacts are still built with default debug signing, but update-over-install is not stable and users may need to uninstall the old APK first.
 
-Because ViRouteFS now uses stable alpha signing for published alpha APKs, updates should install over previous alpha builds signed with the same key. Users who installed an older randomly-signed debug APK may need one uninstall before moving to the stable alpha-signed release channel.
+Because ViRouteFS now uses stable alpha signing for published alpha APKs, future stable alpha updates should install over previous alpha builds signed with the same key. Users who installed an older randomly-signed debug APK may need one uninstall before moving to the stable alpha-signed release channel.
 
-The in-app update checker is manual-only: it uses the public GitHub Releases API only when the user taps **Check for updates** in Settings. It compares published release versions with the local `BuildConfig.VERSION_NAME` and `BuildConfig.VERSION_CODE`. It does not run on app startup, does not run in the background, does not send device identifiers, does not download APKs, and does not install APKs automatically.
+The in-app update checker is manual-only: it uses the public GitHub Releases API only when the user taps **Check for updates** in Settings. It compares published release versions with the local `BuildConfig.VERSION_NAME` and `BuildConfig.VERSION_CODE`. It does not run on app startup, does not run in the background, and does not send device identifiers. APK download starts only after the user taps **Download APK**. After the APK is downloaded into app-specific cache, **Install update** opens Android's system package installer; ViRouteFS does not silently install APKs.
 
 See [`docs/TUN_SKELETON.md`](docs/TUN_SKELETON.md) for the safe Android TUN preview, [`docs/FLOW_SCANNER.md`](docs/FLOW_SCANNER.md) for Flow Scanner behavior, [`docs/ROUTING_POLICY.md`](docs/ROUTING_POLICY.md) for strict route isolation, and [`docs/UI_DIRECTION.md`](docs/UI_DIRECTION.md) for navigation/icon direction.
 

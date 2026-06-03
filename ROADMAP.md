@@ -14,6 +14,13 @@ Focus: prove the Android VPN permission and TUN lifecycle without routing normal
 - No DNS injection into the VPN builder.
 - No forwarding, proxying, packet payload logging, or real tunnel engine.
 
+
+## 0.6.10-alpha manual APK download and install
+
+- Manual APK download from GitHub Releases after explicit user action.
+- Open Android system installer for the downloaded APK with user confirmation; no silent install.
+- No background update checks, auto-downloads, telemetry, runtime VPN engine integration, default route, VPN builder DNS servers, packet payload logging, forwarding, or proxying.
+
 ## 0.6.8-alpha stable alpha signing and manual updates
 
 - Stable alpha signing support through GitHub Secrets for updateable GitHub Actions APK artifacts.
