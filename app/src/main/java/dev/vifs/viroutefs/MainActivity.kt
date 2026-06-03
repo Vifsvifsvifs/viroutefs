@@ -5,6 +5,7 @@ package dev.vifs.viroutefs
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -27,7 +28,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AltRoute
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Dns
-import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Settings
@@ -71,10 +71,14 @@ import dev.vifs.viroutefs.diagnostics.TcpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TlsDiagnostic
 import dev.vifs.viroutefs.routing.CURRENT_ROUTING_CONFIG_VERSION
 import dev.vifs.viroutefs.routing.RouteEngine
+import dev.vifs.viroutefs.routing.AppMatcher
+import dev.vifs.viroutefs.routing.AppMatcherPlatform
 import dev.vifs.viroutefs.routing.RouteRule
+import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
+import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.settings.AppLanguage
 import dev.vifs.viroutefs.settings.AppSettings
 import dev.vifs.viroutefs.settings.AppSettingsRepository
@@ -110,7 +114,6 @@ class MainActivity : ComponentActivity() {
 }
 
 internal enum class AppScreen(val icon: ImageVector) {
-    Dashboard(Icons.Outlined.Home),
     Vpn(Icons.Outlined.Shield),
     Routes(Icons.Outlined.AltRoute),
     Dns(Icons.Outlined.Dns),
@@ -120,7 +123,7 @@ internal enum class AppScreen(val icon: ImageVector) {
     Settings(Icons.Outlined.Settings),
 }
 
-private val bottomScreens = listOf(AppScreen.Dashboard, AppScreen.Vpn, AppScreen.Routes, AppScreen.Dns, AppScreen.Fs, AppScreen.More)
+private val bottomScreens = listOf(AppScreen.Vpn, AppScreen.Routes, AppScreen.Dns, AppScreen.Fs, AppScreen.Settings)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -130,7 +133,7 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
     val text = remember(settings.language) { UiText(settings.language) }
     val repository = remember(context) { RoutingConfigRepository(context.applicationContext) }
     val vpnController = remember(context) { VpnServiceController(context.applicationContext) }
-    var selectedScreen by rememberSaveable { mutableStateOf(AppScreen.Dashboard) }
+    var selectedScreen by rememberSaveable { mutableStateOf(AppScreen.Vpn) }
     var config by remember { mutableStateOf(RoutingConfigDefaults.defaultConfig()) }
     var message by remember { mutableStateOf<String?>(null) }
     var loaded by remember { mutableStateOf(false) }
@@ -221,7 +224,7 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
 
     fun setTunTestRoutePreviewEnabled(enabled: Boolean) {
         tunTestRoutePreviewEnabled = enabled
-        if (vpnState.status == VpnServiceStatus.Starting || vpnState.status == VpnServiceStatus.ServiceActiveNoTun || vpnState.status == VpnServiceStatus.TunPreviewActive || vpnState.status == VpnServiceStatus.TunTestRouteActive) {
+        if (enabled && (vpnState.status == VpnServiceStatus.Starting || vpnState.status == VpnServiceStatus.ServiceActiveNoTun || vpnState.status == VpnServiceStatus.TunPreviewActive || vpnState.status == VpnServiceStatus.TunTestRouteActive)) {
             if (!vpnController.notificationPermissionGranted()) {
                 vpnState = VpnServiceUiState(
                     VpnServiceStatus.NotificationPermissionRequired,
@@ -269,14 +272,13 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
         },
     ) { padding ->
         when (selectedScreen) {
-            AppScreen.Dashboard -> DashboardScreen(padding, text, loaded, message)
             AppScreen.Vpn -> VpnScreen(padding, text, config, vpnState, tunTestRoutePreviewEnabled, ::setVpnEnabled, ::setTunTestRoutePreviewEnabled, ::updateConfig)
             AppScreen.Routes -> RoutesScreen(padding, text, config, ::updateConfig)
             AppScreen.Dns -> DnsScreen(padding, text, config, ::updateConfig)
             AppScreen.Fs -> FlowScannerScreen(padding, text, vpnState)
             AppScreen.More -> MoreScreen(padding, text, onOpen = { selectedScreen = it })
             AppScreen.Tools -> ToolsScreen(padding, text, config)
-            AppScreen.Settings -> SettingsScreen(padding, text, settings, onSettings)
+            AppScreen.Settings -> SettingsScreen(padding, text, settings, loaded, message, tunTestRoutePreviewEnabled, ::setTunTestRoutePreviewEnabled, vpnState, onSettings)
         }
     }
 }
@@ -291,10 +293,15 @@ private fun DashboardScreen(padding: PaddingValues, text: UiText, loaded: Boolea
 
 @Composable
 private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
-    var target by rememberSaveable { mutableStateOf("telegram") }
+    val context = LocalContext.current
+    var target by rememberSaveable { mutableStateOf("") }
     var selectedRouteId by rememberSaveable { mutableStateOf<String?>(null) }
-    val selectedRoute = config.rules.firstOrNull { it.id == selectedRouteId }
-    val decision = remember(config, target) { RouteEngine(config).simulate(target) }
+    var selectedAppPackage by rememberSaveable { mutableStateOf<String?>(null) }
+    val installedApps = remember(context) { context.loadLaunchableApps() }
+    val userRules = config.rules.filter { it.type != RouteRuleType.DEFAULT }
+    val selectedRoute = userRules.firstOrNull { it.id == selectedRouteId }
+    val simulationInput = selectedAppPackage ?: target.ifBlank { "example.com" }
+    val decision = remember(config, simulationInput) { RouteEngine(config).simulate(simulationInput) }
 
     if (selectedRoute != null) {
         RouteDetailsScreen(
@@ -302,6 +309,7 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
             text = text,
             rule = selectedRoute,
             config = config,
+            installedApps = installedApps,
             onBack = { selectedRouteId = null },
             onConfig = { next, message ->
                 onConfig(next, message)
@@ -316,20 +324,63 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
         item {
             CardBlock {
                 Text(text.simulation, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                OutlinedTextField(target, { target = it }, label = { Text(text.domainIpApp) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Text(text.routeEmptyState, style = MaterialTheme.typography.bodySmall)
+                if (installedApps.isNotEmpty()) {
+                    Text(text.installedApps, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                    ChipRow {
+                        installedApps.take(6).forEach { app ->
+                            FilterChip(
+                                selected = selectedAppPackage == app.packageName,
+                                onClick = { selectedAppPackage = if (selectedAppPackage == app.packageName) null else app.packageName },
+                                label = { Text(app.label, maxLines = 1) },
+                            )
+                        }
+                    }
+                } else {
+                    StatusChip(text.noInstalledApps)
+                }
+                OutlinedTextField(
+                    target,
+                    {
+                        target = it
+                        selectedAppPackage = null
+                    },
+                    label = { Text(text.domainIpApp) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
                 Text("${decision.input} → ${decision.tunnelProfile.name}", style = MaterialTheme.typography.bodySmall)
-                StatusChip(decision.dnsPolicySummary)
+                Details(text.details, text.routeIsolationNote)
             }
         }
-        items(config.rules, key = { it.id }) { rule ->
-            RouteRuleCard(
-                text = text,
-                rule = rule,
-                profileName = config.profiles.firstOrNull { it.id == rule.targetProfileId }?.name ?: rule.targetProfileId,
-                onOpen = { selectedRouteId = rule.id },
-            )
+        if (userRules.isEmpty()) {
+            item { CompactCard(text, text.noRoutesConfigured, text.routeEmptyState, text.routeIsolationNote) }
+        } else {
+            items(userRules, key = { it.id }) { rule ->
+                RouteRuleCard(
+                    text = text,
+                    rule = rule,
+                    profileName = config.profiles.firstOrNull { it.id == rule.targetProfileId }?.name ?: rule.targetProfileId,
+                    onOpen = { selectedRouteId = rule.id },
+                )
+            }
         }
     }
+}
+
+data class InstalledAppUi(val label: String, val packageName: String)
+
+private fun android.content.Context.loadLaunchableApps(): List<InstalledAppUi> {
+    val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+    return packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+        .map { info ->
+            InstalledAppUi(
+                label = info.loadLabel(packageManager).toString(),
+                packageName = info.activityInfo.packageName,
+            )
+        }
+        .distinctBy { it.packageName }
+        .sortedBy { it.label.lowercase() }
 }
 
 @Composable
@@ -345,6 +396,7 @@ private fun RouteRuleCard(text: UiText, rule: RouteRule, profileName: String, on
             Column(Modifier.weight(1f)) {
                 Text(rule.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 Text("→ $profileName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(rule.matchers.joinToString(" • ").ifBlank { text.none }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             StatusChip(if (rule.enabled) text.on else text.off)
         }
@@ -357,13 +409,16 @@ private fun RouteDetailsScreen(
     text: UiText,
     rule: RouteRule,
     config: RoutingConfig,
+    installedApps: List<InstalledAppUi>,
     onBack: () -> Unit,
     onConfig: (RoutingConfig, String?) -> Unit,
 ) {
     var name by rememberSaveable(rule.id) { mutableStateOf(rule.name) }
     var enabled by rememberSaveable(rule.id) { mutableStateOf(rule.enabled) }
     var targetProfileId by rememberSaveable(rule.id) { mutableStateOf(rule.targetProfileId) }
+    var appPackage by rememberSaveable(rule.id) { mutableStateOf(rule.appMatchers.firstOrNull()?.value.orEmpty()) }
     val dnsPolicy = rule.dnsPolicyId?.let { id -> config.dnsPolicies.firstOrNull { it.id == id } }
+    val availableProfiles = config.profiles.filter { !it.mockOnly && it.enabled }
 
     ScreenList(padding) {
         item {
@@ -377,7 +432,7 @@ private fun RouteDetailsScreen(
                 OutlinedTextField(name, { name = it }, label = { Text(text.name) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Text(text.targetProfile, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
                 ChipRow {
-                    config.profiles.forEach { profile ->
+                    availableProfiles.forEach { profile ->
                         FilterChip(
                             selected = targetProfileId == profile.id,
                             onClick = { targetProfileId = profile.id },
@@ -394,19 +449,52 @@ private fun RouteDetailsScreen(
         }
         item {
             CardBlock {
+                Text(text.installedApps, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                if (installedApps.isEmpty()) {
+                    Text(text.noInstalledApps, style = MaterialTheme.typography.bodySmall)
+                } else {
+                    ChipRow {
+                        installedApps.take(8).forEach { app ->
+                            FilterChip(
+                                selected = appPackage == app.packageName,
+                                onClick = { appPackage = app.packageName },
+                                label = { Text(app.label, maxLines = 1) },
+                            )
+                        }
+                    }
+                    Text(appPackage.ifBlank { text.none }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        item {
+            CardBlock {
                 Text(text.apps, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
                 Text(rule.appMatchers.map { it.displayName ?: it.value }.joinToString(" • ").ifBlank { text.none }, style = MaterialTheme.typography.bodySmall)
                 Text(text.domainsIps, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
                 Text(rule.matchers.joinToString(" • ").ifBlank { text.none }, style = MaterialTheme.typography.bodySmall)
-                Details(text.details, "${rule.reason}\n${rule.technicalDetails}\n${rule.recommendedAction}")
+                Details(text.details, "${rule.reason}\n${rule.technicalDetails}\n${rule.recommendedAction}\n\n${text.routeIsolationNote}")
             }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = {
+                    val selectedApp = installedApps.firstOrNull { it.packageName == appPackage }
                     onConfig(
                         config.copy(rules = config.rules.map {
-                            if (it.id == rule.id) it.copy(name = name.ifBlank { rule.name }, enabled = enabled, targetProfileId = targetProfileId) else it
+                            if (it.id == rule.id) {
+                                it.copy(
+                                    name = name.ifBlank { rule.name },
+                                    enabled = enabled,
+                                    targetProfileId = targetProfileId,
+                                    appMatchers = if (appPackage.isNotBlank()) {
+                                        listOf(AppMatcher(AppMatcherPlatform.Android, appPackage, selectedApp?.label ?: appPackage))
+                                    } else {
+                                        it.appMatchers
+                                    },
+                                )
+                            } else {
+                                it
+                            }
                         }),
                         text.saved,
                     )
@@ -487,11 +575,42 @@ private fun MoreEntry(title: String, subtitle: String, icon: ImageVector, onClic
 }
 
 @Composable
-private fun SettingsScreen(padding: PaddingValues, text: UiText, settings: AppSettings, onSettings: (AppSettings) -> Unit) {
+private fun SettingsScreen(
+    padding: PaddingValues,
+    text: UiText,
+    settings: AppSettings,
+    loaded: Boolean,
+    message: String?,
+    tunTestRoutePreviewEnabled: Boolean,
+    onTunTestRoutePreview: (Boolean) -> Unit,
+    vpnState: VpnServiceUiState,
+    onSettings: (AppSettings) -> Unit,
+) {
     val context = LocalContext.current
     var supportExpanded by rememberSaveable { mutableStateOf(false) }
+    var helpExpanded by rememberSaveable { mutableStateOf(true) }
+    var beginnerExpanded by rememberSaveable { mutableStateOf(false) }
+    var adminExpanded by rememberSaveable { mutableStateOf(false) }
+    var developerExpanded by rememberSaveable { mutableStateOf(false) }
     ScreenList(padding) {
         item { Header(text.settings, text.settingsSubtitle) }
+        item {
+            CardBlock {
+                Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(text.help, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = { helpExpanded = !helpExpanded }) { Text(if (helpExpanded) text.less else text.details) }
+                }
+                if (helpExpanded) {
+                    CompactCard(text, text.aboutViroutefs, text.projectOverviewShort, text.projectOverviewDetails)
+                    CompactCard(text, text.licenseSummaryTitle, text.licenseSummaryShort, text.licenseSummaryDetails)
+                    CompactCard(text, text.privacy, text.privacyShort, text.privacyDetails)
+                    CompactCard(text, text.currentAlphaLimitations, text.alphaLimitationsShort, text.alphaLimitationsDetails)
+                    CompactCard(text, text.projectGoals, text.projectGoalsShort, text.projectGoalsDetails)
+                    ExpandableHelpBlock(text.beginnerMode, beginnerExpanded, { beginnerExpanded = !beginnerExpanded }, text.beginnerHelp)
+                    ExpandableHelpBlock(text.adminMode, adminExpanded, { adminExpanded = !adminExpanded }, text.adminHelp)
+                }
+            }
+        }
         item {
             CardBlock {
                 Text(text.languageLabel, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
@@ -513,6 +632,27 @@ private fun SettingsScreen(padding: PaddingValues, text: UiText, settings: AppSe
                 Text(text.amoledNote, style = MaterialTheme.typography.bodySmall)
             }
         }
+        item { CompactCard(text, text.version, "ViRouteFS ${BuildConfig.VERSION_NAME}", "versionCode ${BuildConfig.VERSION_CODE}") }
+        item { CompactCard(text, text.configStatus, if (loaded) text.configLoaded else text.loading, message ?: text.ready) }
+        item {
+            CardBlock {
+                Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(text.developerDiagnostics, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = { developerExpanded = !developerExpanded }) { Text(if (developerExpanded) text.less else text.details) }
+                }
+                if (developerExpanded) {
+                    Text(text.developerDiagnosticsWarning, style = MaterialTheme.typography.bodySmall)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.weight(1f)) {
+                            Text(text.vpnTestRoute, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                            Text(text.vpnNormalInternetUnchanged, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = tunTestRoutePreviewEnabled, onCheckedChange = onTunTestRoutePreview)
+                    }
+                    Details(text.details, "${text.vpnPacketsRead}: ${vpnState.packetsRead}\n${text.vpnBytesRead}: ${vpnState.bytesRead}\n${text.vpnHowToTestTun}")
+                }
+            }
+        }
         item {
             CardBlock {
                 Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -532,8 +672,16 @@ private fun SettingsScreen(padding: PaddingValues, text: UiText, settings: AppSe
                 }
             }
         }
-        item { CompactCard(text, text.version, "ViRouteFS ${BuildConfig.VERSION_NAME}", "versionCode ${BuildConfig.VERSION_CODE}") }
     }
+}
+
+@Composable
+private fun ExpandableHelpBlock(title: String, expanded: Boolean, onToggle: () -> Unit, body: String) {
+    Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+        TextButton(onClick = onToggle) { Text(if (expanded) "−" else "+") }
+    }
+    if (expanded) Text(body, style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable
@@ -589,7 +737,8 @@ private fun ChipRow(content: @Composable () -> Unit) = Row(horizontalArrangement
 @Suppress("TooManyFunctions")
 internal class UiText(private val language: AppLanguage) {
     val dashboard = t("Главная", "Home", "主页")
-    val vpn = "VPN"
+    val networks = t("Сети", "Networks", "网络")
+    val vpn = networks
     val routes = t("Маршруты", "Routes", "路由")
     val dns = "DNS"
     val fs = "FS"
@@ -597,12 +746,13 @@ internal class UiText(private val language: AppLanguage) {
     val settings = t("Настройки", "Settings", "设置")
     val more = t("Ещё", "More", "更多")
     val dashboardSubtitle = t("Короткий статус приложения и приватности.", "Short app and privacy status.", "应用和隐私状态概览。")
-    val vpnSubtitle = t("Профили и общий демонстрационный переключатель.", "Profiles and the master demo switch.", "配置文件和主演示开关。")
+    val networksSubtitle = t("Профили сети, маршруты и безопасный локальный контроль.", "Network profiles, routes, and safe local control.", "网络配置、路由和安全本地控制。")
+    val vpnSubtitle = networksSubtitle
     val routesSubtitle = t("Какой тоннель используется. Нажмите маршрут для деталей.", "Which tunnel is used. Tap a route for details.", "查看使用哪个隧道。点按路由查看详情。")
     val dnsSubtitle = t("Проверка DNS и локальные политики.", "DNS checks and local policies.", "DNS 检查和本地策略。")
-    val fsSubtitle = t("Плотная лента событий, пока только пример.", "Dense event feed, sample only for now.", "紧凑事件列表，目前仅为示例。")
+    val fsSubtitle = t("Локальные счётчики и будущая видимость потоков без обещаний полного анализа.", "Local counters and future flow visibility without claiming full traffic analysis.", "本地计数器和未来流量可见性，不声称完整流量分析。")
     val toolsSubtitle = t("TCP, TLS, HTTP и маршрутная диагностика.", "TCP, TLS, HTTP, and route diagnostics.", "TCP、TLS、HTTP 和路由诊断。")
-    val settingsSubtitle = t("Реальные локальные язык и тема.", "Real local language and theme settings.", "真实的本地语言和主题设置。")
+    val settingsSubtitle = t("Язык, тема, справка и расширенная диагностика.", "Language, theme, help, and advanced diagnostics.", "语言、主题、帮助和高级诊断。")
     val moreSubtitle = t("Инструменты и настройки без перегруза навигации.", "Tools and settings without crowded navigation.", "工具和设置不再挤占导航栏。")
     val version = t("Версия", "Version", "版本")
     val privacy = t("Приватность", "Privacy", "隐私")
@@ -619,11 +769,13 @@ internal class UiText(private val language: AppLanguage) {
     val details = t("Подробнее", "Details", "详情")
     val less = t("Скрыть", "Less", "收起")
     val vpnDemoDetails = t("Переключатель показывает состояние UI. VPN-движки в этой версии не добавлены.", "The switch controls UI state only. VPN engines are not added in this release.", "此开关仅控制界面状态。本版本未添加 VPN 引擎。")
-    val vpnLocalPreviewTitle = t("Превью локального VPN-сервиса", "Local VPN service preview", "本地 VPN 服务预览")
-    val vpnNoTrafficRoutingYet = t("Маршруты трафика не установлены", "No traffic routes installed", "未安装流量路由")
+    val vpnLocalPreviewTitle = t("Активировать контроль сети", "Activate network control", "激活网络控制")
+    val activateNetworkControl = vpnLocalPreviewTitle
+    val vpnNoTrafficRoutingYet = t("Маршруты применяются только после явной настройки.", "Routes apply only after explicit configuration.", "路由仅在明确配置后应用。")
+    val networkControlSummary = vpnNoTrafficRoutingYet
     val vpnNoHiddenInterception = t("Нет скрытого перехвата", "No hidden interception", "没有隐藏拦截")
     val vpnPacketProcessingLater = t("Интернет должен остаться без изменений.", "Internet should remain unchanged.", "互联网应保持不变。")
-    val vpnLifecycleOnlyDetails = t("0.6.3-alpha по умолчанию создаёт минимальный route-less TUN с адресом 10.250.0.2/32 только для проверки VpnService. В режиме тестового маршрута явно добавляется только 203.0.113.0/24 (TEST-NET-3); маршрута по умолчанию, DNS-серверов, логирования payload, пересылки, прокси и VPN-движков нет.", "0.6.3-alpha creates a minimal route-less TUN with address 10.250.0.2/32 by default only to verify VpnService. Test-route mode explicitly adds only 203.0.113.0/24 (TEST-NET-3); there is no default route, DNS servers, payload logging, forwarding, proxying, or VPN engines.", "0.6.3-alpha 默认仅创建地址为 10.250.0.2/32 的最小无路由 TUN 来验证 VpnService。测试路由模式仅显式添加 203.0.113.0/24 (TEST-NET-3)；没有默认路由、DNS 服务器、payload 日志、转发、代理或 VPN 引擎。")
+    val vpnLifecycleOnlyDetails = t("0.6.4-alpha по умолчанию создаёт минимальный route-less TUN с адресом 10.250.0.2/32 только для проверки VpnService. В режиме тестового маршрута явно добавляется только 203.0.113.0/24 (TEST-NET-3); маршрута по умолчанию, DNS-серверов, логирования payload, пересылки, прокси и VPN-движков нет.", "0.6.4-alpha creates a minimal route-less TUN with address 10.250.0.2/32 by default only to verify VpnService. Test-route mode explicitly adds only 203.0.113.0/24 (TEST-NET-3); there is no default route, DNS servers, payload logging, forwarding, proxying, or VPN engines.", "0.6.4-alpha 默认仅创建地址为 10.250.0.2/32 的最小无路由 TUN 来验证 VpnService。测试路由模式仅显式添加 203.0.113.0/24 (TEST-NET-3)；没有默认路由、DNS 服务器、payload 日志、转发、代理或 VPN 引擎。")
     val vpnTestRoutePreview = t("Тестовый маршрут", "Test route preview", "测试路由预览")
     val vpnTestRoute = t("Тестовый маршрут: 203.0.113.0/24", "Test route: 203.0.113.0/24", "测试路由：203.0.113.0/24")
     val vpnPacketsRead = t("Прочитано пакетов", "Packets read", "已读取数据包")
@@ -645,6 +797,8 @@ internal class UiText(private val language: AppLanguage) {
     val vpnStopFailed = t("Не удалось остановить локальный VPN-сервис.", "Failed to stop the local VPN service.", "无法停止本地 VPN 服务。")
     val hide = t("Скрыть", "Hide", "隐藏")
     val addProfile = t("+ Профиль", "+ Profile", "+ 配置")
+    val noNetworkProfilesYet = t("Встроены Direct и Block; внешних профилей пока нет.", "Built-in Direct and Block; no external profiles yet.", "内置 Direct 和 Block；暂无外部配置。")
+    val profileAdvancedDetails = t("Экспериментальные состояния и будущие движки не отображаются как готовые пользовательские функции.", "Experimental state and future engines are not presented as ready user features.", "实验状态和未来引擎不会作为就绪用户功能展示。")
     val qr = t("QR", "QR", "二维码")
     val clipboard = t("Буфер", "Clipboard", "剪贴板")
     val file = t("Файл", "File", "文件")
@@ -670,7 +824,12 @@ internal class UiText(private val language: AppLanguage) {
     val edit = t("Изменить", "Edit", "编辑")
     val profileUpdated = t("Профиль обновлён.", "Profile updated.", "配置已更新。")
     val save = t("Сохранить", "Save", "保存")
-    val simulation = t("Симуляция", "Simulation", "模拟")
+    val simulation = t("Проверка правила", "Rule check", "规则检查")
+    val routeEmptyState = t("Нет пользовательских маршрутов. Создайте правила позже: приложение, домен/host или IP/CIDR → Direct, Block или реальный профиль.", "No user routes configured. Later rules should be: app, domain/host, or IP/CIDR → Direct, Block, or a real profile.", "没有用户路由。以后规则应为：应用、域名/主机或 IP/CIDR → Direct、Block 或真实配置。")
+    val noRoutesConfigured = t("Маршруты не настроены", "No routes configured yet", "尚未配置路由")
+    val installedApps = t("Установленные приложения", "Installed apps", "已安装应用")
+    val noInstalledApps = t("Список приложений недоступен на этом устройстве.", "Installed app list is not available on this device.", "此设备无法使用已安装应用列表。")
+    val routeIsolationNote = t("Маршруты эксклюзивны. Если правило привязано к профилю, трафик не должен молча уходить в другой тоннель; если выбранный профиль недоступен — безопасное поведение Block / fail closed.", "Routes are exclusive. If a route is bound to a profile, traffic must not silently fall back to another tunnel; if the chosen profile is unavailable, safe behavior is Block / fail closed.", "路由是排他的。如果路由绑定到配置，流量不得静默回退到其他隧道；如果所选配置不可用，安全行为是 Block / fail closed。")
     val domainIpApp = t("домен/IP/приложение", "domain/IP/app", "域名/IP/应用")
     val matchers = t("условий", "matchers", "匹配项")
     val disable = t("Выкл", "Disable", "禁用")
@@ -712,15 +871,17 @@ internal class UiText(private val language: AppLanguage) {
     val certOk = t("сертификат OK", "certificate OK", "证书正常")
     val waiting = t("ожидание", "waiting", "等待")
     val limitation = t("Ограничение", "Limitation", "限制")
-    val fsLimitShort = t("Демо будущих потоков плюс live-счётчики TEST-NET при явном включении.", "Demo future flows plus live TEST-NET counters when explicitly enabled.", "未来流量演示；明确启用时显示实时 TEST-NET 计数。")
-    val fsLimitDetails = t("FS 0.6.3 показывает только демо-события и локальные счётчики безопасного TUN test-route 203.0.113.0/24. Это не полный packet capture: нет default route, DNS в VPN, payload logging, извлечения доменов, forwarding/proxying или облачной загрузки.", "FS 0.6.3 shows only demo events and local counters for the safe TUN test route 203.0.113.0/24. This is not full packet capture: there is no default route, VPN DNS, payload logging, domain extraction, forwarding/proxying, or cloud upload.", "FS 0.6.3 仅显示演示事件和安全 TUN 测试路由 203.0.113.0/24 的本地计数。这不是完整抓包：没有默认路由、VPN DNS、负载日志、域名提取、转发/代理或云上传。")
+    val fsLimitShort = t("Пока нет полного анализа трафика; доступны только локальные счётчики при явном включении диагностики.", "No full traffic analysis yet; only local counters are available when diagnostics are explicitly enabled.", "尚无完整流量分析；仅在明确启用诊断时可用本地计数器。")
+    val fsLimitDetails = t("FS 0.6.4 показывает локальные счётчики только при явном включении developer diagnostics. Это не полный packet capture: нет default route, DNS в VPN, payload logging, извлечения доменов, forwarding/proxying или облачной загрузки.", "FS 0.6.4 shows local counters only when developer diagnostics are explicitly enabled. This is not full packet capture: there is no default route, VPN DNS, payload logging, domain extraction, forwarding/proxying, or cloud upload.", "FS 0.6.4 仅在明确启用开发者诊断时显示本地计数。这不是完整抓包：没有默认路由、VPN DNS、负载日志、域名提取、转发/代理或云上传。")
     val flowScannerTitle = "Flow Scanner"
     val flowScannerSubtitle = t("кто куда подключается и почему", "who connects where and why", "谁连接到哪里以及原因")
     val flowAppFilter = t("Приложения", "Apps", "应用")
-    val flowAllAppsPlaceholder = t("Все приложения (заглушка)", "All apps (placeholder)", "所有应用（占位）")
+    val flowAllAppsPlaceholder = t("Все приложения", "All apps", "所有应用")
     val flowStartAnalysis = t("Начать анализ", "Start analysis", "开始分析")
-    val flowDemoMode = t("демо / локально", "demo / local", "演示 / 本地")
-    val flowPreviewOnly = t("Демо + live TEST-NET counters; не анализ реального трафика приложений", "Demo + live TEST-NET counters; not real app traffic analysis", "演示 + 实时 TEST-NET 计数；不是实际应用流量分析")
+    val flowDemoMode = t("локально", "local", "本地")
+    val flowEmptyTitle = t("Потоки пока не записаны", "No flows captured yet", "尚未捕获流量")
+    val flowEmptyState = t("Flow Scanner покажет локальные счётчики, когда они доступны. Полный анализ трафика приложений ещё не заявляется.", "Flow Scanner shows local counters when available. Full app traffic analysis is not claimed yet.", "Flow Scanner 会在可用时显示本地计数器。目前不声称完整应用流量分析。")
+    val flowPreviewOnly = t("Локальная видимость без payload logging, forwarding/proxying или облачной загрузки.", "Local visibility without payload logging, forwarding/proxying, or cloud upload.", "本地可见性，无 payload 日志、转发/代理或云上传。")
     val flowLiveTestRoute = t("Live test route", "Live test route", "实时测试路由")
     val flowLiveLocalTestData = t("live local test data", "live local test data", "实时本地测试数据")
     val flowDemoPreview = t("demo / preview", "demo / preview", "演示 / 预览")
@@ -773,11 +934,11 @@ Packets are dropped after counting""",
     val browserApp = t("Браузер", "Browser", "浏览器")
     val workApp = t("Рабочее приложение", "Work app", "工作应用")
     val trackerApp = t("Пример трекера", "Tracker example", "跟踪器示例")
-    val telegramRouteReason = t("Правило домена telegram.org отправляет мессенджер в профиль Xray Germany.", "A telegram.org domain rule sends the messenger to the Xray Germany profile.", "telegram.org 域名规则将该应用发送到 Xray Germany 配置。")
+    val telegramRouteReason = t("Правило домена показывает будущий выбор выбранного профиля.", "A domain rule shows future selected-profile routing.", "域名规则展示未来所选配置路由。")
     val telegramRecommendation = t("Проверьте, что профиль выбран осознанно, затем включайте реальный режим только вручную.", "Confirm the profile is intentional, then enable any real mode only manually.", "确认配置选择正确；真实模式只能手动启用。")
     val telegramTechnical = t("Демо-событие: будущий источник — локальный VpnService flow log после явного разрешения пользователя.", "Demo event: future source is the local VpnService flow log after explicit user consent.", "演示事件：未来来源是在用户明确同意后的本地 VpnService 流日志。")
-    val mediaRouteReason = t("Медиа-домены youtube.com и googlevideo.com соответствуют правилу Media tunnel.", "Media domains youtube.com and googlevideo.com match the Media tunnel rule.", "媒体域 youtube.com 和 googlevideo.com 匹配 Media tunnel 规则。")
-    val mediaRecommendation = t("Если видео работает медленно, позже проверьте профиль Media tunnel и MTU.", "If video is slow, later check the Media tunnel profile and MTU.", "如果视频较慢，稍后检查 Media tunnel 配置和 MTU。")
+    val mediaRouteReason = t("Домены могут соответствовать пользовательскому правилу выбранного профиля.", "Domains can match a user rule for a selected profile.", "域名可以匹配所选配置的用户规则。")
+    val mediaRecommendation = t("Если соединение работает медленно, позже проверьте выбранный профиль и MTU.", "If a connection is slow, later check the selected profile and MTU.", "如果连接较慢，稍后检查所选配置和 MTU。")
     val mediaTechnical = t("Событие показывает целевой домен и предполагаемый протокол; реальный QUIC/TCP анализ не выполняется.", "The event shows target domains and expected protocol; real QUIC/TCP analysis is not performed.", "事件显示目标域和预期协议；未执行真实 QUIC/TCP 分析。")
     val govRouteReason = t("Чувствительные локальные сервисы оставлены Direct, чтобы не отправлять их в сторонний тоннель.", "Sensitive local services stay Direct so they are not sent through a third-party tunnel.", "敏感本地服务保持 Direct，避免经过第三方隧道。")
     val govRecommendation = t("Оставьте Direct для банков и госуслуг, если у вас нет отдельной доверенной политики.", "Keep Direct for banks and public services unless you have a separate trusted policy.", "除非有单独可信策略，否则银行和公共服务建议保持 Direct。")
@@ -804,13 +965,31 @@ Packets are dropped after counting""",
     val languageLabel = t("Язык", "Language", "语言")
     val theme = t("Тема", "Theme", "主题")
     val amoledNote = t("AMOLED использует настоящий чёрный фон, где это практично.", "AMOLED uses true black where practical.", "AMOLED 在适合处使用纯黑背景。")
+    val help = t("Справка", "Help", "帮助")
+    val aboutViroutefs = t("About ViRouteFS", "About ViRouteFS", "关于 ViRouteFS")
+    val projectOverviewShort = t("Visual Route & Flow Scanner — локальный Android-инструмент для видимости маршрутов и потоков.", "Visual Route & Flow Scanner is a local Android tool for route and flow visibility.", "Visual Route & Flow Scanner 是用于路由和流量可见性的本地 Android 工具。")
+    val projectOverviewDetails = t("Home больше не отдельная вкладка: обзор, статус, приватность и цели живут здесь, в Settings → Help.", "Home is no longer a separate tab: overview, status, privacy, and goals live here in Settings → Help.", "Home 不再是单独标签：概览、状态、隐私和目标位于 Settings → Help。")
+    val licenseSummaryTitle = t("Лицензия GPL-3.0-or-later", "GPL-3.0-or-later license", "GPL-3.0-or-later 许可证")
+    val licenseSummaryShort = t("Проект остаётся свободным ПО под GPL-3.0-or-later.", "The project remains free software under GPL-3.0-or-later.", "项目仍是 GPL-3.0-or-later 下的自由软件。")
+    val licenseSummaryDetails = t("Вы можете изучать, изменять и распространять код при соблюдении условий GPL; лицензия не заменяется и не ослабляется.", "You may study, modify, and redistribute the code under GPL terms; the license is not replaced or weakened.", "可按 GPL 条款研究、修改和再分发代码；许可证不会被替换或削弱。")
+    val currentAlphaLimitations = t("Текущие ограничения alpha", "Current alpha limitations", "当前 alpha 限制")
+    val alphaLimitationsShort = t("Нет default route, DNS в VPN builder, payload logging, forwarding/proxying или готовых внешних тоннелей.", "No default route, VPN builder DNS, payload logging, forwarding/proxying, or ready external tunnels.", "没有默认路由、VPN builder DNS、payload 日志、转发/代理或可用外部隧道。")
+    val alphaLimitationsDetails = t("Маршруты и DNS-политики сейчас в основном локальная модель/планирование. TEST-NET маршрут оставлен только в Developer diagnostics.", "Routes and DNS policies are currently mostly local modeling/planning. The TEST-NET route remains only in Developer diagnostics.", "路由和 DNS 策略目前主要是本地建模/规划。TEST-NET 路由仅保留在开发者诊断中。")
+    val projectGoals = t("Цели проекта", "Project goals", "项目目标")
+    val projectGoalsShort = t("Сети, маршруты, DNS, Flow Scanner, диагностика и безопасные локальные аудиты.", "Networks, routes, DNS, Flow Scanner, diagnostics, and safe local audits.", "网络、路由、DNS、Flow Scanner、诊断和安全本地审计。")
+    val projectGoalsDetails = t("Один VpnService, внутренние политики маршрутизации, Xray/OpenVPN позже, DNS/TCP/TLS/HTTP/UDP/MTU диагностика, понятные логи и локальный PCAP export по явному действию пользователя.", "A single VpnService, internal routing policies, Xray/OpenVPN later, DNS/TCP/TLS/HTTP/UDP/MTU diagnostics, readable logs, and local PCAP export only by explicit user action.", "单个 VpnService、内部路由策略、未来 Xray/OpenVPN、DNS/TCP/TLS/HTTP/UDP/MTU 诊断、可读日志，以及仅用户明确操作的本地 PCAP 导出。")
+    val beginnerMode = t("Для самых маленьких", "For beginners", "初学者")
+    val beginnerHelp = t("Сети: куда может идти трафик. Маршруты: правила выбора. DNS: как планировать имена. Flow Scanner: что приложение сможет показать о потоках. Настройки: язык, тема, справка и диагностика.", "Networks: where traffic may go. Routes: selection rules. DNS: name-policy planning. Flow Scanner: what the app can show about flows. Settings: language, theme, help, and diagnostics.", "网络：流量可以去哪里。路由：选择规则。DNS：名称策略规划。Flow Scanner：应用可显示的流量信息。设置：语言、主题、帮助和诊断。")
+    val adminMode = t("Для админов", "For admins", "管理员")
+    val adminHelp = t("VpnService/TUN skeleton only. Profiles/outbounds are policy targets. Rules match apps/domains/CIDR. DNS policy is local metadata for now. Routing must fail closed, no payload logging, no silent fallback to foreign profiles.", "VpnService/TUN skeleton only. Profiles/outbounds are policy targets. Rules match apps/domains/CIDR. DNS policy is local metadata for now. Routing must fail closed, no payload logging, no silent fallback to foreign profiles.", "仅 VpnService/TUN 骨架。Profiles/outbounds 是策略目标。规则匹配应用/域名/CIDR。DNS 策略目前是本地元数据。路由必须 fail closed，无 payload 日志，不静默回退到外部配置。")
+    val developerDiagnostics = t("Developer diagnostics", "Developer diagnostics", "开发者诊断")
+    val developerDiagnosticsWarning = t("Не обычная функция пользователя. Используется для внутренней проверки безопасного TEST-NET маршрута.", "Not a normal user feature. Used for internal validation of the safe TEST-NET route.", "不是普通用户功能。用于安全 TEST-NET 路由的内部验证。")
     val supportProject = t("Поддержать проект", "Support project", "支持项目")
     val supportShort = t("Ссылки скрыты, чтобы экран оставался компактным.", "Links are collapsed to keep the screen compact.", "链接已折叠，使界面更紧凑。")
     val actionPrefix = t("Что сделать: ", "Recommended action: ", "建议操作：")
 
     fun screen(screen: AppScreen): String = when (screen) {
-        AppScreen.Dashboard -> dashboard
-        AppScreen.Vpn -> vpn
+        AppScreen.Vpn -> networks
         AppScreen.Routes -> routes
         AppScreen.Dns -> dns
         AppScreen.Fs -> fs
@@ -820,6 +999,7 @@ Packets are dropped after counting""",
     }
 
     fun profileCount(value: Int): String = t("$value проф.", "$value profiles", "$value 个配置")
+    fun assignedRoutesCount(value: Int): String = t("Маршрутов: $value", "Routes: $value", "路由：$value")
     fun profileUsedMessage(routes: String): String = t("Профиль используется маршрутами: $routes. Сначала измените или удалите эти правила.", "Profile is used by routes: $routes. Change or delete those rules first.", "配置正被路由使用：$routes。请先更改或删除这些规则。")
     fun policyCount(value: Int): String = t("$value политик", "$value policies", "$value 个策略")
     fun overrideCount(value: Int): String = t("$value записей", "$value entries", "$value 条记录")

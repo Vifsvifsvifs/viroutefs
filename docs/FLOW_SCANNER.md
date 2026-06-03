@@ -1,50 +1,27 @@
-# Flow Scanner (FS)
+# Flow Scanner
 
-**FS** means **Flow Scanner**.
+Flow Scanner (FS) is the future ViRouteFS view for explaining local flow visibility in human language.
 
-The FS tab keeps the title **Flow Scanner** and the Russian subtitle:
+## 0.6.4-alpha behavior
 
-> кто куда подключается и почему
+FS does **not** claim full traffic analysis yet.
 
-FS is a friendly network-event explanation module. It is not a raw packet table and it does not use third-party branding.
+Current user-facing behavior:
 
-## 0.6.3-alpha behavior
+- Shows an empty/local state when no counters are available.
+- Shows local TEST-NET counters only when the developer diagnostic TEST-NET route has been explicitly enabled or counters are non-zero.
+- Does not show fake app flows as real traffic.
+- Does not show fake tunnels, fake banking/media/work categories, or fake configured entities.
 
-The screen remains a demo/preview UI for future flow explanations, but it can also display live local counters from the opt-in TEST-NET TUN test route. It does **not** start full packet capture, full-device routing, DNS routing, forwarding/proxying, or real VPN engines.
+Current safety boundaries:
 
-Main screen behavior:
+- No full-device default route.
+- No DNS servers added to the VPN builder.
+- No packet payload logging.
+- No payload inspection.
+- No domain extraction from packets.
+- No forwarding.
+- No proxying.
+- No telemetry, analytics, tracking SDKs, ads, or cloud upload.
 
-- shows a compact top control card with an all-apps placeholder, a **Start analysis** button, and demo/local status;
-- shows dense sample flow rows with only app name, target domain/IP:port, selected route/tunnel, and a small status chip;
-- clearly labels sample rows as **demo / preview**;
-- shows a compact **Live test route** row when the VPN TEST-NET preview is active or its counters are non-zero;
-- moves explanations, routing reasons, warnings, recommendations, and technical notes into **Details / Подробнее**;
-- opens a dedicated flow event details screen when a sample event row is tapped.
-
-Details screen behavior:
-
-- demo details show app, domain, resolved IP when available, port/protocol, DNS policy, selected route/tunnel, route-selection reason, risk/warning, and recommendation;
-- live TEST-NET details show route `203.0.113.0/24`, VPN mode `TUN test-route preview`, packets read, bytes read, last packet time, safety notes, and how to test;
-- keeps long technical data collapsed behind **Details / Подробнее**.
-
-Live local TEST-NET event in `0.6.3-alpha`:
-
-- Source: `ViRouteFS TUN test route`;
-- Route: `203.0.113.0/24`;
-- Counters: `packetsRead`, `bytesRead`, `lastPacketAt`;
-- Safety notes: no default route, no DNS, no payload logging, and packets are dropped after counting;
-- Test hint: open `http://203.0.113.1` or try connecting to `203.0.113.1`.
-
-This live row is local test data only. It is not a claim that Flow Scanner performs real app traffic analysis yet.
-
-Demo sample events:
-
-- Telegram → `api.telegram.org` → Xray Germany;
-- Browser → `youtube.com / googlevideo.com` → Media tunnel;
-- Bank/Gosuslugi → `gosuslugi.ru` → Direct;
-- Work app → `gitlab.corp` → Work VPN;
-- Tracker example → `tracker.example.com` → Block.
-
-## Privacy and safety boundary
-
-FS will work only after the user explicitly enables local VPN preview features. `0.6.3-alpha` has no hidden interception, full packet capture, default route, VPN DNS server injection, packet payload logging, packet payload inspection, domain extraction from packets, forwarding, proxying, telemetry, analytics, tracking SDKs, or cloud upload of logs/PCAP files. The live TEST-NET counters are runtime app-local state and are not persisted beyond existing service state behavior.
+The developer TEST-NET route is `203.0.113.0/24`. Packets routed into that preview are counted and dropped. Counters are local runtime state.

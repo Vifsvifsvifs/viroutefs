@@ -11,20 +11,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -38,9 +32,9 @@ import dev.vifs.viroutefs.ScreenList
 import dev.vifs.viroutefs.StatusChip
 import dev.vifs.viroutefs.UiText
 import dev.vifs.viroutefs.WarningText
-import dev.vifs.viroutefs.routing.MOCK_PROFILE_LIMITATION
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
+import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
@@ -52,17 +46,17 @@ internal fun VpnScreen(
     text: UiText,
     config: RoutingConfig,
     vpnState: VpnServiceUiState,
-    tunTestRoutePreviewEnabled: Boolean,
+    @Suppress("UNUSED_PARAMETER") tunTestRoutePreviewEnabled: Boolean,
     onVpnSwitch: (Boolean) -> Unit,
-    onTunTestRoutePreview: (Boolean) -> Unit,
+    @Suppress("UNUSED_PARAMETER") onTunTestRoutePreview: (Boolean) -> Unit,
     onConfig: (RoutingConfig, String?) -> Unit,
 ) {
-    var adding by rememberSaveable { mutableStateOf(false) }
     var selectedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedProfile = selectedProfileId?.let { id -> config.profiles.firstOrNull { it.id == id } }
+    val visibleProfiles = config.profiles.filter { !it.mockOnly && it.enabled }
 
     if (selectedProfile != null) {
-        VpnProfileDetailsScreen(
+        NetworkProfileDetailsScreen(
             padding = padding,
             text = text,
             profile = selectedProfile,
@@ -76,22 +70,8 @@ internal fun VpnScreen(
         return
     }
 
-    if (adding) {
-        AddVpnProfileScreen(
-            padding = padding,
-            text = text,
-            config = config,
-            onBack = { adding = false },
-            onConfig = { next, message ->
-                onConfig(next, message)
-                adding = false
-            },
-        )
-        return
-    }
-
     ScreenList(padding) {
-        item { Header(text.vpn, text.vpnSubtitle) }
+        item { Header(text.networks, text.networksSubtitle) }
         item {
             CardBlock {
                 Row(
@@ -100,37 +80,24 @@ internal fun VpnScreen(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text(text.vpnLocalPreviewTitle, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                        Text(text.activateNetworkControl, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                         StatusChip(vpnState.label(text))
-                        Text(text.vpnNoTrafficRoutingYet, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(text.vpnPacketProcessingLater, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(text.networkControlSummary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(checked = vpnState.switchChecked, onCheckedChange = onVpnSwitch)
                 }
-            }
-        }
-        item {
-            CardBlock {
-                Text(text.vpnNoHiddenInterception, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                StatusChip(if (vpnState.status == VpnServiceStatus.TunPreviewActive || vpnState.status == VpnServiceStatus.TunTestRouteActive) text.vpnTunActive else text.vpnTunInactive)
                 Details(text.details, text.vpnLifecycleOnlyDetails)
-                TestRoutePreviewControls(
-                    text = text,
-                    vpnState = vpnState,
-                    enabled = tunTestRoutePreviewEnabled,
-                    onEnabledChange = onTunTestRoutePreview,
-                )
                 vpnState.detail?.let { WarningText(it) }
             }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = { adding = true }) { Text(text.addProfile) }
-                AssistChip(onClick = {}, label = { Text(text.profileCount(config.profiles.size)) })
+                AssistChip(onClick = {}, label = { Text(text.profileCount(visibleProfiles.size)) })
+                StatusChip(text.noNetworkProfilesYet)
             }
         }
-        items(config.profiles, key = { it.id }) { profile ->
-            CompactVpnProfileCard(
+        items(visibleProfiles, key = { it.id }) { profile ->
+            CompactNetworkProfileCard(
                 text = text,
                 profile = profile,
                 config = config,
@@ -141,35 +108,8 @@ internal fun VpnScreen(
 }
 
 @Composable
-private fun TestRoutePreviewControls(
-    text: UiText,
-    vpnState: VpnServiceUiState,
-    enabled: Boolean,
-    onEnabledChange: (Boolean) -> Unit,
-) {
-    var open by rememberSaveable { mutableStateOf(false) }
-    TextButton(onClick = { open = !open }, contentPadding = PaddingValues(0.dp)) {
-        Text(if (open) "− ${text.vpnTestRoutePreview}" else "+ ${text.vpnTestRoutePreview}")
-    }
-    if (!open) return
-
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(text.vpnTestRoute, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
-            Text(text.vpnNormalInternetUnchanged, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Switch(checked = enabled, onCheckedChange = onEnabledChange)
-    }
-    Text(testRoutePreviewDetails(text, vpnState), style = MaterialTheme.typography.bodySmall)
-}
-
-@Composable
-private fun CompactVpnProfileCard(text: UiText, profile: TunnelProfile, config: RoutingConfig, onOpen: () -> Unit) {
-    val dns = config.dnsPolicies.firstOrNull { it.id == profile.dnsPolicyId }?.name ?: text.noDns
+private fun CompactNetworkProfileCard(text: UiText, profile: TunnelProfile, config: RoutingConfig, onOpen: () -> Unit) {
+    val routeCount = config.rules.count { it.targetProfileId == profile.id && it.type != RouteRuleType.DEFAULT }
     CardBlock {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -184,7 +124,7 @@ private fun CompactVpnProfileCard(text: UiText, profile: TunnelProfile, config: 
                     if (config.defaultProfileId == profile.id) StatusChip(text.defaultProfile)
                 }
                 Text(profile.type.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("DNS: $dns", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(text.assignedRoutesCount(routeCount), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             StatusChip(if (profile.enabled) text.on else text.off)
         }
@@ -192,7 +132,7 @@ private fun CompactVpnProfileCard(text: UiText, profile: TunnelProfile, config: 
 }
 
 @Composable
-private fun VpnProfileDetailsScreen(
+private fun NetworkProfileDetailsScreen(
     padding: PaddingValues,
     text: UiText,
     profile: TunnelProfile,
@@ -235,8 +175,8 @@ private fun VpnProfileDetailsScreen(
             CardBlock {
                 Text(text.description, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
                 Text(profile.description.ifBlank { text.none }, style = MaterialTheme.typography.bodySmall)
-                if (profile.mockOnly) WarningText(profile.platformNotes ?: text.mockOnly)
                 profile.warningText?.let { WarningText(it) }
+                Details(text.details, text.profileAdvancedDetails)
             }
         }
         item {
@@ -267,82 +207,6 @@ private fun VpnProfileDetailsScreen(
     }
 }
 
-@Composable
-private fun AddVpnProfileScreen(
-    padding: PaddingValues,
-    text: UiText,
-    config: RoutingConfig,
-    onBack: () -> Unit,
-    onConfig: (RoutingConfig, String?) -> Unit,
-) {
-    var name by rememberSaveable { mutableStateOf("") }
-    var desc by rememberSaveable { mutableStateOf("") }
-    var type by rememberSaveable { mutableStateOf(TunnelType.WireGuard) }
-
-    ScreenList(padding) {
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = onBack) { Text(text.back) }
-                Header(text.addProfile, text.addProfileSubtitle)
-            }
-        }
-        item {
-            CardBlock {
-                Text(text.importOptions, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(text.qr, text.clipboard, text.file, text.manual).forEach { AssistChip(onClick = {}, label = { Text(it) }) }
-                }
-            }
-        }
-        item {
-            CardBlock {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(text.name) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                TunnelTypeDropdown(text, type, onSelect = { type = it })
-                OutlinedTextField(value = desc, onValueChange = { desc = it }, label = { Text(text.description) }, modifier = Modifier.fillMaxWidth())
-                Button(onClick = {
-                    val dnsId = when (type) {
-                        TunnelType.Direct -> RoutingConfigDefaults.DIRECT_DNS_ID
-                        TunnelType.Block -> RoutingConfigDefaults.SYSTEM_DNS_ID
-                        else -> RoutingConfigDefaults.TUNNEL_DNS_ID
-                    }
-                    val profile = TunnelProfile(
-                        id = "profile_${System.currentTimeMillis()}",
-                        name = name.ifBlank { type.label },
-                        type = type,
-                        description = desc.ifBlank { text.mockProfileDescription },
-                        mockOnly = type.isMockOnly,
-                        platformNotes = MOCK_PROFILE_LIMITATION.takeIf { type.isMockOnly },
-                        dnsPolicyId = dnsId,
-                    )
-                    onConfig(config.copy(profiles = config.profiles + profile), text.profileAdded)
-                }) { Text(text.create) }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun TunnelTypeDropdown(text: UiText, value: TunnelType, onSelect: (TunnelType) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
-        OutlinedTextField(
-            value = value.label,
-            onValueChange = {},
-            readOnly = true,
-            label = { Text(text.type) },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth(),
-        )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            TunnelType.entries.filterNot { it.name.endsWith("Mock") }.forEach { type ->
-                DropdownMenuItem(text = { Text(type.label) }, onClick = { onSelect(type); expanded = false })
-            }
-        }
-    }
-}
-
-
 private val VpnServiceUiState.switchChecked: Boolean
     get() = status == VpnServiceStatus.Starting ||
         status == VpnServiceStatus.ServiceActiveNoTun ||
@@ -359,12 +223,4 @@ private fun VpnServiceUiState.label(text: UiText): String = when (status) {
     VpnServiceStatus.TunTestRouteActive -> text.vpnTunPreviewActive
     VpnServiceStatus.Stopped -> text.vpnStopped
     VpnServiceStatus.Error -> text.vpnError
-}
-
-private fun testRoutePreviewDetails(text: UiText, vpnState: VpnServiceUiState): String = buildString {
-    appendLine(text.vpnTestRoute)
-    appendLine("${text.vpnPacketsRead}: ${vpnState.packetsRead}")
-    appendLine("${text.vpnBytesRead}: ${vpnState.bytesRead}")
-    appendLine(text.vpnNormalInternetUnchanged)
-    append(text.vpnHowToTestTun)
 }

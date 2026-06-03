@@ -52,4 +52,4 @@
 
 ## DNS metadata
 
-Each connection profile may reference a DNS policy. DNS is configured primarily on the DNS page; the VPN page only shows a short DNS summary.
+Each network profile may reference a DNS policy. DNS is configured primarily on the DNS page; the Networks page only shows compact profile details.

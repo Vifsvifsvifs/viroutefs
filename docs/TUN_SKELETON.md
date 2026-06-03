@@ -1,6 +1,6 @@
-# ViRouteFS safe TUN skeleton — 0.6.3-alpha
+# ViRouteFS safe TUN skeleton — 0.6.4-alpha
 
-ViRouteFS `0.6.3-alpha` keeps the route-less TUN preview as the default, keeps the opt-in TEST-NET route preview, and links its safe counters into Flow Scanner.
+ViRouteFS `0.6.4-alpha` keeps the route-less TUN preview as the default, keeps the opt-in TEST-NET route preview, and links its safe counters into Flow Scanner.
 
 ## Default route-less preview
 
@@ -17,7 +17,7 @@ Normal internet traffic should remain unchanged in the default mode because ther
 
 ## Opt-in test-route preview
 
-The VPN screen exposes **Test route preview** behind the compact Details / Advanced area. The user must explicitly enable it. In `0.6.3-alpha`, Flow Scanner becomes the main place to observe this live local TEST-NET counter activity.
+The normal Networks screen does not expose TEST-NET controls. The safe route remains available only under **Settings → Developer diagnostics** for explicit internal/developer testing. In `0.6.4-alpha`, Flow Scanner may show local counters only after that explicit developer diagnostic path is enabled.
 
 When enabled, ViRouteFS adds exactly one IPv4 route to the TUN builder:
 
@@ -39,11 +39,11 @@ It does not log packet payload bytes, does not inspect payloads, does not parse 
 
 If the TUN read loop fails unexpectedly, the service publishes an `Error` state with a short safe message and stops the preview.
 
-## Flow Scanner visibility in 0.6.3-alpha
+## Flow Scanner visibility in 0.6.4-alpha
 
-Flow Scanner can now show the current local TEST-NET test-route counters when the preview is active or when counters are non-zero:
+Flow Scanner can show current local TEST-NET counters when developer diagnostics enabled the preview or when counters are non-zero:
 
-- Source: `ViRouteFS TUN test route`.
+- Source: `Developer TEST-NET counter`.
 - Route: `203.0.113.0/24`.
 - Packets and bytes read.
 - Last packet time or `never`.
@@ -62,9 +62,9 @@ This is still not full packet capture or real app traffic analysis. The preview 
 ## Manual test notes
 
 1. Install the debug APK.
-2. Enable VPN preview in normal route-less mode.
+2. Enable Networks control in normal route-less mode.
 3. Confirm normal internet still works.
-4. Enable test-route preview.
+4. Open Settings → Developer diagnostics and explicitly enable test-route preview.
 5. Confirm the UI shows test route `203.0.113.0/24` active.
 6. Open `http://203.0.113.1` in a browser or try connecting to `203.0.113.1`.
 7. Confirm packet counters increase.

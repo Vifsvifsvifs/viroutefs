@@ -93,7 +93,7 @@ private fun DnsMainScreen(
             subtitle = text.policyCount(config.dnsPolicies.size),
         )
     }
-    items(config.dnsPolicies, key = { it.id }) { policy -> DnsPolicySummaryCard(text, policy, onOpen = { onPolicy(policy) }) }
+    items(config.dnsPolicies, key = { it.id }) { policy -> DnsPolicySummaryCard(text, policy, config, onOpen = { onPolicy(policy) }) }
     item {
         HostOverridesSummaryCard(
             text = text,
@@ -134,7 +134,7 @@ private fun CompactDnsResult(text: UiText, result: DiagnosticResult) {
 }
 
 @Composable
-private fun DnsPolicySummaryCard(text: UiText, policy: DnsPolicy, onOpen: () -> Unit) {
+private fun DnsPolicySummaryCard(text: UiText, policy: DnsPolicy, config: RoutingConfig, onOpen: () -> Unit) {
     CardBlock {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -146,6 +146,8 @@ private fun DnsPolicySummaryCard(text: UiText, policy: DnsPolicy, onOpen: () -> 
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(policy.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 Text(policy.type.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val boundProfile = policy.resolveThroughProfileId?.let { id -> config.profiles.firstOrNull { it.id == id && !it.mockOnly } }
+                Text("${text.targetProfile}: ${boundProfile?.name ?: text.none}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 policy.serverText?.takeIf { it.isNotBlank() }?.let {
                     Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -168,7 +170,7 @@ private fun DnsPolicyDetailsScreen(
     var serverText by rememberSaveable(policy.id) { mutableStateOf(policy.serverText.orEmpty()) }
     var description by rememberSaveable(policy.id) { mutableStateOf(policy.description) }
     var enabled by rememberSaveable(policy.id) { mutableStateOf(policy.enabled) }
-    val profileNames = config.profiles.filter { it.dnsPolicyId == policy.id }.map { it.name }
+    val profileNames = config.profiles.filter { it.dnsPolicyId == policy.id && !it.mockOnly }.map { it.name }
     val routeNames = config.rules.filter { it.dnsPolicyId == policy.id }.map { it.name }
 
     ScreenList(padding) {

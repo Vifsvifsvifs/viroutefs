@@ -17,18 +17,18 @@ ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project 
 - No hidden interception of third-party traffic.
 - No offensive security features.
 
-## Current status: 0.6.3-alpha
+## Current status: 0.6.4-alpha
 
-Version `0.6.3-alpha` is a public alpha polish release. It documents the current safe preview state and prepares the repository for public presentation without changing runtime VPN/TUN routing behavior.
+Version `0.6.4-alpha` cleans up the user-facing navigation and network UX without changing runtime VPN/TUN routing behavior. Home content moved into Settings → Help, and the main VPN concept is now Networks / Сети.
 
 What exists now:
 
 - Android `VpnService` permission flow exists.
 - Foreground VPN preview service exists.
 - Safe TUN preview exists.
-- Optional TEST-NET route `203.0.113.0/24` exists for local preview testing.
-- Flow Scanner can show live local test-route counters when the TEST-NET preview is enabled.
-- The app has Compose screens for Dashboard, VPN, Routes, DNS, Tools, Logs, and Settings.
+- Optional TEST-NET route `203.0.113.0/24` remains for developer/local preview testing only and is hidden from normal user UI.
+- Flow Scanner can show local counters when developer diagnostics explicitly enable the TEST-NET preview.
+- The app has Compose screens for Networks, Routes, DNS, Flow Scanner, Tools, and Settings with Help.
 - Routing configuration, DNS policy metadata, diagnostics reports, and logs are local-first.
 
 What is intentionally not implemented yet:
@@ -41,17 +41,11 @@ What is intentionally not implemented yet:
 - No Xray, OpenVPN, WireGuard, Hysteria2, or SOCKS5 proxy engines yet.
 - No Play Store or F-Droid release is claimed yet.
 
-See [`docs/TUN_SKELETON.md`](docs/TUN_SKELETON.md) for the safe Android TUN preview, [`docs/FLOW_SCANNER.md`](docs/FLOW_SCANNER.md) for Flow Scanner behavior, and [`docs/RELEASE_NOTES_0.6.3_ALPHA.md`](docs/RELEASE_NOTES_0.6.3_ALPHA.md) for the release notes.
+See [`docs/TUN_SKELETON.md`](docs/TUN_SKELETON.md) for the safe Android TUN preview, [`docs/FLOW_SCANNER.md`](docs/FLOW_SCANNER.md) for Flow Scanner behavior, [`docs/ROUTING_POLICY.md`](docs/ROUTING_POLICY.md) for strict route isolation, and [`docs/UI_DIRECTION.md`](docs/UI_DIRECTION.md) for navigation/icon direction.
 
 ## Screenshots
 
-Actual screenshots are not committed yet. Planned public release screenshots:
-
-- TODO: VPN profiles and TUN preview.
-- TODO: Routes.
-- TODO: DNS policies.
-- TODO: Flow Scanner live test route.
-- TODO: Settings / themes.
+Actual screenshots are not committed yet. Future screenshots should show real UI states only: Networks, Routes, DNS, Flow Scanner empty/local counter states, and Settings → Help. Do not add fake configured tunnels or fake route categories as public screenshots.
 
 ## Build artifacts
 
@@ -71,7 +65,7 @@ All diagnostics are manual and user-controlled:
 
 The DNS screen currently uses Android's system resolver. Per-route DNS policy is stored in the routing config, but it is still explanation and leak-risk metadata only. Real DNS routing will be added later.
 
-See [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md), [docs/ROUTE_DIAGNOSTICS.md](docs/ROUTE_DIAGNOSTICS.md), [docs/ROUTING_CONFIG.md](docs/ROUTING_CONFIG.md), [docs/DNS_POLICY.md](docs/DNS_POLICY.md), and [SECURITY_BOUNDARIES.md](SECURITY_BOUNDARIES.md) for detailed behavior and safety boundaries.
+See [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md), [docs/ROUTE_DIAGNOSTICS.md](docs/ROUTE_DIAGNOSTICS.md), [docs/ROUTING_CONFIG.md](docs/ROUTING_CONFIG.md), [docs/ROUTING_POLICY.md](docs/ROUTING_POLICY.md), [docs/DNS_POLICY.md](docs/DNS_POLICY.md), and [SECURITY_BOUNDARIES.md](SECURITY_BOUNDARIES.md) for detailed behavior and safety boundaries.
 
 ## Route simulator status
 
@@ -81,7 +75,7 @@ The Route Simulator and Route Diagnostics route selection use the saved local ro
 
 The public roadmap is maintained in [`ROADMAP.md`](ROADMAP.md). In short:
 
-- `0.6.x`: safe TUN test route, Flow Scanner live test counters, release polish.
+- `0.6.x`: navigation cleanup, Networks naming, safe developer-only TUN test route, Flow Scanner local counters, release polish.
 - `0.7.x`: controlled Direct/Block route experiments without a full-device default route.
 - `0.8.x`: first external outbound experiment, likely SOCKS5, with route decision explanation.
 - `0.9.x`: import preparation for WireGuard, Xray, and Hysteria2 configs.

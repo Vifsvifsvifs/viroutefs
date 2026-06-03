@@ -43,7 +43,7 @@ The app should explain traffic in simple terms.
 Example:
 
 Telegram connected to 149.154.167.91:443.
-Rule: Telegram -> Xray Germany.
+Example future rule shape: selected app/domain/IP -> selected actual profile, with fail-closed behavior if that profile is unavailable.
 Status: success.
 Latency: 84 ms.
 
