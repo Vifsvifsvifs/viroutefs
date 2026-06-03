@@ -18,9 +18,9 @@ After the project switches from random debug signing to stable alpha signing, us
 
 ## Published alpha updates
 
-Published alpha APKs are distributed through GitHub Releases with attached APK assets, such as `ViRouteFS-0.6.10-alpha.apk`. The in-app updater can find a newer GitHub Release, let the user manually download the APK asset, and open Android's system package installer. ViRouteFS does not silently install APKs; Android asks the user to confirm installation and enforces package signature compatibility for updates.
+Published alpha APKs are distributed through GitHub Releases with attached APK assets, such as `ViRouteFS-0.6.11-alpha.apk`. GitHub Releases are the official alpha APK channel. The in-app updater can find a newer GitHub Release, let the user manually download the APK asset, and open Android's system package installer. ViRouteFS does not silently install APKs; Android asks the user to confirm installation and enforces package signature compatibility for updates.
 
-Because published alpha APKs use the stable alpha signing model when CI secrets are configured, future stable alpha updates should install over previous alpha builds that use the same `applicationId` and signing key. If a user installed an older randomly-signed debug APK, Android may reject an update from the stable alpha-signed release APK. In that case, the user may need to uninstall the older debug APK once, then install the GitHub Releases APK and continue updating from Releases afterward.
+Because published alpha APKs use the stable alpha signing model when CI secrets are configured, future stable alpha updates should install over previous alpha builds that use the same `applicationId` and signing key. Android/Google Play Protect may still warn for sideloaded APKs outside Google Play; ViRouteFS cannot suppress system install warnings, and users must confirm installation in Android system UI. If a user installed an older randomly-signed debug APK, Android may reject an update from the stable alpha-signed release APK. In that case, the user may need to uninstall the older debug APK once, then install the GitHub Releases APK and continue updating from Releases afterward.
 
 ## Generate an alpha keystore
 

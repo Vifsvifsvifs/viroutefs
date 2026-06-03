@@ -812,7 +812,7 @@ private fun SettingsScreen(
     var updateChecking by remember { mutableStateOf(false) }
     val apkDownloader = remember(context) { UpdateApkDownloader(context.applicationContext) }
     var supportExpanded by rememberSaveable { mutableStateOf(false) }
-    var helpExpanded by rememberSaveable { mutableStateOf(true) }
+    var helpExpanded by rememberSaveable { mutableStateOf(false) }
     var beginnerExpanded by rememberSaveable { mutableStateOf(false) }
     var adminExpanded by rememberSaveable { mutableStateOf(false) }
     var developerExpanded by rememberSaveable { mutableStateOf(false) }
@@ -820,9 +820,20 @@ private fun SettingsScreen(
         item { Header(text.settings, text.settingsSubtitle) }
         item {
             CardBlock {
-                Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text(text.help, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                    TextButton(onClick = { helpExpanded = !helpExpanded }) { Text(if (helpExpanded) text.less else text.details) }
+                Row(
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { helpExpanded = !helpExpanded },
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(text.help, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                        Text(text.helpShort, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    TextButton(onClick = { helpExpanded = !helpExpanded }) {
+                        Text(if (helpExpanded) text.hideHelp else text.showHelp)
+                    }
                 }
                 if (helpExpanded) {
                     CompactCard(text, text.aboutViroutefs, text.projectOverviewShort, text.projectOverviewDetails)
@@ -1353,6 +1364,9 @@ Packets are dropped after counting""",
     val theme = t("Тема", "Theme", "主题")
     val amoledNote = t("AMOLED использует настоящий чёрный фон, где это практично.", "AMOLED uses true black where practical.", "AMOLED 在适合处使用纯黑背景。")
     val help = t("Справка", "Help", "帮助")
+    val helpShort = t("Краткая справка скрыта до раскрытия раздела.", "Brief help stays collapsed until you expand this section.", "简短帮助默认折叠，展开后查看。")
+    val showHelp = t("Показать справку", "Show help", "显示帮助")
+    val hideHelp = t("Скрыть справку", "Hide help", "隐藏帮助")
     val aboutViroutefs = t("About ViRouteFS", "About ViRouteFS", "关于 ViRouteFS")
     val projectOverviewShort = t("Visual Route & Flow Scanner — локальный Android-инструмент для видимости маршрутов и потоков.", "Visual Route & Flow Scanner is a local Android tool for route and flow visibility.", "Visual Route & Flow Scanner 是用于路由和流量可见性的本地 Android 工具。")
     val projectOverviewDetails = t("Home больше не отдельная вкладка: обзор, статус, приватность и цели живут здесь, в Settings → Help.", "Home is no longer a separate tab: overview, status, privacy, and goals live here in Settings → Help.", "Home 不再是单独标签：概览、状态、隐私和目标位于 Settings → Help。")
@@ -1365,9 +1379,9 @@ Packets are dropped after counting""",
     val projectGoals = t("Цели проекта", "Project goals", "项目目标")
     val projectGoalsShort = t("Сети, маршруты, DNS, Flow Scanner, диагностика и безопасные локальные аудиты.", "Networks, routes, DNS, Flow Scanner, diagnostics, and safe local audits.", "网络、路由、DNS、Flow Scanner、诊断和安全本地审计。")
     val projectGoalsDetails = t("Один VpnService, внутренние политики маршрутизации, Xray/OpenVPN позже, DNS/TCP/TLS/HTTP/UDP/MTU диагностика, понятные логи и локальный PCAP export по явному действию пользователя.", "A single VpnService, internal routing policies, Xray/OpenVPN later, DNS/TCP/TLS/HTTP/UDP/MTU diagnostics, readable logs, and local PCAP export only by explicit user action.", "单个 VpnService、内部路由策略、未来 Xray/OpenVPN、DNS/TCP/TLS/HTTP/UDP/MTU 诊断、可读日志，以及仅用户明确操作的本地 PCAP 导出。")
-    val beginnerMode = t("Для самых маленьких", "For beginners", "初学者")
+    val beginnerMode = t("Для самых маленьких", "Beginner mode", "初学者模式")
     val beginnerHelp = t("Маршруты — это правила вида: это приложение, домен или IP идёт через этот маршрут. System / Система — обычный системный путь Android внутри модели ViRouteFS для приложений без явного правила. Block / Блокировать означает: совпавший трафик должен быть закрыт.", "Routes are rules like: this app, domain, or IP goes through this route. System is the normal Android system path inside the ViRouteFS model for apps without an explicit rule. Block means matching traffic should be denied.", "网络控制开启时，流量通过 ViRouteFS。没有规则的应用使用 System。网络显示流量可去向；路由选择规则；DNS 规划名称处理。")
-    val adminMode = t("Для админов", "For admins", "管理员")
+    val adminMode = t("Для админов", "Admin mode", "管理员模式")
     val adminHelp = t("Модель: app/domain/IP/CIDR matchers; точные дубликаты блокируются перед сохранением; unmatched → System; matched → только выбранный профиль; unavailable → Block / fail closed. Runtime enforcement ещё планируется: нет default-route capture, DNS в builder, payload logging или forwarding/proxying. VPN/proxy engines ещё не bundled; кандидаты documented. OpenVPN должен идти через OpenVPN3 Core, не GPLv2-only OpenVPN 2.x embedding. ByeDPI planned как local DPI bypass profile candidate.", "Model: app/domain/IP/CIDR matchers; exact duplicates are blocked before save; unmatched → System; matched → selected profile only; unavailable → Block / fail closed. Runtime enforcement is still planned: no default-route capture, builder DNS, payload logging, or forwarding/proxying. VPN/proxy engines are not bundled yet; planned candidates are documented. OpenVPN support should use the OpenVPN3 Core path, not GPLv2-only OpenVPN 2.x embedding. ByeDPI is planned as a local DPI bypass profile candidate.", "模型：app/domain/IP/CIDR 匹配；保存前阻止精确重复；未匹配 → System；已匹配 → 仅所选配置；不可用 → Block / fail closed。运行时执行仍在计划中：没有默认路由捕获、builder DNS、payload 日志或转发/代理。尚未捆绑 VPN/代理引擎；计划候选项已记录。OpenVPN 支持应使用 OpenVPN3 Core 路径，而不是嵌入 GPLv2-only OpenVPN 2.x。ByeDPI 计划作为本地 DPI 绕过配置候选。")
     val developerDiagnostics = t("Developer diagnostics", "Developer diagnostics", "开发者诊断")
     val developerDiagnosticsWarning = t("Не обычная функция пользователя. Используется для внутренней проверки безопасного TEST-NET маршрута.", "Not a normal user feature. Used for internal validation of the safe TEST-NET route.", "不是普通用户功能。用于安全 TEST-NET 路由的内部验证。")
@@ -1386,7 +1400,7 @@ Packets are dropped after counting""",
     val installUpdate = t("Установить обновление", "Install update", "安装更新")
     val deleteDownloadedApk = t("Удалить скачанный APK", "Delete downloaded APK", "删除已下载 APK")
     val apkAssetNotFound = t("Найдена новая версия, но APK-файл в релизе не найден.", "Newer release found, but APK asset was not found.", "找到了新版本，但未找到 APK 资源。")
-    val unknownAppsHelp = t("Android может попросить разрешить ViRouteFS устанавливать неизвестные приложения. Это нужно только для открытия скачанного APK в системном установщике.", "Android may ask you to allow ViRouteFS to install unknown apps. This is required only to open the downloaded APK in the system installer.", "Android 可能会要求允许 ViRouteFS 安装未知应用。这只用于在系统安装程序中打开已下载的 APK。")
+    val unknownAppsHelp = t("Android может показать предупреждение о непроверенном приложении, потому что APK установлен не из Google Play. Это системное предупреждение для sideload APK.", "Android may show an unverified app warning because this APK is installed outside Google Play. This is a system warning for sideloaded APKs.", "Android 可能会显示未验证应用警告，因为此 APK 是在 Google Play 之外安装的。这是 sideload APK 的系统警告。")
     val openInstallPermissionSettings = t("Открыть разрешение установки", "Open install permission settings", "打开安装权限设置")
     val actionPrefix = t("Что сделать: ", "Recommended action: ", "建议操作：")
 
