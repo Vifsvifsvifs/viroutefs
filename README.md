@@ -2,11 +2,11 @@
 
 ViRouteFS (Visual Route & Flow Scanner) is an open-source Android app for human-readable traffic routing explanations and safe network diagnostics.
 
-The project is local-first and defensive by design. Version `0.5.0-alpha` adds a safe Android VpnService skeleton: VPN permission flow, a local foreground-service lifecycle, and honest UI states. It deliberately does not create a TUN interface or route/capture packets yet. ViRouteFS does **not** implement real VPN routing, Xray, OpenVPN, Hysteria2, WireGuard, SOCKS5 proxying, packet capture, cloud upload, analytics, telemetry, ads, tracking, or offensive security features.
+The project is local-first and defensive by design. Version `0.5.1-alpha` adds a safe Android VpnService skeleton: VPN permission flow, a local foreground-service lifecycle, and honest UI states. It deliberately does not create a TUN interface or route/capture packets yet. ViRouteFS does **not** implement real VPN routing, Xray, OpenVPN, Hysteria2, WireGuard, SOCKS5 proxying, packet capture, cloud upload, analytics, telemetry, ads, tracking, or offensive security features.
 
-## Current milestone: 0.5.0-alpha
+## Current milestone: 0.5.1-alpha
 
-See [`docs/VPN_SERVICE_SKELETON.md`](docs/VPN_SERVICE_SKELETON.md) for the Android VPN permission and foreground-service preview added in 0.5.0-alpha.
+See [`docs/VPN_SERVICE_SKELETON.md`](docs/VPN_SERVICE_SKELETON.md) for the Android VPN permission and foreground-service preview added in 0.5.1-alpha.
 
 - Kotlin Android app using Gradle Kotlin DSL.
 - Jetpack Compose UI with Material 3.

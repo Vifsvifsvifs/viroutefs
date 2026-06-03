@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.vifs.viroutefs.CardBlock
+import dev.vifs.viroutefs.Details
 import dev.vifs.viroutefs.Header
 import dev.vifs.viroutefs.ScreenList
 import dev.vifs.viroutefs.StatusChip
@@ -106,7 +107,7 @@ internal fun VpnScreen(
             CardBlock {
                 Text(text.vpnNoHiddenInterception, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 Text(text.vpnPacketProcessingLater, style = MaterialTheme.typography.bodySmall)
-                Text(text.vpnLifecycleOnlyDetails, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Details(text.details, text.vpnLifecycleOnlyDetails)
                 vpnState.detail?.let { WarningText(it) }
             }
         }
@@ -309,6 +310,7 @@ private val VpnServiceUiState.switchChecked: Boolean
 private fun VpnServiceUiState.label(text: UiText): String = when (status) {
     VpnServiceStatus.Off -> text.off
     VpnServiceStatus.PermissionRequired -> text.vpnPermissionRequired
+    VpnServiceStatus.NotificationPermissionRequired -> text.vpnNotificationPermissionRequired
     VpnServiceStatus.Starting -> text.vpnStarting
     VpnServiceStatus.Active -> text.vpnLocalServiceActive
     VpnServiceStatus.Stopped -> text.vpnStopped

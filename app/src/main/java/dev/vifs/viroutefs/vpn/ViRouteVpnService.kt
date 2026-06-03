@@ -15,7 +15,7 @@ import dev.vifs.viroutefs.MainActivity
 import dev.vifs.viroutefs.R
 
 /**
- * Safe ViRouteFS VpnService preview for 0.5.0-alpha.
+ * Safe ViRouteFS VpnService preview for 0.5.1-alpha.
  *
  * This service intentionally does not call Builder.establish(), does not create
  * a TUN interface, and does not capture, inspect, route, or tunnel packets yet.
@@ -25,15 +25,26 @@ import dev.vifs.viroutefs.R
 class ViRouteVpnService : VpnService() {
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification())
+        publishState(VpnServiceStatus.Starting)
+        runCatching {
+            createNotificationChannel()
+            startForeground(NOTIFICATION_ID, buildNotification())
+        }.onFailure { error ->
+            val detail = error.localizedMessage ?: "Foreground service notification setup failed."
+            publishState(VpnServiceStatus.Error, detail)
+            stopSelf()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == VpnServiceController.ACTION_STOP) {
+            isRunning = false
+            publishState(VpnServiceStatus.Stopped)
             stopSelf()
             return START_NOT_STICKY
         }
+
+        if (lastState.status == VpnServiceStatus.Error) return START_NOT_STICKY
 
         isRunning = true
         publishState(VpnServiceStatus.Active)
@@ -42,7 +53,7 @@ class ViRouteVpnService : VpnService() {
 
     override fun onDestroy() {
         isRunning = false
-        publishState(VpnServiceStatus.Stopped)
+        if (lastState.status != VpnServiceStatus.Error) publishState(VpnServiceStatus.Stopped)
         super.onDestroy()
     }
 
@@ -57,11 +68,11 @@ class ViRouteVpnService : VpnService() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("ViRouteFS")
-            .setContentText("Local VPN service preview — no traffic routing yet")
+            .setContentTitle("ViRouteFS local VPN preview")
+            .setContentText("No traffic routing or packet capture yet")
             .setStyle(
                 NotificationCompat.BigTextStyle().bigText(
-                    "Local VPN service preview is active. No traffic routing, packet capture, or hidden interception is enabled yet.",
+                    "ViRouteFS local VPN preview is active. No traffic routing, packet capture, TUN interface, or hidden interception is enabled yet.",
                 ),
             )
             .setOngoing(true)
@@ -84,6 +95,7 @@ class ViRouteVpnService : VpnService() {
     }
 
     private fun publishState(status: VpnServiceStatus, detail: String? = null) {
+        rememberState(VpnServiceUiState(status, detail))
         val intent = Intent(VpnServiceController.ACTION_STATE_CHANGED)
             .setPackage(packageName)
             .putExtra(VpnServiceController.EXTRA_STATUS, status.name)
@@ -95,6 +107,14 @@ class ViRouteVpnService : VpnService() {
         @Volatile
         internal var isRunning: Boolean = false
             private set
+
+        @Volatile
+        internal var lastState: VpnServiceUiState = VpnServiceUiState(VpnServiceStatus.Off)
+            private set
+
+        internal fun rememberState(state: VpnServiceUiState) {
+            lastState = state
+        }
 
         private const val CHANNEL_ID = "viroutefs_vpn_preview"
         private const val NOTIFICATION_ID = 500
