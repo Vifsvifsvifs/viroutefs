@@ -14,17 +14,26 @@ import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import dev.vifs.viroutefs.MainActivity
 import dev.vifs.viroutefs.R
+import java.io.FileInputStream
+import java.io.InterruptedIOException
 
 /**
- * Safe ViRouteFS route-less TUN preview for 0.6.0-alpha.
+ * Safe ViRouteFS TUN preview for 0.6.1-alpha.
  *
- * This service creates a minimal Android TUN interface only when the local VPN
- * preview is explicitly started. It deliberately does not add routes, DNS
- * servers, packet reading, packet inspection, packet forwarding, proxying, or
- * tunnel engines, so normal device internet should remain unchanged.
+ * The default mode creates a minimal route-less Android TUN interface. The
+ * optional test-route preview adds only 203.0.113.0/24 (TEST-NET-3) so users
+ * can validate the read/drop lifecycle without routing normal internet traffic.
+ * No DNS servers, default routes, packet payload logging, forwarding, proxying,
+ * or real VPN engines are enabled.
  */
 class ViRouteVpnService : VpnService() {
     private var tunDescriptor: ParcelFileDescriptor? = null
+    private var packetLoopThread: Thread? = null
+    @Volatile private var packetLoopStopping: Boolean = false
+    private var testRoutePreviewActive: Boolean = false
+    private var packetsRead: Long = 0L
+    private var bytesRead: Long = 0L
+    private var lastPacketAt: Long? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -54,13 +63,19 @@ class ViRouteVpnService : VpnService() {
             return START_STICKY
         }
 
-        if (tunDescriptor != null) {
-            publishState(VpnServiceStatus.TunPreviewActive)
-            updateNotification(VpnServiceStatus.TunPreviewActive)
+        val requestedTestRoute = intent?.getBooleanExtra(
+            VpnServiceController.EXTRA_TEST_ROUTE_ENABLED,
+            false,
+        ) ?: false
+
+        if (tunDescriptor != null && testRoutePreviewActive == requestedTestRoute) {
+            publishActiveState()
+            updateNotification(activeStatus())
             return START_STICKY
         }
 
-        establishTunPreview()
+        if (tunDescriptor != null) closeTunDescriptor()
+        establishTunPreview(requestedTestRoute)
         return START_STICKY
     }
 
@@ -76,16 +91,21 @@ class ViRouteVpnService : VpnService() {
         super.onDestroy()
     }
 
-    private fun establishTunPreview() {
+    private fun establishTunPreview(enableTestRoute: Boolean) {
+        testRoutePreviewActive = enableTestRoute
+        resetCounters()
         publishState(VpnServiceStatus.Starting)
         val descriptor = runCatching {
-            Builder()
+            val builder = Builder()
                 .setSession(TUN_SESSION_NAME)
                 .setMtu(TUN_MTU)
                 .addAddress(TUN_IPV4_ADDRESS, TUN_IPV4_PREFIX_LENGTH)
-                .establish()
+            if (enableTestRoute) {
+                builder.addRoute(TEST_ROUTE_IPV4_NETWORK, TEST_ROUTE_IPV4_PREFIX_LENGTH)
+            }
+            builder.establish()
         }.onFailure { error ->
-            val detail = error.localizedMessage ?: "Could not establish route-less TUN preview."
+            val detail = error.localizedMessage ?: "Could not establish safe TUN preview."
             publishState(VpnServiceStatus.Error, detail)
             updateNotification(VpnServiceStatus.ServiceActiveNoTun)
             isRunning = false
@@ -94,7 +114,7 @@ class ViRouteVpnService : VpnService() {
 
         if (descriptor == null) {
             if (lastState.status != VpnServiceStatus.Error) {
-                publishState(VpnServiceStatus.Error, "Android returned no TUN descriptor for the route-less preview.")
+                publishState(VpnServiceStatus.Error, "Android returned no TUN descriptor for the safe preview.")
                 updateNotification(VpnServiceStatus.ServiceActiveNoTun)
                 isRunning = false
                 stopSelf()
@@ -103,8 +123,44 @@ class ViRouteVpnService : VpnService() {
         }
 
         tunDescriptor = descriptor
-        publishState(VpnServiceStatus.TunPreviewActive)
-        updateNotification(VpnServiceStatus.TunPreviewActive)
+        if (enableTestRoute) startPacketLoop(descriptor)
+        publishActiveState()
+        updateNotification(activeStatus())
+    }
+
+    private fun startPacketLoop(descriptor: ParcelFileDescriptor) {
+        stopPacketLoop()
+        packetLoopStopping = false
+        packetLoopThread = Thread({ readPacketsUntilClosed(descriptor) }, "ViRouteFS-TunReadDropPreview").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun readPacketsUntilClosed(descriptor: ParcelFileDescriptor) {
+        val buffer = ByteArray(TUN_MTU)
+        runCatching {
+            FileInputStream(descriptor.fileDescriptor).use { input ->
+                while (!packetLoopStopping) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    if (read == 0) continue
+                    packetsRead += 1L
+                    bytesRead += read.toLong()
+                    lastPacketAt = System.currentTimeMillis()
+                    publishActiveState()
+                }
+            }
+        }.onFailure { error ->
+            if (!packetLoopStopping && error !is InterruptedIOException) {
+                val detail = error.localizedMessage ?: "TUN read failed; packet preview stopped."
+                closeTunDescriptor(publishStopped = false)
+                isRunning = false
+                publishState(VpnServiceStatus.Error, detail)
+                updateNotification(VpnServiceStatus.ServiceActiveNoTun)
+                stopSelf()
+            }
+        }
     }
 
     private fun stopPreview() {
@@ -114,11 +170,44 @@ class ViRouteVpnService : VpnService() {
         stopSelf()
     }
 
-    private fun closeTunDescriptor() {
+    private fun closeTunDescriptor(publishStopped: Boolean = true) {
+        packetLoopStopping = true
         tunDescriptor?.let { descriptor ->
             runCatching { descriptor.close() }
         }
         tunDescriptor = null
+        stopPacketLoop()
+        testRoutePreviewActive = false
+        if (publishStopped) resetCounters()
+    }
+
+    private fun stopPacketLoop() {
+        packetLoopStopping = true
+        val thread = packetLoopThread
+        thread?.interrupt()
+        if (thread != null && thread != Thread.currentThread()) {
+            runCatching { thread.join(PACKET_LOOP_JOIN_TIMEOUT_MS) }
+        }
+        packetLoopThread = null
+    }
+
+    private fun resetCounters() {
+        packetsRead = 0L
+        bytesRead = 0L
+        lastPacketAt = null
+    }
+
+    private fun activeStatus(): VpnServiceStatus =
+        if (testRoutePreviewActive) VpnServiceStatus.TunTestRouteActive else VpnServiceStatus.TunPreviewActive
+
+    private fun publishActiveState() {
+        publishState(
+            status = activeStatus(),
+            tunTestRouteActive = testRoutePreviewActive,
+            packetsRead = packetsRead,
+            bytesRead = bytesRead,
+            lastPacketAt = lastPacketAt,
+        )
     }
 
     private fun buildNotification(status: VpnServiceStatus): Notification {
@@ -130,6 +219,7 @@ class ViRouteVpnService : VpnService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val text = when (status) {
+            VpnServiceStatus.TunTestRouteActive -> "TEST-NET route preview active — packets are counted and dropped"
             VpnServiceStatus.TunPreviewActive -> "TUN preview active — no traffic routes installed"
             else -> "Local VPN preview — no traffic routing yet"
         }
@@ -140,7 +230,7 @@ class ViRouteVpnService : VpnService() {
             .setContentText(text)
             .setStyle(
                 NotificationCompat.BigTextStyle().bigText(
-                    "$text. No DNS servers, packet capture, packet forwarding, proxying, or VPN engines are enabled.",
+                    "$text. No default route, DNS servers, payload logging, packet forwarding, proxying, or VPN engines are enabled.",
                 ),
             )
             .setOngoing(true)
@@ -167,12 +257,24 @@ class ViRouteVpnService : VpnService() {
         notificationManager.createNotificationChannel(channel)
     }
 
-    private fun publishState(status: VpnServiceStatus, detail: String? = null) {
-        rememberState(VpnServiceUiState(status, detail))
+    private fun publishState(
+        status: VpnServiceStatus,
+        detail: String? = null,
+        tunTestRouteActive: Boolean = false,
+        packetsRead: Long = 0L,
+        bytesRead: Long = 0L,
+        lastPacketAt: Long? = null,
+    ) {
+        val state = VpnServiceUiState(status, detail, tunTestRouteActive, packetsRead, bytesRead, lastPacketAt)
+        rememberState(state)
         val intent = Intent(VpnServiceController.ACTION_STATE_CHANGED)
             .setPackage(packageName)
             .putExtra(VpnServiceController.EXTRA_STATUS, status.name)
             .putExtra(VpnServiceController.EXTRA_DETAIL, detail)
+            .putExtra(VpnServiceController.EXTRA_TEST_ROUTE_ACTIVE, tunTestRouteActive)
+            .putExtra(VpnServiceController.EXTRA_PACKETS_READ, packetsRead)
+            .putExtra(VpnServiceController.EXTRA_BYTES_READ, bytesRead)
+            .putExtra(VpnServiceController.EXTRA_LAST_PACKET_AT, lastPacketAt ?: VpnServiceController.NO_PACKET_TIME)
         sendBroadcast(intent)
     }
 
@@ -195,6 +297,9 @@ class ViRouteVpnService : VpnService() {
         private const val TUN_SESSION_NAME = "ViRouteFS TUN preview"
         private const val TUN_IPV4_ADDRESS = "10.250.0.2"
         private const val TUN_IPV4_PREFIX_LENGTH = 32
+        private const val TEST_ROUTE_IPV4_NETWORK = "203.0.113.0"
+        private const val TEST_ROUTE_IPV4_PREFIX_LENGTH = 24
         private const val TUN_MTU = 1500
+        private const val PACKET_LOOP_JOIN_TIMEOUT_MS = 500L
     }
 }

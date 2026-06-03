@@ -135,6 +135,7 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
     var message by remember { mutableStateOf<String?>(null) }
     var loaded by remember { mutableStateOf(false) }
     var vpnState by remember { mutableStateOf(vpnController.currentState()) }
+    var tunTestRoutePreviewEnabled by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         val result = repository.load()
@@ -143,7 +144,7 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
         loaded = true
     }
 
-    fun startAfterPermissions() {
+    fun startAfterPermissions(testRoutePreviewEnabled: Boolean = tunTestRoutePreviewEnabled) {
         if (!vpnController.notificationPermissionGranted()) {
             vpnState = VpnServiceUiState(
                 VpnServiceStatus.NotificationPermissionRequired,
@@ -151,8 +152,8 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
             )
             return
         }
-        vpnState = VpnServiceUiState(VpnServiceStatus.Starting)
-        runCatching { vpnController.startLocalService() }
+        vpnState = VpnServiceUiState(VpnServiceStatus.Starting, tunTestRouteActive = testRoutePreviewEnabled)
+        runCatching { vpnController.startLocalService(testRoutePreviewEnabled) }
             .onFailure { error ->
                 vpnState = VpnServiceUiState(VpnServiceStatus.Error, error.localizedMessage ?: text.vpnStartFailed)
             }
@@ -218,6 +219,21 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
         }
     }
 
+    fun setTunTestRoutePreviewEnabled(enabled: Boolean) {
+        tunTestRoutePreviewEnabled = enabled
+        if (vpnState.status == VpnServiceStatus.Starting || vpnState.status == VpnServiceStatus.ServiceActiveNoTun || vpnState.status == VpnServiceStatus.TunPreviewActive || vpnState.status == VpnServiceStatus.TunTestRouteActive) {
+            if (!vpnController.notificationPermissionGranted()) {
+                vpnState = VpnServiceUiState(
+                    VpnServiceStatus.NotificationPermissionRequired,
+                    text.vpnNotificationPermissionRequiredDetail,
+                    tunTestRouteActive = enabled,
+                )
+            } else {
+                startAfterPermissions(enabled)
+            }
+        }
+    }
+
     fun updateConfig(newConfig: RoutingConfig, note: String? = null) {
         val normalizedConfig = newConfig.copy(version = CURRENT_ROUTING_CONFIG_VERSION)
         config = normalizedConfig
@@ -254,7 +270,7 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
     ) { padding ->
         when (selectedScreen) {
             AppScreen.Dashboard -> DashboardScreen(padding, text, loaded, message)
-            AppScreen.Vpn -> VpnScreen(padding, text, config, vpnState, ::setVpnEnabled, ::updateConfig)
+            AppScreen.Vpn -> VpnScreen(padding, text, config, vpnState, tunTestRoutePreviewEnabled, ::setVpnEnabled, ::setTunTestRoutePreviewEnabled, ::updateConfig)
             AppScreen.Routes -> RoutesScreen(padding, text, config, ::updateConfig)
             AppScreen.Dns -> DnsScreen(padding, text, config, ::updateConfig)
             AppScreen.Fs -> FlowScannerScreen(padding, text)
@@ -607,7 +623,13 @@ internal class UiText(private val language: AppLanguage) {
     val vpnNoTrafficRoutingYet = t("Маршруты трафика не установлены", "No traffic routes installed", "未安装流量路由")
     val vpnNoHiddenInterception = t("Нет скрытого перехвата", "No hidden interception", "没有隐藏拦截")
     val vpnPacketProcessingLater = t("Интернет должен остаться без изменений.", "Internet should remain unchanged.", "互联网应保持不变。")
-    val vpnLifecycleOnlyDetails = t("0.6.0-alpha создаёт минимальный route-less TUN с адресом 10.250.0.2/32 только для проверки VpnService. Маршруты, DNS-серверы, чтение пакетов, захват, прокси и VPN-движки не включены.", "0.6.0-alpha creates a minimal route-less TUN with address 10.250.0.2/32 only to verify VpnService. Routes, DNS servers, packet reads, capture, proxying, and VPN engines are not enabled.", "0.6.0-alpha 仅创建地址为 10.250.0.2/32 的最小无路由 TUN 来验证 VpnService。未启用路由、DNS 服务器、数据包读取、抓包、代理或 VPN 引擎。")
+    val vpnLifecycleOnlyDetails = t("0.6.1-alpha по умолчанию создаёт минимальный route-less TUN с адресом 10.250.0.2/32 только для проверки VpnService. В режиме тестового маршрута явно добавляется только 203.0.113.0/24 (TEST-NET-3); маршрута по умолчанию, DNS-серверов, логирования payload, пересылки, прокси и VPN-движков нет.", "0.6.1-alpha creates a minimal route-less TUN with address 10.250.0.2/32 by default only to verify VpnService. Test-route mode explicitly adds only 203.0.113.0/24 (TEST-NET-3); there is no default route, DNS servers, payload logging, forwarding, proxying, or VPN engines.", "0.6.1-alpha 默认仅创建地址为 10.250.0.2/32 的最小无路由 TUN 来验证 VpnService。测试路由模式仅显式添加 203.0.113.0/24 (TEST-NET-3)；没有默认路由、DNS 服务器、payload 日志、转发、代理或 VPN 引擎。")
+    val vpnTestRoutePreview = t("Тестовый маршрут", "Test route preview", "测试路由预览")
+    val vpnTestRoute = t("Тестовый маршрут: 203.0.113.0/24", "Test route: 203.0.113.0/24", "测试路由：203.0.113.0/24")
+    val vpnPacketsRead = t("Прочитано пакетов", "Packets read", "已读取数据包")
+    val vpnBytesRead = t("Прочитано байт", "Bytes read", "已读取字节")
+    val vpnNormalInternetUnchanged = t("Обычный интернет должен остаться без изменений", "Normal internet should remain unchanged", "正常互联网应保持不变")
+    val vpnHowToTestTun = t("Откройте http://203.0.113.1 в браузере или выполните тестовое подключение к 203.0.113.1. Пакеты могут появиться здесь и будут отброшены.", "Open http://203.0.113.1 in a browser or run a test connection to 203.0.113.1. Packets may appear here and will be dropped.", "在浏览器中打开 http://203.0.113.1，或对 203.0.113.1 运行测试连接。数据包可能会显示在这里，并将被丢弃。")
     val vpnPermissionRequired = t("Требуется разрешение", "Permission required", "需要权限")
     val vpnStarting = t("Запуск…", "Starting…", "正在启动…")
     val vpnLocalServiceActive = t("Сервис активен, TUN не создан", "Service active, no TUN", "服务活动，未创建 TUN")
