@@ -107,7 +107,7 @@ private fun DnsMainScreen(
 private fun DnsLookupCheckerCard(text: UiText) {
     val scope = rememberCoroutineScope()
     var domain by rememberSaveable { mutableStateOf("example.com") }
-    var server by rememberSaveable { mutableStateOf("1.1.1.1") }
+    var server by rememberSaveable { mutableStateOf("") }
     var record by rememberSaveable { mutableStateOf("A") }
     var result by remember { mutableStateOf<DiagnosticResult?>(null) }
 
@@ -120,6 +120,9 @@ private fun DnsLookupCheckerCard(text: UiText) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(server, { server = it }, label = { Text(text.dnsServer) }, modifier = Modifier.weight(1f), singleLine = true)
             Button(onClick = { scope.launch { result = DnsDiagnostic().lookup(domain, server, record) } }) { Text(text.check) }
+        }
+        if (server.isBlank()) {
+            Text(text.noDns, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         result?.let { CompactDnsResult(text, it) }
     }
@@ -148,9 +151,7 @@ private fun DnsPolicySummaryCard(text: UiText, policy: DnsPolicy, config: Routin
                 Text(policy.type.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 val boundProfile = policy.resolveThroughProfileId?.let { id -> config.profiles.firstOrNull { it.id == id && !it.mockOnly } }
                 Text("${text.targetProfile}: ${boundProfile?.name ?: text.none}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                policy.serverText?.takeIf { it.isNotBlank() }?.let {
-                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                Text(policy.serverText?.takeIf { it.isNotBlank() } ?: text.noDns, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             StatusChip(if (policy.enabled) text.on else text.off)
         }

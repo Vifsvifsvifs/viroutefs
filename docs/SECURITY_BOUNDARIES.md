@@ -47,3 +47,11 @@ Example:
 
 "WPS is enabled" means detected risk.
 It does not mean confirmed compromise.
+
+## Routing and DNS boundaries
+
+When network control is off, Android works normally and ViRouteFS does not control traffic. When network control is on in the product model, all traffic must enter ViRouteFS: unmatched apps use the built-in System / Система route, matched rules use only the selected profile, and unavailable selected profiles fail closed / Block.
+
+System / Система is an internal default route, not bypass. Full runtime enforcement is still a future task and must not add hidden interception, packet payload logging, telemetry, analytics, ads, tracking SDKs, or cloud upload.
+
+If no DNS is configured for a route/profile, the model uses Android system DNS. ViRouteFS must not silently replace missing DNS with public resolvers or swap failed user-defined DNS to another resolver.

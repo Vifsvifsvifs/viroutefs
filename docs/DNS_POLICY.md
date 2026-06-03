@@ -1,6 +1,6 @@
 # DNS policy metadata
 
-ViRouteFS `0.4.0-alpha` adds per-route DNS policy as configuration metadata. It is not real DNS routing yet.
+ViRouteFS keeps per-route DNS policy as local configuration metadata. It is not real DNS routing yet.
 
 The app shows this limitation in Russian:
 
@@ -18,25 +18,28 @@ A DNS policy contains:
 - `description`;
 - `enabled`.
 
-Default policies are System DNS, Direct DNS, Work DNS mock, and Tunnel DNS mock.
+The default policy is Android system DNS bound to the built-in System route in the model.
+
+## Default behavior
+
+If a route/profile has no explicit DNS configuration, ViRouteFS shows **Uses Android system DNS / Использует системный DNS Android**. Missing DNS must not be silently replaced with public resolvers such as `1.1.1.1` or `8.8.8.8`.
+
+User-defined DNS applies only where explicitly configured. If user-defined DNS is unavailable, future enforcement should show an error or fail-safe state rather than silently swapping to another resolver.
 
 ## Route integration
 
 Rules can reference `dnsPolicyId`. The route decision shows the selected profile, matched rule, priority, DNS policy, mock-profile status, and DNS leak warning.
 
-If a DNS policy expects a different profile from the selected route, ViRouteFS warns the user. Example: a route selected through OpenVPN Work with a DNS policy that is not actually applied yet warns that future DNS should resolve through the work route.
+If a DNS policy expects a different profile from the selected route, ViRouteFS warns the user. Example: a route selected through a future OpenVPN Work profile with a DNS policy that is not actually applied yet warns that future DNS should resolve through the work route.
 
 ## Privacy
 
 DNS policies are local metadata. The app does not run background DNS checks, upload DNS settings, or contact policy servers automatically.
 
-## 0.4.1-alpha DNS page concept
+## DNS page concept
 
-The DNS tab has four compact blocks:
+The DNS tab stays compact and honest:
 
-1. **DNS lookup checker** — domain/address input, DNS server text, optional profile context and record type. Android may still use the system resolver in this version; direct selected-server DNS queries will be improved later.
-2. **Проверить приложение** — text-based app selector concept that previews matched route/profile and DNS policy. It does not query installed packages and does not capture app traffic.
-3. **hosts-like local overrides** — local hostname-to-IP metadata using `DnsHostOverride` (`id`, `hostname`, `ipAddress`, `enabled`, optional `note`). Overrides are configuration/simulation only until a DNS engine exists.
-4. **DNS per connection** — each connection profile can point to System DNS, Direct DNS, Work DNS mock, Tunnel DNS mock or a custom DNS server text policy.
-
-DNS per connection and hosts-like overrides are local-first configuration/simulation features in 0.4.1-alpha.
+1. **DNS lookup checker** — domain/address input and record type. Android system DNS is used unless a later feature explicitly implements selected-server querying.
+2. **hosts-like local overrides** — local hostname-to-IP metadata using `DnsHostOverride` (`id`, `hostname`, `ipAddress`, `enabled`, optional `note`). Overrides are configuration/simulation only until a DNS engine exists.
+3. **DNS per route/profile** — each real route/profile can point to Android system DNS or a user-defined policy when those flows are implemented.

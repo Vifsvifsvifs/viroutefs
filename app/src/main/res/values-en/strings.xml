@@ -40,7 +40,7 @@
     <string name="vpn_future_rules_body">Per-app, CIDR, domain, and DNS-based routing will be designed here after the skeleton is stable.</string>
 
     <string name="dns_default_domain">example.com</string>
-    <string name="dns_default_server">1.1.1.1</string>
+    <string name="dns_default_server"></string>
     <string name="dns_default_record_type">A</string>
     <string name="dns_header_title">DNS checker</string>
     <string name="dns_header_subtitle">Prepare safe DNS diagnostics without making network requests yet.</string>
@@ -81,8 +81,8 @@
 
     <string name="logs_header_subtitle">Human-readable sample flow events. Nothing is captured in this skeleton.</string>
     <string name="logs_event_telegram">Telegram connected to 149.154.167.91:443. Rule: Telegram → Xray Germany. Status: sample success. Latency: 84 ms.</string>
-    <string name="logs_event_browser_dns">Browser requested example.com A record. DNS server: 1.1.1.1. Status: sample answer from cache.</string>
-    <string name="logs_event_banking">Banking app route selected Direct. Reason: trusted app rule. Status: sample policy decision.</string>
+    <string name="logs_event_browser_dns">Browser requested example.com A record. DNS source: Android system DNS. Status: sample answer from cache.</string>
+    <string name="logs_event_banking">Banking app route selected System. Reason: trusted app rule. Status: sample policy decision.</string>
     <string name="logs_event_mtu">MTU probe for VPN profile suggested 1380 bytes. Status: sample advisory, not measured.</string>
     <string name="logs_event_wps">Security audit found WPS enabled on a saved Wi-Fi profile. Meaning: detected risk, not confirmed compromise.</string>
     <string name="logs_event_details_placeholder">Technical details will be expandable in a later milestone.</string>
@@ -116,8 +116,8 @@
     <string name="routes_rule_target">Route: %1$s</string>
     <string name="routes_rule_matchers">Matchers: %1$s</string>
     <string name="routes_rule_priority">Type: %1$s, priority: %2$d</string>
-    <string name="routes_tunnel_direct_name">Direct</string>
-    <string name="routes_tunnel_direct_description">Normal path without a tunnel. In this mockup it is only a simulator decision.</string>
+    <string name="routes_tunnel_direct_name">System</string>
+    <string name="routes_tunnel_direct_description">Default Android/system network path inside ViRouteFS. It is not an escape path when network control is active.</string>
     <string name="routes_tunnel_block_name">Block</string>
     <string name="routes_tunnel_block_description">Mock route denial for suspicious or explicitly blocked examples.</string>
     <string name="routes_tunnel_xray_germany_name">Xray Germany</string>
@@ -126,8 +126,8 @@
     <string name="routes_tunnel_hysteria2_nl_description">Future Hysteria2 outbound tunnel for demonstrating route selection.</string>
     <string name="routes_tunnel_openvpn_work_name">OpenVPN Work</string>
     <string name="routes_tunnel_openvpn_work_description">Future work OpenVPN tunnel for corporate CIDR networks.</string>
-    <string name="routes_rule_banking_name">Banking apps → Direct</string>
-    <string name="routes_rule_banking_reason">The banking app will go direct because banking apps are not sent through VPN.</string>
+    <string name="routes_rule_banking_name">Banking apps → System</string>
+    <string name="routes_rule_banking_reason">The banking app will use System inside ViRouteFS unless a separate trusted policy is configured.</string>
     <string name="routes_rule_banking_action">If the bank requires a normal network, keep this rule above tunnel rules.</string>
     <string name="routes_rule_telegram_name">Telegram → Xray Germany</string>
     <string name="routes_rule_telegram_reason">Telegram traffic will go through Xray Germany because the messenger rule matched.</string>
@@ -143,8 +143,8 @@
     <string name="routes_rule_blocked_name">Suspicious domain → Block</string>
     <string name="routes_rule_blocked_reason">The domain looks like a blocked example and should not receive an outbound route.</string>
     <string name="routes_rule_blocked_action">Check the domain manually and do not open it if the source is unknown.</string>
-    <string name="routes_rule_default_name">Default → Direct</string>
-    <string name="routes_rule_default_reason">The default route will be used: Direct.</string>
+    <string name="routes_rule_default_name">Default → System</string>
+    <string name="routes_rule_default_reason">Apps without rules use System route.</string>
     <string name="routes_rule_default_action">If another route was expected, add a more specific rule above the default rule.</string>
 
     <string name="action_checking">Checking…</string>
@@ -168,7 +168,7 @@
     <string name="tools_result_not_run">This check has not run yet. Fill in the fields and press the check button.</string>
     <string name="settings_version_title">App version</string>
     <string name="settings_version_simple">ViRouteFS version %1$s is installed.</string>
-    <string name="settings_version_details">versionCode: %1$d. Milestone: 0.6.3-alpha — safe route-less TUN preview with an opt-in 203.0.113.0/24 test route and no default route, DNS, payload logging, forwarding, or proxying.</string>
+    <string name="settings_version_details">versionCode: %1$d. Milestone: 0.6.5-alpha — System route wording, safe route-less TUN preview, and no runtime default-route enforcement, VPN builder DNS, payload logging, forwarding, or proxying.</string>
     <string name="settings_version_action">Update the app only from a trusted source and review the changelog before installing.</string>
 
 </resources>

@@ -1,17 +1,19 @@
 package dev.vifs.viroutefs.routing
 
 object RoutingConfigDefaults {
-    const val DIRECT_PROFILE_ID = "direct"
+    // The persisted id remains "direct" for backward compatibility with older local configs,
+    // but the user-facing built-in default route is System / Система.
+    const val SYSTEM_PROFILE_ID = "direct"
+    const val DIRECT_PROFILE_ID = SYSTEM_PROFILE_ID
     const val BLOCK_PROFILE_ID = "block"
 
     const val SYSTEM_DNS_ID = "system_dns"
-    const val DIRECT_DNS_ID = "direct_dns"
 
     fun defaultConfig(): RoutingConfig = RoutingConfig(
         profiles = defaultProfiles(),
         dnsPolicies = defaultDnsPolicies(),
         rules = defaultRules(),
-        defaultProfileId = DIRECT_PROFILE_ID,
+        defaultProfileId = SYSTEM_PROFILE_ID,
         hostOverrides = emptyList(),
     )
 
@@ -39,13 +41,13 @@ object RoutingConfigDefaults {
 
     private fun defaultProfiles(): List<TunnelProfile> = listOf(
         TunnelProfile(
-            id = DIRECT_PROFILE_ID,
-            name = "Direct",
+            id = SYSTEM_PROFILE_ID,
+            name = "System / Система",
             type = TunnelType.Direct,
-            description = "Traffic remains on the device current network without a tunnel.",
+            description = "Default Android/system network path, controlled by ViRouteFS when network control is active.",
             mockOnly = false,
-            platformNotes = "Built-in local profile.",
-            dnsPolicyId = DIRECT_DNS_ID,
+            platformNotes = "Built-in internal default route. Legacy id/type may still say direct for compatibility; this is not a bypass.",
+            dnsPolicyId = SYSTEM_DNS_ID,
         ),
         TunnelProfile(
             id = BLOCK_PROFILE_ID,
@@ -60,31 +62,24 @@ object RoutingConfigDefaults {
     private fun defaultDnsPolicies(): List<DnsPolicy> = listOf(
         DnsPolicy(
             id = SYSTEM_DNS_ID,
-            name = "System DNS",
+            name = "Android system DNS",
             type = DnsPolicyType.System,
-            description = "Use Android system DNS. This is local policy metadata until DNS routing is implemented.",
-        ),
-        DnsPolicy(
-            id = DIRECT_DNS_ID,
-            name = "Direct DNS",
-            type = DnsPolicyType.Direct,
-            serverText = "Provider / local network",
-            resolveThroughProfileId = DIRECT_PROFILE_ID,
-            description = "DNS should remain direct for local network policy planning. Real DNS enforcement will be added later.",
+            resolveThroughProfileId = SYSTEM_PROFILE_ID,
+            description = "Uses Android system DNS through the ViRouteFS policy model unless the user explicitly configures DNS.",
         ),
     )
 
     private fun defaultRules(): List<RouteRule> = listOf(
         RouteRule(
-            id = "default_direct",
-            name = "Default Direct",
+            id = "default_system",
+            name = "Default System",
             type = RouteRuleType.DEFAULT,
-            targetProfileId = DIRECT_PROFILE_ID,
+            targetProfileId = SYSTEM_PROFILE_ID,
             dnsPolicyId = SYSTEM_DNS_ID,
             priority = 1000,
             matchers = emptyList(),
-            reason = "If no explicit rule matches, the planned route remains Direct.",
-            technicalDetails = "DEFAULT, priority 1000. App/domain/IP rules must be exclusive; if a chosen profile is unavailable, the safe behavior is Block / fail closed and never silent fallback to another VPN profile.",
+            reason = "Apps without explicit rules use the built-in System route inside ViRouteFS.",
+            technicalDetails = "DEFAULT, priority 1000. When network control is active, unmatched apps use System inside ViRouteFS; matched app/domain/IP rules are exclusive. If a chosen profile is unavailable, the safe behavior is Block / fail closed and never silent fallback to another VPN profile.",
             recommendedAction = "Add a specific rule when a destination needs a separate profile, block action, or DNS policy.",
         ),
     )

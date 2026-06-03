@@ -43,7 +43,7 @@ data class DnsHostOverride(
 )
 
 enum class TunnelType(val label: String, val isMockOnly: Boolean) {
-    Direct("Direct", false),
+    Direct("System", false),
     Block("Block", false),
     WireGuard("WireGuard", true),
     OpenVpn("OpenVPN", true),
@@ -94,7 +94,7 @@ data class DnsPolicy(
 
 enum class DnsPolicyType(val label: String) {
     System("System DNS"),
-    Direct("Direct DNS"),
+    Direct("System DNS (legacy direct)"),
     WorkMock("Work DNS mock"),
     TunnelMock("Tunnel DNS mock"),
     Custom("Custom DNS"),
@@ -150,7 +150,7 @@ data class RouteDecision(
     val dnsPolicySummary: String = dnsPolicy?.name ?: "Не выбрана"
     val profileMockSummary: String = if (tunnelProfile.mockOnly) MOCK_PROFILE_LIMITATION else "Профиль не является mock-тоннелем."
     val dnsLeakSummary: String = if (dnsPolicy == null || dnsPolicy.type == DnsPolicyType.System) {
-        "DNS может идти через системные настройки Android; реальная DNS-политика пока не применяется."
+        "Uses Android system DNS through the ViRouteFS policy model; real DNS enforcement is not implemented yet."
     } else {
         "DNS-политика описывает желаемое поведение, но реальное DNS-маршрутизирование пока не реализовано."
     }
@@ -174,7 +174,10 @@ class RouteEngine(
         ?: config.rules.first { it.type == RouteRuleType.DEFAULT }
 
         val targetProfile = profilesById[matchedRule.targetProfileId]
-        val fallbackProfile = config.defaultProfileId?.let { profilesById[it] }?.takeIf { it.enabled }
+        val blockProfile = profilesById[RoutingConfigDefaults.BLOCK_PROFILE_ID]
+            ?: config.profiles.firstOrNull { it.type == TunnelType.Block }
+        val fallbackProfile = blockProfile?.takeIf { matchedRule.type != RouteRuleType.DEFAULT }
+            ?: config.defaultProfileId?.let { profilesById[it] }?.takeIf { it.enabled }
             ?: config.profiles.firstOrNull { it.enabled && it.type == TunnelType.Direct }
             ?: config.profiles.first()
         val selectedProfile = targetProfile?.takeIf { it.enabled } ?: fallbackProfile
@@ -219,9 +222,9 @@ class RouteEngine(
         dnsPolicy: DnsPolicy?,
     ): List<String> = buildList {
         if (targetProfile == null) {
-            add("Выбранное правилом направление не найдено. Используется безопасный доступный профиль: ${selectedProfile.name}.")
+            add("Выбранное правилом направление не найдено. Модель безопасного поведения: Block / fail closed; без тихого fallback на другой профиль.")
         } else if (!targetProfile.enabled) {
-            add("Профиль правила отключён. Используется безопасный доступный профиль: ${selectedProfile.name}.")
+            add("Профиль правила отключён. Модель безопасного поведения: Block / fail closed; без тихого fallback на другой профиль.")
         }
         if (selectedProfile.mockOnly) {
             add(MOCK_PROFILE_LIMITATION)
@@ -252,7 +255,7 @@ class RouteEngine(
         appendLine("Матчеры: ${rule.matchers.joinToString().ifBlank { "не требуются" }}")
         appendLine("Профиль: ${profile.name} (${profile.type.label})")
         appendLine("DNS-политика: ${dnsPolicy?.name ?: "не выбрана"}")
-        appendLine("Риск DNS-утечки: ${if (dnsPolicy?.type == DnsPolicyType.System) "системный DNS" else "политика пока не применяется реально"}")
+        appendLine("DNS default: ${if (dnsPolicy == null || dnsPolicy.type == DnsPolicyType.System) "Android system DNS" else "configured policy, not enforced yet"}")
         if (warnings.isNotEmpty()) {
             appendLine("Предупреждения:")
             warnings.forEach { appendLine("- $it") }

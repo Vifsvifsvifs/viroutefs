@@ -28,7 +28,7 @@ A copied or shared report is plain text and includes:
 - input target;
 - host and port used by diagnostics;
 - optional SNI / server name;
-- selected simulated route;
+- selected simulated route, where unmatched traffic uses System and explicit matched rules are exclusive;
 - matched rule and priority context;
 - DNS policy metadata;
 - plain-language route explanation;
@@ -57,7 +57,7 @@ Route diagnostics in `0.4.0-alpha` do **not** prove whether a future VPN route w
 
 Current limitations:
 
-- non-Direct/Block tunnels are mock profiles only;
+- non-System/Block tunnels are mock profiles only;
 - Xray is not implemented;
 - Hysteria2 is not implemented;
 - OpenVPN is not implemented;

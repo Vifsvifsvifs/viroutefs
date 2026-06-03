@@ -4,7 +4,7 @@
 
 ## Base
 
-- Direct
+- System / Система (legacy Direct id/type may remain only for compatibility)
 - Block
 
 ## Modern VPN/tunnel

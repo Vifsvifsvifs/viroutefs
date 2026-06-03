@@ -1,6 +1,6 @@
-# ViRouteFS UI concept — 0.6.4-alpha
+# ViRouteFS UI concept — 0.6.5-alpha
 
-ViRouteFS 0.6.4-alpha organizes the Android app around five compact product tasks:
+ViRouteFS 0.6.5-alpha organizes the Android app around five compact product tasks:
 
 1. **Networks / Сети** — real network profiles and safe local network control.
 2. **Routes** — assign apps, domains/sites and IP/CIDR matchers to connection profiles.
