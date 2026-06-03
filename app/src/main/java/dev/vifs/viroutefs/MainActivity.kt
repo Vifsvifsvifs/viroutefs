@@ -91,6 +91,10 @@ import dev.vifs.viroutefs.ui.DnsScreen
 import dev.vifs.viroutefs.ui.FlowScannerScreen
 import dev.vifs.viroutefs.ui.VpnScreen
 import dev.vifs.viroutefs.ui.theme.ViRouteFsTheme
+import dev.vifs.viroutefs.update.GITHUB_RELEASES_WEB_URL
+import dev.vifs.viroutefs.update.ReleaseInfo
+import dev.vifs.viroutefs.update.UpdateCheckResult
+import dev.vifs.viroutefs.update.UpdateChecker
 import dev.vifs.viroutefs.vpn.VpnServiceController
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
@@ -797,6 +801,9 @@ private fun SettingsScreen(
     onSettings: (AppSettings) -> Unit,
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var updateResult by remember { mutableStateOf<UpdateCheckResult?>(null) }
+    var updateChecking by remember { mutableStateOf(false) }
     var supportExpanded by rememberSaveable { mutableStateOf(false) }
     var helpExpanded by rememberSaveable { mutableStateOf(true) }
     var beginnerExpanded by rememberSaveable { mutableStateOf(false) }
@@ -843,6 +850,27 @@ private fun SettingsScreen(
             }
         }
         item { CompactCard(text, text.version, "ViRouteFS ${BuildConfig.VERSION_NAME}", "versionCode ${BuildConfig.VERSION_CODE}") }
+        item {
+            UpdateSettingsCard(
+                text = text,
+                result = updateResult,
+                checking = updateChecking,
+                onCheck = {
+                    updateResult = null
+                    updateChecking = true
+                    scope.launch {
+                        try {
+                            updateResult = UpdateChecker().check(BuildConfig.VERSION_NAME)
+                        } finally {
+                            updateChecking = false
+                        }
+                    }
+                },
+                onOpenReleases = {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_RELEASES_WEB_URL)))
+                },
+            )
+        }
         item { CompactCard(text, text.configStatus, if (loaded) text.configLoaded else text.loading, message ?: text.ready) }
         item {
             CardBlock {
@@ -882,6 +910,48 @@ private fun SettingsScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun UpdateSettingsCard(
+    text: UiText,
+    result: UpdateCheckResult?,
+    checking: Boolean,
+    onCheck: () -> Unit,
+    onOpenReleases: () -> Unit,
+) = CardBlock {
+    Text(text.updates, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+    Text(text.currentVersion(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE), style = MaterialTheme.typography.bodySmall)
+    Text(text.updateChannelAlpha, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Button(onClick = onCheck) { Text(text.checkForUpdates) }
+        OutlinedButton(onClick = onOpenReleases) { Text(text.openGithubReleases) }
+    }
+    UpdateResultView(text, result, checking)
+}
+
+@Composable
+private fun UpdateResultView(text: UiText, result: UpdateCheckResult?, checking: Boolean) {
+    when {
+        checking -> Text(text.updateChecking, style = MaterialTheme.typography.bodySmall)
+        result == null -> Text(text.updateManualOnly, style = MaterialTheme.typography.bodySmall)
+        result is UpdateCheckResult.Error -> WarningText(text.updateError(result.message))
+        result is UpdateCheckResult.NewerRelease -> ReleaseResult(text, result.release, text.updateAvailable(result.release.displayVersion))
+        result == UpdateCheckResult.NoReleaseFound -> Text(text.noReleaseFound, style = MaterialTheme.typography.bodySmall)
+        result is UpdateCheckResult.UpToDate -> Text(text.upToDate, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun ReleaseResult(text: UiText, release: ReleaseInfo, title: String) {
+    val context = LocalContext.current
+    Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+    Text(release.name, style = MaterialTheme.typography.bodySmall)
+    release.publishedAt?.let { Text(text.publishedAt(it), style = MaterialTheme.typography.bodySmall) }
+    release.notes?.let { Details(text.details, it) }
+    OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.htmlUrl))) }) {
+        Text(text.openReleasePage)
     }
 }
 
@@ -1211,6 +1281,15 @@ Packets are dropped after counting""",
     val developerDiagnosticsWarning = t("Не обычная функция пользователя. Используется для внутренней проверки безопасного TEST-NET маршрута.", "Not a normal user feature. Used for internal validation of the safe TEST-NET route.", "不是普通用户功能。用于安全 TEST-NET 路由的内部验证。")
     val supportProject = t("Поддержать проект", "Support project", "支持项目")
     val supportShort = t("Ссылки скрыты, чтобы экран оставался компактным.", "Links are collapsed to keep the screen compact.", "链接已折叠，使界面更紧凑。")
+    val updates = t("Обновления", "Updates", "更新")
+    val updateChannelAlpha = t("Канал обновлений: Alpha", "Update channel: Alpha", "更新频道：Alpha")
+    val checkForUpdates = t("Проверить обновления", "Check for updates", "检查更新")
+    val openGithubReleases = t("Открыть релизы GitHub", "Open GitHub releases", "打开 GitHub 发布页")
+    val openReleasePage = t("Открыть страницу релиза", "Open release page", "打开发布页面")
+    val updateManualOnly = t("Проверка выполняется только вручную после нажатия кнопки. Автоматических фоновых проверок нет.", "Update checking runs only when you press the button. There are no automatic background checks.", "只会在按下按钮后手动检查更新，没有自动后台检查。")
+    val updateChecking = t("Проверяем GitHub Releases…", "Checking GitHub Releases…", "正在检查 GitHub Releases…")
+    val upToDate = t("Установлена актуальная версия для этого канала.", "You are up to date for this channel.", "当前频道已是最新版本。")
+    val noReleaseFound = t("Опубликованных релизов пока нет. APK можно установить из артефактов GitHub Actions.", "No published release found yet. You can still install APK artifacts from GitHub Actions.", "尚未找到已发布版本。仍可从 GitHub Actions 构建产物安装 APK。")
     val actionPrefix = t("Что сделать: ", "Recommended action: ", "建议操作：")
 
     fun screen(screen: AppScreen): String = when (screen) {
@@ -1235,6 +1314,18 @@ Packets are dropped after counting""",
         AppThemeMode.Dark -> t("Тёмная", "Dark", "深色")
         AppThemeMode.AmoledBlack -> t("AMOLED", "AMOLED", "AMOLED")
     }
+
+    fun currentVersion(versionName: String, versionCode: Int): String =
+        t("Текущая версия: $versionName (versionCode $versionCode)", "Current version: $versionName (versionCode $versionCode)", "当前版本：$versionName (versionCode $versionCode)")
+
+    fun updateAvailable(version: String): String =
+        t("Доступна новая версия: $version", "Newer version available: $version", "有新版本可用：$version")
+
+    fun publishedAt(value: String): String =
+        t("Опубликовано: $value", "Published: $value", "发布时间：$value")
+
+    fun updateError(message: String): String =
+        t("Ошибка проверки обновлений: $message", "Update check error: $message", "更新检查错误：$message")
 
     private fun t(ru: String, en: String, zh: String): String = when (language) {
         AppLanguage.Russian -> ru

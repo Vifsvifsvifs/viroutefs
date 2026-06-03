@@ -17,9 +17,9 @@ ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project 
 - No hidden interception of third-party traffic.
 - No offensive security features.
 
-## Current status: 0.6.7-alpha
+## Current status: 0.6.8-alpha
 
-Version `0.6.7-alpha` adds engine candidate, profile type, and third-party license planning documentation without changing runtime VPN/TUN routing behavior. Home content remains in Settings → Help, and the main VPN concept remains Networks / Сети.
+Version `0.6.8-alpha` adds stable alpha APK signing support for CI artifacts and a manual Settings update checker without changing runtime VPN/TUN routing behavior. Home content remains in Settings → Help, and the main VPN concept remains Networks / Сети.
 
 What exists now:
 
@@ -29,6 +29,9 @@ What exists now:
 - Optional TEST-NET route `203.0.113.0/24` remains for developer/local preview testing only and is hidden from normal user UI.
 - Flow Scanner can show local counters when developer diagnostics explicitly enable the TEST-NET preview.
 - The app has Compose screens for Networks, Routes, DNS, Flow Scanner, Tools, and Settings with Help.
+- GitHub Actions builds APK artifacts with dynamic version-based names.
+- Stable update-over-install for CI artifacts requires the alpha signing secrets documented in [`docs/ALPHA_SIGNING.md`](docs/ALPHA_SIGNING.md).
+- Settings includes a manual update checker that contacts GitHub Releases only after the user taps **Check for updates**.
 - Routing configuration, DNS policy metadata, diagnostics reports, and logs are local-first.
 - The built-in System / Система route is the safe internal default for apps without explicit rules in the ViRouteFS model; it is not bypass when network control is active.
 
@@ -41,6 +44,13 @@ What is intentionally not implemented yet:
 - No forwarding or proxying.
 - No Xray, OpenVPN, WireGuard, Hysteria2, or SOCKS5 proxy engines yet.
 - No Play Store or F-Droid release is claimed yet.
+- No background update checks, automatic APK downloads, package installer permission, or auto-install behavior.
+
+## APK artifacts and manual updates
+
+APK artifacts are built by GitHub Actions. To make alpha artifacts updateable over previous alpha APKs, CI must be configured with the stable alpha signing secrets. Without those secrets, artifacts are still built with default debug signing, but update-over-install is not stable and users may need to uninstall the old APK first.
+
+The in-app update checker is manual-only: it uses the public GitHub Releases API only when the user taps **Check for updates** in Settings. It does not run on app startup, does not run in the background, does not send device identifiers, does not download APKs, and does not install APKs automatically.
 
 See [`docs/TUN_SKELETON.md`](docs/TUN_SKELETON.md) for the safe Android TUN preview, [`docs/FLOW_SCANNER.md`](docs/FLOW_SCANNER.md) for Flow Scanner behavior, [`docs/ROUTING_POLICY.md`](docs/ROUTING_POLICY.md) for strict route isolation, and [`docs/UI_DIRECTION.md`](docs/UI_DIRECTION.md) for navigation/icon direction.
 
@@ -55,6 +65,8 @@ Actual screenshots are not committed yet. Future screenshots should show real UI
 ## Build artifacts
 
 GitHub Actions builds debug APK artifacts on pushes and pull requests to `main`. The workflow uploads a versioned debug APK artifact named like `ViRouteFS-debug-<versionName>`.
+
+Stable update-over-install requires the alpha signing secrets in CI. Without those secrets, GitHub Actions still produces test APKs with default debug signing, but Android may reject updates over APKs signed by a different debug key. See [`docs/ALPHA_SIGNING.md`](docs/ALPHA_SIGNING.md).
 
 Debug artifacts are for testing only. ViRouteFS is not yet published on Google Play or F-Droid.
 

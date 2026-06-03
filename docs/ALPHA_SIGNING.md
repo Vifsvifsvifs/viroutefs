@@ -1,0 +1,63 @@
+# Alpha APK signing
+
+ViRouteFS alpha APKs are built by GitHub Actions. Android only allows an APK to update an installed app when both APKs use the same `applicationId` and the same signing key.
+
+ViRouteFS keeps the Android package stable as `dev.vifs.viroutefs`. The second requirement is the signing key: random local or CI debug keys are different from machine to machine, so APKs signed with random debug keys usually cannot update over each other.
+
+## Stable alpha signing model
+
+ViRouteFS supports optional stable alpha signing through GitHub Secrets:
+
+- If all alpha signing environment variables are present, Gradle signs the debug alpha APK with the stable alpha key.
+- If the variables are missing, Gradle falls back to normal Android debug signing so local developer builds still work.
+- The alpha signing key must **not** be committed to the repository.
+- Keystore files such as `*.jks`, `*.keystore`, `*.p12`, and `*.pfx` are ignored by Git.
+
+After the project switches from random debug signing to stable alpha signing, users who installed an older randomly signed APK must uninstall it once. After installing the first APK signed with the stable alpha key, future APKs signed with the same key should update over it.
+
+## Generate an alpha keystore
+
+Run this locally and keep the output private:
+
+```bash
+keytool -genkeypair \
+  -v \
+  -keystore viroutefs-alpha.jks \
+  -alias viroutefs-alpha \
+  -keyalg RSA \
+  -keysize 4096 \
+  -validity 10000
+```
+
+Choose strong passwords and store them securely. Do not commit `viroutefs-alpha.jks`.
+
+## Base64 encode for GitHub Secrets
+
+On Linux:
+
+```bash
+base64 -w 0 viroutefs-alpha.jks
+```
+
+On macOS:
+
+```bash
+base64 -i viroutefs-alpha.jks | tr -d '\n'
+```
+
+## Required GitHub Secrets
+
+Set these repository secrets in GitHub:
+
+- `VIROUTEFS_ALPHA_KEYSTORE_BASE64` — base64 encoded contents of `viroutefs-alpha.jks`.
+- `VIROUTEFS_ALPHA_KEYSTORE_PASSWORD` — keystore password.
+- `VIROUTEFS_ALPHA_KEY_ALIAS` — key alias, for example `viroutefs-alpha`.
+- `VIROUTEFS_ALPHA_KEY_PASSWORD` — key password.
+
+The Android CI workflow decodes `VIROUTEFS_ALPHA_KEYSTORE_BASE64` into `$RUNNER_TEMP/viroutefs-alpha.jks`, exports the Gradle signing environment variables, and then runs:
+
+```bash
+gradle :app:assembleDebug --stacktrace
+```
+
+If these secrets are not configured, the workflow still builds an APK with default debug signing, but update-over-install will not be stable across CI machines or changed debug keys.

@@ -37,6 +37,29 @@ jobs:
         with:
           gradle-version: '8.13'
 
+      - name: Prepare optional alpha signing key
+        env:
+          VIROUTEFS_ALPHA_KEYSTORE_BASE64: ${{ secrets.VIROUTEFS_ALPHA_KEYSTORE_BASE64 }}
+          VIROUTEFS_ALPHA_KEYSTORE_PASSWORD: ${{ secrets.VIROUTEFS_ALPHA_KEYSTORE_PASSWORD }}
+          VIROUTEFS_ALPHA_KEY_ALIAS: ${{ secrets.VIROUTEFS_ALPHA_KEY_ALIAS }}
+          VIROUTEFS_ALPHA_KEY_PASSWORD: ${{ secrets.VIROUTEFS_ALPHA_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${VIROUTEFS_ALPHA_KEYSTORE_BASE64:-}" ]; then
+            ALPHA_KEYSTORE_PATH="$RUNNER_TEMP/viroutefs-alpha.jks"
+            printf '%s' "$VIROUTEFS_ALPHA_KEYSTORE_BASE64" | base64 --decode > "$ALPHA_KEYSTORE_PATH"
+            {
+              echo "VIROUTEFS_ALPHA_KEYSTORE_PATH=$ALPHA_KEYSTORE_PATH"
+              echo "VIROUTEFS_ALPHA_KEYSTORE_PASSWORD=$VIROUTEFS_ALPHA_KEYSTORE_PASSWORD"
+              echo "VIROUTEFS_ALPHA_KEY_ALIAS=$VIROUTEFS_ALPHA_KEY_ALIAS"
+              echo "VIROUTEFS_ALPHA_KEY_PASSWORD=$VIROUTEFS_ALPHA_KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "Alpha signing key decoded into RUNNER_TEMP."
+          else
+            echo "VIROUTEFS_ALPHA_KEYSTORE_BASE64 is not configured; building with default debug signing."
+          fi
+
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
