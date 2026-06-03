@@ -49,6 +49,8 @@ class RoutingConfigRepository(
         put("profiles", JSONArray(config.profiles.map { it.toJson() }))
         put("dnsPolicies", JSONArray(config.dnsPolicies.map { it.toJson() }))
         put("rules", JSONArray(config.rules.map { it.toJson() }))
+        put("defaultProfileId", config.defaultProfileId)
+        put("hostOverrides", JSONArray(config.hostOverrides.map { it.toJson() }))
     }.toString(2)
 
     private fun decodeConfig(json: String): RoutingConfig {
@@ -58,6 +60,8 @@ class RoutingConfigRepository(
             profiles = root.getJSONArray("profiles").mapObjects { it.toTunnelProfile() },
             dnsPolicies = root.getJSONArray("dnsPolicies").mapObjects { it.toDnsPolicy() },
             rules = root.getJSONArray("rules").mapObjects { it.toRouteRule() },
+            defaultProfileId = root.optNullableString("defaultProfileId"),
+            hostOverrides = root.optJSONArray("hostOverrides")?.mapObjects { it.toDnsHostOverride() }.orEmpty(),
         )
     }
 
@@ -69,6 +73,7 @@ class RoutingConfigRepository(
         put("enabled", enabled)
         put("mockOnly", mockOnly)
         put("platformNotes", platformNotes)
+        put("dnsPolicyId", dnsPolicyId)
     }
 
     private fun JSONObject.toTunnelProfile(): TunnelProfile = TunnelProfile(
@@ -79,6 +84,23 @@ class RoutingConfigRepository(
         enabled = optBoolean("enabled", true),
         mockOnly = optBoolean("mockOnly", enumValueOf<TunnelType>(optString("type", TunnelType.Direct.name)).isMockOnly),
         platformNotes = optNullableString("platformNotes"),
+        dnsPolicyId = optNullableString("dnsPolicyId"),
+    )
+
+    private fun DnsHostOverride.toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("hostname", hostname)
+        put("ipAddress", ipAddress)
+        put("enabled", enabled)
+        put("note", note)
+    }
+
+    private fun JSONObject.toDnsHostOverride(): DnsHostOverride = DnsHostOverride(
+        id = getString("id"),
+        hostname = getString("hostname"),
+        ipAddress = getString("ipAddress"),
+        enabled = optBoolean("enabled", true),
+        note = optNullableString("note"),
     )
 
     private fun DnsPolicy.toJson(): JSONObject = JSONObject().apply {
