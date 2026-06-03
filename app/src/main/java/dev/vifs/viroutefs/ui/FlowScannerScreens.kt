@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -32,8 +31,8 @@ import java.text.DateFormat
 import java.util.Date
 
 private const val TEST_ROUTE_CIDR = "203.0.113.0/24"
-private const val TEST_ROUTE_SOURCE = "ViRouteFS TUN test route"
-private const val TEST_ROUTE_MODE = "TUN test-route preview"
+private const val TEST_ROUTE_SOURCE = "Developer TEST-NET counter"
+private const val TEST_ROUTE_MODE = "Developer diagnostics"
 
 internal data class FlowEventUi(
     val appName: String,
@@ -60,7 +59,7 @@ internal data class FlowEventUi(
 internal fun FlowScannerScreen(padding: PaddingValues, text: UiText, vpnState: VpnServiceUiState) {
     var selectedEventIndex by rememberSaveable { mutableStateOf<Int?>(null) }
     var liveDetailsOpen by rememberSaveable { mutableStateOf(false) }
-    val events = demoFlowEvents(text)
+    val events = emptyList<FlowEventUi>()
     val selectedEvent = selectedEventIndex?.let { events.getOrNull(it) }
     val showLiveTestRoute = vpnState.tunTestRouteActive || vpnState.packetsRead > 0L || vpnState.bytesRead > 0L
 
@@ -104,27 +103,21 @@ private fun FlowScannerListScreen(
     if (showLiveTestRoute) {
         item { FlowTunTestRouteRow(text = text, vpnState = vpnState, onClick = onLiveEvent) }
     }
-    items(events.size) { index ->
-        FlowEventRow(text = text, event = events[index], onClick = { onEvent(index) })
+    if (events.isEmpty() && !showLiveTestRoute) {
+        item { CardBlock { Text(text.flowEmptyState, style = MaterialTheme.typography.bodySmall) } }
+    } else {
+        items(events.size) { index ->
+            FlowEventRow(text = text, event = events[index], onClick = { onEvent(index) })
+        }
     }
     item { FlowLimitCard(text) }
 }
 
 @Composable
 private fun FlowControlCard(text: UiText) = CardBlock {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
-            Text(text.flowAppFilter, style = MaterialTheme.typography.labelSmall)
-            Text(text.flowAllAppsPlaceholder, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-        }
-        Button(onClick = {}) { Text(text.flowStartAnalysis) }
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        StatusChip(text.flowDemoMode)
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.fillMaxWidth()) {
+        Text(text.flowAppFilter, style = MaterialTheme.typography.labelSmall)
+        Text(text.flowEmptyTitle, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
         Text(text.flowPreviewOnly, style = MaterialTheme.typography.labelSmall)
     }
 }
@@ -273,76 +266,3 @@ private val VpnServiceUiState.isTunTestRouteActive: Boolean
 private fun Long?.formatPacketTime(text: UiText): String = this?.let {
     DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(Date(it))
 } ?: text.flowNever
-
-private fun demoFlowEvents(text: UiText): List<FlowEventUi> = listOf(
-    FlowEventUi(
-        appName = "Telegram",
-        domain = "api.telegram.org",
-        resolvedIp = "149.154.167.220",
-        portProtocol = "443 / TCP TLS",
-        dnsPolicy = text.flowDnsPolicySecure,
-        selectedRoute = "Xray Germany",
-        routeReason = text.telegramRouteReason,
-        riskWarning = null,
-        recommendation = text.telegramRecommendation,
-        status = text.flowAllowedStatus,
-        technicalDetails = text.telegramTechnical,
-        sourceLabel = text.flowDemoPreview,
-    ),
-    FlowEventUi(
-        appName = text.browserApp,
-        domain = "youtube.com / googlevideo.com",
-        resolvedIp = "142.250.185.78",
-        portProtocol = "443 / TCP QUIC preview",
-        dnsPolicy = text.flowDnsPolicyMedia,
-        selectedRoute = "Media tunnel",
-        routeReason = text.mediaRouteReason,
-        riskWarning = null,
-        recommendation = text.mediaRecommendation,
-        status = text.flowMediaStatus,
-        technicalDetails = text.mediaTechnical,
-        sourceLabel = text.flowDemoPreview,
-    ),
-    FlowEventUi(
-        appName = "Bank / Госуслуги",
-        domain = "gosuslugi.ru",
-        resolvedIp = "109.207.1.97",
-        portProtocol = "443 / TCP TLS",
-        dnsPolicy = text.flowDnsPolicyLocal,
-        selectedRoute = "Direct",
-        routeReason = text.govRouteReason,
-        riskWarning = null,
-        recommendation = text.govRecommendation,
-        status = text.flowDirectStatus,
-        technicalDetails = text.govTechnical,
-        sourceLabel = text.flowDemoPreview,
-    ),
-    FlowEventUi(
-        appName = text.workApp,
-        domain = "gitlab.corp",
-        resolvedIp = "10.44.8.15",
-        portProtocol = "443 / TCP TLS",
-        dnsPolicy = text.flowDnsPolicyCorp,
-        selectedRoute = "Work VPN",
-        routeReason = text.workRouteReason,
-        riskWarning = null,
-        recommendation = text.workRecommendation,
-        status = text.flowWorkStatus,
-        technicalDetails = text.workTechnical,
-        sourceLabel = text.flowDemoPreview,
-    ),
-    FlowEventUi(
-        appName = text.trackerApp,
-        domain = "tracker.example.com",
-        resolvedIp = null,
-        portProtocol = "443 / TCP TLS",
-        dnsPolicy = text.flowDnsPolicyBlock,
-        selectedRoute = "Block",
-        routeReason = text.trackerRouteReason,
-        riskWarning = text.trackerWarning,
-        recommendation = text.trackerRecommendation,
-        status = text.flowBlockedStatus,
-        technicalDetails = text.trackerTechnical,
-        sourceLabel = text.flowDemoPreview,
-    ),
-)

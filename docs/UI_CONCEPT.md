@@ -1,14 +1,14 @@
-# ViRouteFS UI concept — 0.4.1-alpha
+# ViRouteFS UI concept — 0.6.4-alpha
 
-ViRouteFS 0.4.1-alpha reorganizes the Android app around five compact product tasks:
+ViRouteFS 0.6.4-alpha organizes the Android app around five compact product tasks:
 
-1. **VPN** — manage added connection profiles and a single global demo switch.
+1. **Networks / Сети** — real network profiles and safe local network control.
 2. **Routes** — assign apps, domains/sites and IP/CIDR matchers to connection profiles.
 3. **DNS** — run DNS lookup checks, preview app DNS behavior, manage hosts-like overrides and assign DNS policies per connection.
-4. **FS** — Flow Scanner: explain friendly flow events after explicit local VPN mode in the future.
-5. **Settings** — language, theme and project support.
+4. **FS** — Flow Scanner: local counters when available; no claim of full traffic analysis yet.
+5. **Settings / Настройки** — language, theme, Help / Справка, project support, and developer diagnostics.
 
-The main navigation is: Dashboard / Главная, VPN, Routes / Маршруты, DNS, FS, Tools / Инструменты and Settings / Настройки.
+The main navigation is: Networks / Сети, Routes / Маршруты, DNS, FS, and Settings / Настройки. Home / Главная content moved into Settings → Help / Справка.
 
 ## Compact rules
 
@@ -23,7 +23,10 @@ The main navigation is: Dashboard / Главная, VPN, Routes / Маршрут
 This release is UI/model-level only for connection engines and flow capture:
 
 - Real Android VPN routing is not implemented yet.
-- Xray, OpenVPN, WireGuard, Hysteria2 and other engines are not implemented yet.
-- Flow Scanner does not capture packets yet.
+- Xray, OpenVPN, WireGuard, Hysteria2 and other engines are not implemented yet and must not be shown as real configured tunnels.
+- Flow Scanner does not claim full traffic analysis yet.
 - DNS per connection and hosts-like overrides are configuration/simulation metadata for now.
 - There is no telemetry, analytics, ads, tracking, cloud log upload or background monitoring.
+
+
+See also docs/UI_DIRECTION.md for placeholder and icon direction.

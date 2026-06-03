@@ -12,7 +12,7 @@ Current and planned work may include:
 
 - Local VPN permission flow.
 - Safe TUN preview.
-- TEST-NET route preview using `203.0.113.0/24`.
+- Developer-only TEST-NET route preview using `203.0.113.0/24`.
 - Route diagnostics.
 - DNS diagnostics.
 - Flow Scanner explanations.
@@ -41,3 +41,8 @@ ViRouteFS must not include offensive or hidden surveillance behavior, including:
 - Logs and future PCAP exports must stay local unless the user explicitly exports them.
 - Any future packet capture feature must be explicit, visible, and documented before use.
 - Any future root-only feature must be clearly labeled and optional.
+
+
+## Routing isolation boundary
+
+App/domain/IP rules must be exclusive. If a rule binds traffic to a selected profile, ViRouteFS must not silently fall back to another VPN profile. If the selected profile is unavailable, the safe behavior is Block / fail closed. See docs/ROUTING_POLICY.md.

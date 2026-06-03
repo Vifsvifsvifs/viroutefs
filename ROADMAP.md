@@ -4,12 +4,12 @@ ViRouteFS development is intentionally incremental. The project should stay loca
 
 ## 0.6.x: safe preview and release polish
 
-Focus: prove the Android VPN permission and TUN lifecycle without routing normal user traffic.
+Focus: prove the Android VPN permission and TUN lifecycle without routing normal user traffic, while keeping normal UI clean and centered on Networks / Сети.
 
 - Safe TUN test route preview.
 - Optional TEST-NET route `203.0.113.0/24` for controlled local tests.
 - Flow Scanner live test counters for the TEST-NET preview.
-- Public alpha README, release notes, support placeholder, and security boundaries.
+- Public alpha README, release notes, support information, and security boundaries.
 - No default route.
 - No DNS injection into the VPN builder.
 - No forwarding, proxying, packet payload logging, or real tunnel engine.
@@ -53,3 +53,14 @@ Focus: ship a stable defensive routing and diagnostics app for normal users.
 - Flow Scanner explanations for route and DNS decisions.
 - Privacy-safe export/reporting controlled by the user.
 - Clear security boundaries: risk explanation, no exploitation.
+
+
+## 0.6.4-alpha navigation cleanup
+
+- Home / Главная is removed from bottom navigation; overview, goals, license, privacy promises, and alpha status live under Settings → Help / Справка.
+- VPN is renamed to Networks / Сети in normal UI.
+- TEST-NET route controls are developer/testing-only and hidden from normal user UI.
+- Fake tunnels, fake banking/media/work route categories, and placeholder buttons should not appear as real configured entities.
+- Route and DNS targets must come from actual profiles: Direct, Block, and future user-created active profiles.
+- App/domain/IP route bindings must be exclusive and fail closed; never silently fall back to a foreign VPN profile. See docs/ROUTING_POLICY.md.
+- No runtime routing behavior change: no default route, no DNS servers in VPN builder, no payload logging, no forwarding/proxying.
