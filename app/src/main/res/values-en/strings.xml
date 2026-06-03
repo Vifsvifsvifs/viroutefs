@@ -168,7 +168,7 @@
     <string name="tools_result_not_run">This check has not run yet. Fill in the fields and press the check button.</string>
     <string name="settings_version_title">App version</string>
     <string name="settings_version_simple">ViRouteFS version %1$s is installed.</string>
-    <string name="settings_version_details">versionCode: %1$d. Milestone: 0.5.0-alpha — safe Android VpnService skeleton without packet routing or capture.</string>
+    <string name="settings_version_details">versionCode: %1$d. Milestone: 0.5.1-alpha — safe Android VpnService skeleton without packet routing or capture.</string>
     <string name="settings_version_action">Update the app only from a trusted source and review the changelog before installing.</string>
 
 </resources>

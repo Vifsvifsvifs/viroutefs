@@ -2,6 +2,7 @@
 
 package dev.vifs.viroutefs
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
@@ -142,15 +143,45 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
         loaded = true
     }
 
+    fun startAfterPermissions() {
+        if (!vpnController.notificationPermissionGranted()) {
+            vpnState = VpnServiceUiState(
+                VpnServiceStatus.NotificationPermissionRequired,
+                text.vpnNotificationPermissionRequiredDetail,
+            )
+            return
+        }
+        vpnState = VpnServiceUiState(VpnServiceStatus.Starting)
+        runCatching { vpnController.startLocalService() }
+            .onFailure { error ->
+                vpnState = VpnServiceUiState(VpnServiceStatus.Error, error.localizedMessage ?: text.vpnStartFailed)
+            }
+    }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            startAfterPermissions()
+        } else {
+            vpnState = VpnServiceUiState(
+                VpnServiceStatus.NotificationPermissionRequired,
+                text.vpnNotificationPermissionRequiredDetail,
+            )
+        }
+    }
+
     val vpnPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            vpnState = VpnServiceUiState(VpnServiceStatus.Starting)
-            runCatching { vpnController.startLocalService() }
-                .onFailure { error ->
-                    vpnState = VpnServiceUiState(VpnServiceStatus.Error, error.localizedMessage ?: text.vpnStartFailed)
-                }
+            if (!vpnController.notificationPermissionGranted()) {
+                vpnState = VpnServiceUiState(
+                    VpnServiceStatus.NotificationPermissionRequired,
+                    text.vpnNotificationPermissionRequiredDetail,
+                )
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                startAfterPermissions()
+            }
         } else {
-            vpnState = VpnServiceUiState(VpnServiceStatus.Error, text.vpnPermissionDenied)
+            vpnState = VpnServiceUiState(VpnServiceStatus.PermissionRequired, text.vpnPermissionDenied)
         }
     }
 
@@ -169,12 +200,14 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
             if (permissionIntent != null) {
                 vpnState = VpnServiceUiState(VpnServiceStatus.PermissionRequired)
                 vpnPermissionLauncher.launch(permissionIntent)
+            } else if (!vpnController.notificationPermissionGranted()) {
+                vpnState = VpnServiceUiState(
+                    VpnServiceStatus.NotificationPermissionRequired,
+                    text.vpnNotificationPermissionRequiredDetail,
+                )
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             } else {
-                vpnState = VpnServiceUiState(VpnServiceStatus.Starting)
-                runCatching { vpnController.startLocalService() }
-                    .onFailure { error ->
-                        vpnState = VpnServiceUiState(VpnServiceStatus.Error, error.localizedMessage ?: text.vpnStartFailed)
-                    }
+                startAfterPermissions()
             }
         } else {
             runCatching { vpnController.stopLocalService() }
@@ -577,7 +610,9 @@ internal class UiText(private val language: AppLanguage) {
     val vpnLifecycleOnlyDetails = t("Это только разрешение Android VPN и жизненный цикл локального foreground-сервиса. TUN-интерфейс не создаётся, пакетный захват не запускается, интернет устройства не перенаправляется.", "This is only Android VPN permission plus a local foreground-service lifecycle. No TUN interface is created, no packet capture starts, and device internet is not redirected.", "这只是 Android VPN 权限和本地前台服务生命周期。不会创建 TUN 接口，不会开始抓包，也不会重定向设备互联网。")
     val vpnPermissionRequired = t("Требуется разрешение", "Permission required", "需要权限")
     val vpnStarting = t("Запуск…", "Starting…", "正在启动…")
-    val vpnLocalServiceActive = t("Локальный VPN-сервис активен", "Local VPN service active", "本地 VPN 服务已活动")
+    val vpnLocalServiceActive = t("Локальное VPN-превью активно", "Local VPN preview active", "本地 VPN 预览已活动")
+    val vpnNotificationPermissionRequired = t("Требуется разрешение уведомлений", "Notification permission required", "需要通知权限")
+    val vpnNotificationPermissionRequiredDetail = t("Требуется разрешение на уведомления, чтобы запустить локальный сервис превью VPN", "Notification permission required to start local VPN preview service", "需要通知权限才能启动本地 VPN 预览服务")
     val vpnStopped = t("Остановлен", "Stopped", "已停止")
     val vpnError = t("Ошибка", "Error", "错误")
     val vpnPermissionDenied = t("Разрешение Android VPN не выдано.", "Android VPN permission was not granted.", "未授予 Android VPN 权限。")
