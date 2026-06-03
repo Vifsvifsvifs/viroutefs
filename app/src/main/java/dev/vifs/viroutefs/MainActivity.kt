@@ -60,12 +60,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.vifs.viroutefs.diagnostics.DiagnosticResult
-import dev.vifs.viroutefs.diagnostics.DnsDiagnostic
 import dev.vifs.viroutefs.diagnostics.HttpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TcpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TlsDiagnostic
 import dev.vifs.viroutefs.routing.CURRENT_ROUTING_CONFIG_VERSION
-import dev.vifs.viroutefs.routing.DnsPolicy
 import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.routing.RouteRule
 import dev.vifs.viroutefs.routing.RoutingConfig
@@ -75,6 +73,7 @@ import dev.vifs.viroutefs.settings.AppLanguage
 import dev.vifs.viroutefs.settings.AppSettings
 import dev.vifs.viroutefs.settings.AppSettingsRepository
 import dev.vifs.viroutefs.settings.AppThemeMode
+import dev.vifs.viroutefs.ui.DnsScreen
 import dev.vifs.viroutefs.ui.VpnScreen
 import dev.vifs.viroutefs.ui.theme.ViRouteFsTheme
 import kotlinx.coroutines.launch
@@ -313,52 +312,6 @@ private fun RouteDetailsScreen(
                 OutlinedButton(onClick = { onConfig(config.copy(rules = config.rules.filterNot { it.id == rule.id }), text.routeDeleted) }) { Text(text.delete) }
             }
         }
-    }
-}
-
-@Composable
-private fun DnsScreen(padding: PaddingValues, text: UiText, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
-    val scope = rememberCoroutineScope()
-    var domain by rememberSaveable { mutableStateOf("example.com") }
-    var server by rememberSaveable { mutableStateOf("1.1.1.1") }
-    var record by rememberSaveable { mutableStateOf("A") }
-    var result by remember { mutableStateOf<DiagnosticResult?>(null) }
-    ScreenList(padding) {
-        item { Header(text.dns, text.dnsSubtitle) }
-        item {
-            CardBlock {
-                Text(text.lookup, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(domain, { domain = it }, label = { Text(text.domain) }, modifier = Modifier.weight(1f), singleLine = true)
-                    OutlinedTextField(record, { record = it }, label = { Text(text.type) }, modifier = Modifier.weight(0.45f), singleLine = true)
-                }
-                OutlinedTextField(server, { server = it }, label = { Text(text.dnsServer) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                Button(onClick = { scope.launch { result = DnsDiagnostic().lookup(domain, server, record) } }) { Text(text.check) }
-                result?.let { DiagnosticCard(text, text.dnsResult, it) }
-            }
-        }
-        item { CompactCard(text, text.policies, text.policyCount(config.dnsPolicies.size), text.dnsPolicyLimit) }
-        items(config.dnsPolicies, key = { it.id }) { policy -> DnsPolicyCard(text, policy, config, onConfig) }
-        item { CompactCard(text, text.hostOverrides, text.overrideCount(config.hostOverrides.size), config.hostOverrides.joinToString("\n") { "${it.hostname} → ${it.ipAddress}" }.ifBlank { text.none }) }
-    }
-}
-
-@Composable
-private fun DnsPolicyCard(text: UiText, policy: DnsPolicy, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
-    var expanded by rememberSaveable(policy.id) { mutableStateOf(false) }
-    CardBlock {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.weight(1f)) {
-                Text(policy.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                Text("${policy.type.label} • ${policy.serverText ?: text.system}", style = MaterialTheme.typography.labelSmall)
-            }
-            StatusChip(if (policy.enabled) text.on else text.off)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(onClick = { onConfig(config.copy(dnsPolicies = config.dnsPolicies.map { if (it.id == policy.id) it.copy(enabled = !it.enabled) else it }), text.saved) }) { Text(if (policy.enabled) text.disable else text.enable) }
-            OutlinedButton(onClick = { expanded = !expanded }) { Text(if (expanded) text.less else text.details) }
-        }
-        if (expanded) Text(policy.description, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -630,7 +583,18 @@ internal class UiText(private val language: AppLanguage) {
     val dnsResult = t("Результат DNS", "DNS result", "DNS 结果")
     val policies = t("Политики", "Policies", "策略")
     val dnsPolicyLimit = t("Политики описывают желаемое поведение; реальное DNS-маршрутизирование будет позже.", "Policies describe desired behavior; real DNS routing comes later.", "策略描述目标行为；真实 DNS 路由稍后实现。")
+    val dnsPolicyDetails = t("Детали DNS-политики", "DNS policy details", "DNS 策略详情")
+    val dnsPolicyDetailsSubtitle = t("Краткие поля и ограничения будущего DNS-движка.", "Compact fields and future DNS-engine limits.", "紧凑字段和未来 DNS 引擎限制。")
+    val usedByProfiles = t("Используется профилями", "Used by profiles", "配置使用")
+    val usedByRoutes = t("Используется маршрутами", "Used by routes", "路由使用")
     val hostOverrides = t("Host overrides", "Host overrides", "主机覆盖")
+    val hostOverridesSubtitle = t("Локальные hosts-подстановки для будущего DNS-движка.", "Local hosts-like mappings for the future DNS engine.", "用于未来 DNS 引擎的本地主机映射。")
+    val hostOverridesShort = t("Локальная hosts-like подстановка. Реальный DNS-движок применит её позже.", "Local hosts-like mapping. Real DNS engine will apply it later.", "本地 hosts 类映射。真实 DNS 引擎稍后会应用。")
+    val addHostOverride = t("Добавить запись", "Add override", "添加覆盖")
+    val ipAddress = t("IP", "IP", "IP")
+    val noteOptional = t("Заметка (необязательно)", "Note (optional)", "备注（可选）")
+    val hostOverrideAdded = t("Host override сохранён локально.", "Host override saved locally.", "主机覆盖已保存到本地。")
+    val hostOverrideDeleted = t("Host override удалён.", "Host override deleted.", "主机覆盖已删除。")
     val none = t("нет", "none", "无")
     val system = t("система", "system", "系统")
     val localOnly = t("локально", "local", "本地")
