@@ -1,6 +1,6 @@
-# ViRouteFS safe TUN skeleton — 0.6.2-alpha
+# ViRouteFS safe TUN skeleton — 0.6.3-alpha
 
-ViRouteFS `0.6.2-alpha` keeps the route-less TUN preview as the default, keeps the opt-in TEST-NET route preview, and links its safe counters into Flow Scanner.
+ViRouteFS `0.6.3-alpha` keeps the route-less TUN preview as the default, keeps the opt-in TEST-NET route preview, and links its safe counters into Flow Scanner.
 
 ## Default route-less preview
 
@@ -17,7 +17,7 @@ Normal internet traffic should remain unchanged in the default mode because ther
 
 ## Opt-in test-route preview
 
-The VPN screen exposes **Test route preview** behind the compact Details / Advanced area. The user must explicitly enable it. In `0.6.2-alpha`, Flow Scanner becomes the main place to observe this live local TEST-NET counter activity.
+The VPN screen exposes **Test route preview** behind the compact Details / Advanced area. The user must explicitly enable it. In `0.6.3-alpha`, Flow Scanner becomes the main place to observe this live local TEST-NET counter activity.
 
 When enabled, ViRouteFS adds exactly one IPv4 route to the TUN builder:
 
@@ -39,7 +39,7 @@ It does not log packet payload bytes, does not inspect payloads, does not parse 
 
 If the TUN read loop fails unexpectedly, the service publishes an `Error` state with a short safe message and stops the preview.
 
-## Flow Scanner visibility in 0.6.2-alpha
+## Flow Scanner visibility in 0.6.3-alpha
 
 Flow Scanner can now show the current local TEST-NET test-route counters when the preview is active or when counters are non-zero:
 

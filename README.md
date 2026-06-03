@@ -1,30 +1,63 @@
 # ViRouteFS
 
-ViRouteFS (Visual Route & Flow Scanner) is an open-source Android app for human-readable traffic routing explanations and safe network diagnostics.
+**ViRouteFS** means **Visual Route & Flow Scanner**.
 
-The project is local-first and defensive by design. Version `0.6.2-alpha` keeps the safe route-less Android TUN preview as the default and adds an explicit TEST-NET route preview for lifecycle testing. When the user opts in, only `203.0.113.0/24` is routed into TUN; there is no default route, IPv6 default route, DNS server injection, packet payload logging, forwarding, proxying, or real VPN engine. ViRouteFS does **not** implement real VPN routing, Xray, OpenVPN, Hysteria2, WireGuard, SOCKS5 proxying, packet capture, cloud upload, analytics, telemetry, ads, tracking, or offensive security features.
+> **One Android VPN. Many internal routes.**<br>
+> **Один системный VPN. Много внутренних маршрутов.**
 
-## Current milestone: 0.6.2-alpha
+ViRouteFS is a **local-first Android app** for understandable VPN routing, DNS policy, and Flow Scanner diagnostics. It is being built as a user-friendly way to see how routes, DNS decisions, and flow explanations should work before real traffic routing is enabled.
 
-See [`docs/TUN_SKELETON.md`](docs/TUN_SKELETON.md) for the route-less Android TUN preview and opt-in TEST-NET route preview, and [`docs/FLOW_SCANNER.md`](docs/FLOW_SCANNER.md) for the 0.6.2-alpha Flow Scanner live TEST-NET counters.
+ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project is designed for privacy and defensive diagnostics:
 
-- Kotlin Android app using Gradle Kotlin DSL.
-- Jetpack Compose UI with Material 3.
-- Minimum SDK 26.
-- Package name: `dev.vifs.viroutefs`.
-- App version shown on the Settings screen.
-- Bottom navigation screens: Dashboard, VPN, Routes, DNS, Tools, Logs, Settings.
-- Safe `ViRouteVpnService` preview declared with `android.permission.BIND_VPN_SERVICE`; it requests VPN permission and starts a route-less TUN preview by default. An explicit test-route mode adds only `203.0.113.0/24`, counts packets/bytes read from TUN, exposes those counters to Flow Scanner as live local TEST-NET data, and drops packets without payload logging, DNS, forwarding, proxying, or real tunnel engines.
-- Editable **Маршруты** screen with sections for simulator, route diagnostics, route profiles, DNS policies, rules, scenarios, and import/export.
-- Platform-neutral routing model for Android, Linux, Windows, macOS, and `any` text/app matchers.
-- Local app-private JSON persistence for routing configuration.
-- Clipboard JSON export/import; no storage permission and no cloud sync.
-- Default route profiles: Direct, Block, Xray Germany mock, Hysteria2 NL mock, OpenVPN Work mock, and SOCKS5 Work VM mock.
-- DNS policies as simulation/config metadata: System DNS, Direct DNS, Work DNS mock, and Tunnel DNS mock.
-- Route rules with enabled state, priority, target profile, optional DNS policy, APP_GROUP/APP/DOMAIN/CIDR/DEFAULT types, validation, and reset to defaults.
-- User-triggered DNS/TCP/TLS/HTTP diagnostics and route diagnostic reports with copy/share actions.
-- Last five route diagnostic reports kept in memory for the current session only.
-- Flow Scanner keeps demo/preview sample events and can show live local TEST-NET test-route counters when explicitly enabled.
+- No ads.
+- No telemetry.
+- No analytics.
+- No tracking SDKs.
+- No cloud upload of logs, routes, diagnostics, or future PCAP files.
+- No hidden interception of third-party traffic.
+- No offensive security features.
+
+## Current status: 0.6.3-alpha
+
+Version `0.6.3-alpha` is a public alpha polish release. It documents the current safe preview state and prepares the repository for public presentation without changing runtime VPN/TUN routing behavior.
+
+What exists now:
+
+- Android `VpnService` permission flow exists.
+- Foreground VPN preview service exists.
+- Safe TUN preview exists.
+- Optional TEST-NET route `203.0.113.0/24` exists for local preview testing.
+- Flow Scanner can show live local test-route counters when the TEST-NET preview is enabled.
+- The app has Compose screens for Dashboard, VPN, Routes, DNS, Tools, Logs, and Settings.
+- Routing configuration, DNS policy metadata, diagnostics reports, and logs are local-first.
+
+What is intentionally not implemented yet:
+
+- No real user traffic routing yet.
+- No full-device default route yet.
+- No DNS server is added to the VPN builder.
+- No packet payload logging.
+- No forwarding or proxying.
+- No Xray, OpenVPN, WireGuard, Hysteria2, or SOCKS5 proxy engines yet.
+- No Play Store or F-Droid release is claimed yet.
+
+See [`docs/TUN_SKELETON.md`](docs/TUN_SKELETON.md) for the safe Android TUN preview, [`docs/FLOW_SCANNER.md`](docs/FLOW_SCANNER.md) for Flow Scanner behavior, and [`docs/RELEASE_NOTES_0.6.3_ALPHA.md`](docs/RELEASE_NOTES_0.6.3_ALPHA.md) for the release notes.
+
+## Screenshots
+
+Actual screenshots are not committed yet. Planned public release screenshots:
+
+- TODO: VPN profiles and TUN preview.
+- TODO: Routes.
+- TODO: DNS policies.
+- TODO: Flow Scanner live test route.
+- TODO: Settings / themes.
+
+## Build artifacts
+
+GitHub Actions builds debug APK artifacts on pushes and pull requests to `main`. The workflow uploads a versioned debug APK artifact named like `ViRouteFS-debug-<versionName>`.
+
+Debug artifacts are for testing only. ViRouteFS is not yet published on Google Play or F-Droid.
 
 ## Diagnostics behavior
 
@@ -36,13 +69,23 @@ All diagnostics are manual and user-controlled:
 - No cloud upload of diagnostic results.
 - No port scanner, vulnerability scanner, brute force, exploit automation, or offensive network behavior.
 
-The DNS screen currently uses Android's system resolver. Per-route DNS policy is now stored in the routing config, but it is still explanation and leak-risk metadata only. Real DNS routing will be added later.
+The DNS screen currently uses Android's system resolver. Per-route DNS policy is stored in the routing config, but it is still explanation and leak-risk metadata only. Real DNS routing will be added later.
 
-See [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md), [docs/ROUTE_DIAGNOSTICS.md](docs/ROUTE_DIAGNOSTICS.md), [docs/ROUTING_CONFIG.md](docs/ROUTING_CONFIG.md), and [docs/DNS_POLICY.md](docs/DNS_POLICY.md) for detailed behavior and safety boundaries.
+See [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md), [docs/ROUTE_DIAGNOSTICS.md](docs/ROUTE_DIAGNOSTICS.md), [docs/ROUTING_CONFIG.md](docs/ROUTING_CONFIG.md), [docs/DNS_POLICY.md](docs/DNS_POLICY.md), and [SECURITY_BOUNDARIES.md](SECURITY_BOUNDARIES.md) for detailed behavior and safety boundaries.
 
 ## Route simulator status
 
 The Route Simulator and Route Diagnostics route selection use the saved local routing configuration. They explain how future routing decisions should be presented to users, but they do not change device routing and do not start a real VPN tunnel. Route Diagnostics network checks run through the current Android connection only.
+
+## Roadmap
+
+The public roadmap is maintained in [`ROADMAP.md`](ROADMAP.md). In short:
+
+- `0.6.x`: safe TUN test route, Flow Scanner live test counters, release polish.
+- `0.7.x`: controlled Direct/Block route experiments without a full-device default route.
+- `0.8.x`: first external outbound experiment, likely SOCKS5, with route decision explanation.
+- `0.9.x`: import preparation for WireGuard, Xray, and Hysteria2 configs.
+- `1.0`: stable local-first routing profiles, DNS policy, Flow Scanner explanations, and privacy-safe export/reporting.
 
 ## Safety and privacy boundaries
 
@@ -104,15 +147,3 @@ If you generate the Gradle wrapper locally, you can also use:
 - Routing configuration is local app-private JSON unless the user explicitly copies it.
 - Keep logs and future PCAP exports local unless the user explicitly exports them.
 - Prefer small, compiling pull requests with clear commit messages.
-
-## 0.4.1-alpha compact UI concept
-
-ViRouteFS 0.4.1-alpha reorganizes the Android UI into a compact, friendly product structure:
-
-- **VPN** manages added connection profiles and a global demonstration switch. Adding profiles supports UI placeholders for QR code, clipboard, file import and manual creation.
-- **Routes / Маршруты** answers “Что через какое подключение ходит?” by grouping app, site/domain and IP/CIDR matchers under connection profile cards.
-- **DNS** contains DNS lookup, app DNS check concept, hosts-like local overrides and DNS per connection.
-- **FS** is **Flow Scanner**, a friendly flow-event explanation module. It is demo-only until explicit local VPN observation is implemented.
-- **Settings / Настройки** contains language, theme and support-project sections.
-
-The release remains local-first: no telemetry, analytics, ads, tracking SDKs, cloud log upload, hidden interception, root features, real VPN routing or real packet capture are added.
