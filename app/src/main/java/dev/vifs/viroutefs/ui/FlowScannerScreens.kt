@@ -26,6 +26,14 @@ import dev.vifs.viroutefs.ScreenList
 import dev.vifs.viroutefs.StatusChip
 import dev.vifs.viroutefs.UiText
 import dev.vifs.viroutefs.WarningText
+import dev.vifs.viroutefs.vpn.VpnServiceStatus
+import dev.vifs.viroutefs.vpn.VpnServiceUiState
+import java.text.DateFormat
+import java.util.Date
+
+private const val TEST_ROUTE_CIDR = "203.0.113.0/24"
+private const val TEST_ROUTE_SOURCE = "ViRouteFS TUN test route"
+private const val TEST_ROUTE_MODE = "TUN test-route preview"
 
 internal data class FlowEventUi(
     val appName: String,
@@ -39,6 +47,7 @@ internal data class FlowEventUi(
     val recommendation: String,
     val status: String,
     val technicalDetails: String,
+    val sourceLabel: String,
 ) {
     val target: String = buildString {
         append(domain)
@@ -48,23 +57,33 @@ internal data class FlowEventUi(
 }
 
 @Composable
-internal fun FlowScannerScreen(padding: PaddingValues, text: UiText) {
+internal fun FlowScannerScreen(padding: PaddingValues, text: UiText, vpnState: VpnServiceUiState) {
     var selectedEventIndex by rememberSaveable { mutableStateOf<Int?>(null) }
+    var liveDetailsOpen by rememberSaveable { mutableStateOf(false) }
     val events = demoFlowEvents(text)
     val selectedEvent = selectedEventIndex?.let { events.getOrNull(it) }
+    val showLiveTestRoute = vpnState.tunTestRouteActive || vpnState.packetsRead > 0L || vpnState.bytesRead > 0L
 
-    if (selectedEvent != null) {
-        FlowEventDetailsScreen(
+    when {
+        liveDetailsOpen -> FlowTunTestRouteDetailsScreen(
+            padding = padding,
+            text = text,
+            vpnState = vpnState,
+            onBack = { liveDetailsOpen = false },
+        )
+        selectedEvent != null -> FlowEventDetailsScreen(
             padding = padding,
             text = text,
             event = selectedEvent,
             onBack = { selectedEventIndex = null },
         )
-    } else {
-        FlowScannerListScreen(
+        else -> FlowScannerListScreen(
             padding = padding,
             text = text,
+            vpnState = vpnState,
+            showLiveTestRoute = showLiveTestRoute,
             events = events,
+            onLiveEvent = { liveDetailsOpen = true },
             onEvent = { selectedEventIndex = it },
         )
     }
@@ -74,11 +93,17 @@ internal fun FlowScannerScreen(padding: PaddingValues, text: UiText) {
 private fun FlowScannerListScreen(
     padding: PaddingValues,
     text: UiText,
+    vpnState: VpnServiceUiState,
+    showLiveTestRoute: Boolean,
     events: List<FlowEventUi>,
+    onLiveEvent: () -> Unit,
     onEvent: (Int) -> Unit,
 ) = ScreenList(padding) {
     item { Header(text.flowScannerTitle, text.flowScannerSubtitle) }
     item { FlowControlCard(text) }
+    if (showLiveTestRoute) {
+        item { FlowTunTestRouteRow(text = text, vpnState = vpnState, onClick = onLiveEvent) }
+    }
     items(events.size) { index ->
         FlowEventRow(text = text, event = events[index], onClick = { onEvent(index) })
     }
@@ -105,6 +130,35 @@ private fun FlowControlCard(text: UiText) = CardBlock {
 }
 
 @Composable
+private fun FlowTunTestRouteRow(text: UiText, vpnState: VpnServiceUiState, onClick: () -> Unit) = CardBlock {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(TEST_ROUTE_SOURCE, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                StatusChip(text.flowLiveLocalTestData)
+            }
+            Text("${text.flowRoute}: $TEST_ROUTE_CIDR", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            Text(
+                "${text.flowPacketsRead}: ${vpnState.packetsRead} • ${text.flowBytesRead}: ${vpnState.bytesRead}",
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+            )
+        }
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(0.7f)) {
+            Text(text.flowLastPacket, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            Text(vpnState.lastPacketAt.formatPacketTime(text), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+            StatusChip(if (vpnState.isTunTestRouteActive) text.flowActive else text.flowInactive)
+        }
+    }
+}
+
+@Composable
 private fun FlowEventRow(text: UiText, event: FlowEventUi, onClick: () -> Unit) = CardBlock {
     Row(
         modifier = Modifier
@@ -114,7 +168,10 @@ private fun FlowEventRow(text: UiText, event: FlowEventUi, onClick: () -> Unit) 
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
-            Text(event.appName, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(event.appName, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                StatusChip(event.sourceLabel)
+            }
             Text(event.target, style = MaterialTheme.typography.bodySmall, maxLines = 1)
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(0.9f)) {
@@ -122,6 +179,41 @@ private fun FlowEventRow(text: UiText, event: FlowEventUi, onClick: () -> Unit) 
             StatusChip(event.status)
         }
     }
+}
+
+@Composable
+private fun FlowTunTestRouteDetailsScreen(
+    padding: PaddingValues,
+    text: UiText,
+    vpnState: VpnServiceUiState,
+    onBack: () -> Unit,
+) = ScreenList(padding) {
+    item {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = onBack) { Text(text.back) }
+            Header(text.flowLiveTestRoute, TEST_ROUTE_SOURCE)
+        }
+    }
+    item {
+        CardBlock {
+            FlowField(text.flowSource, TEST_ROUTE_SOURCE)
+            FlowField(text.flowRoute, TEST_ROUTE_CIDR)
+            FlowField(text.flowVpnMode, TEST_ROUTE_MODE)
+            FlowField(text.flowPacketsRead, vpnState.packetsRead.toString())
+            FlowField(text.flowBytesRead, vpnState.bytesRead.toString())
+            FlowField(text.flowLastPacket, vpnState.lastPacketAt.formatPacketTime(text))
+            FlowField(text.flowStatus, if (vpnState.isTunTestRouteActive) text.flowActive else text.flowInactive)
+        }
+    }
+    item {
+        CardBlock {
+            Text(text.flowSafety, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+            Details(text.details, text.flowTunSafetyDetails)
+            Text(text.flowHowToTest, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+            Text(text.flowTunHowToTest, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+    item { FlowLimitCard(text) }
 }
 
 @Composable
@@ -134,6 +226,7 @@ private fun FlowEventDetailsScreen(padding: PaddingValues, text: UiText, event: 
     }
     item {
         CardBlock {
+            FlowField(text.flowSource, event.sourceLabel)
             FlowField(text.flowApp, event.appName)
             FlowField(text.flowDomain, event.domain)
             FlowField(text.flowResolvedIp, event.resolvedIp ?: text.none)
@@ -174,6 +267,13 @@ private fun FlowLimitCard(text: UiText) = CardBlock {
     Details(text.details, text.fsLimitDetails)
 }
 
+private val VpnServiceUiState.isTunTestRouteActive: Boolean
+    get() = tunTestRouteActive && status == VpnServiceStatus.TunTestRouteActive
+
+private fun Long?.formatPacketTime(text: UiText): String = this?.let {
+    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(Date(it))
+} ?: text.flowNever
+
 private fun demoFlowEvents(text: UiText): List<FlowEventUi> = listOf(
     FlowEventUi(
         appName = "Telegram",
@@ -187,6 +287,7 @@ private fun demoFlowEvents(text: UiText): List<FlowEventUi> = listOf(
         recommendation = text.telegramRecommendation,
         status = text.flowAllowedStatus,
         technicalDetails = text.telegramTechnical,
+        sourceLabel = text.flowDemoPreview,
     ),
     FlowEventUi(
         appName = text.browserApp,
@@ -200,6 +301,7 @@ private fun demoFlowEvents(text: UiText): List<FlowEventUi> = listOf(
         recommendation = text.mediaRecommendation,
         status = text.flowMediaStatus,
         technicalDetails = text.mediaTechnical,
+        sourceLabel = text.flowDemoPreview,
     ),
     FlowEventUi(
         appName = "Bank / Госуслуги",
@@ -213,6 +315,7 @@ private fun demoFlowEvents(text: UiText): List<FlowEventUi> = listOf(
         recommendation = text.govRecommendation,
         status = text.flowDirectStatus,
         technicalDetails = text.govTechnical,
+        sourceLabel = text.flowDemoPreview,
     ),
     FlowEventUi(
         appName = text.workApp,
@@ -226,6 +329,7 @@ private fun demoFlowEvents(text: UiText): List<FlowEventUi> = listOf(
         recommendation = text.workRecommendation,
         status = text.flowWorkStatus,
         technicalDetails = text.workTechnical,
+        sourceLabel = text.flowDemoPreview,
     ),
     FlowEventUi(
         appName = text.trackerApp,
@@ -239,5 +343,6 @@ private fun demoFlowEvents(text: UiText): List<FlowEventUi> = listOf(
         recommendation = text.trackerRecommendation,
         status = text.flowBlockedStatus,
         technicalDetails = text.trackerTechnical,
+        sourceLabel = text.flowDemoPreview,
     ),
 )

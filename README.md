@@ -2,11 +2,11 @@
 
 ViRouteFS (Visual Route & Flow Scanner) is an open-source Android app for human-readable traffic routing explanations and safe network diagnostics.
 
-The project is local-first and defensive by design. Version `0.6.1-alpha` keeps the safe route-less Android TUN preview as the default and adds an explicit TEST-NET route preview for lifecycle testing. When the user opts in, only `203.0.113.0/24` is routed into TUN; there is no default route, IPv6 default route, DNS server injection, packet payload logging, forwarding, proxying, or real VPN engine. ViRouteFS does **not** implement real VPN routing, Xray, OpenVPN, Hysteria2, WireGuard, SOCKS5 proxying, packet capture, cloud upload, analytics, telemetry, ads, tracking, or offensive security features.
+The project is local-first and defensive by design. Version `0.6.2-alpha` keeps the safe route-less Android TUN preview as the default and adds an explicit TEST-NET route preview for lifecycle testing. When the user opts in, only `203.0.113.0/24` is routed into TUN; there is no default route, IPv6 default route, DNS server injection, packet payload logging, forwarding, proxying, or real VPN engine. ViRouteFS does **not** implement real VPN routing, Xray, OpenVPN, Hysteria2, WireGuard, SOCKS5 proxying, packet capture, cloud upload, analytics, telemetry, ads, tracking, or offensive security features.
 
-## Current milestone: 0.6.1-alpha
+## Current milestone: 0.6.2-alpha
 
-See [`docs/TUN_SKELETON.md`](docs/TUN_SKELETON.md) for the route-less Android TUN preview and opt-in TEST-NET route preview added in 0.6.1-alpha.
+See [`docs/TUN_SKELETON.md`](docs/TUN_SKELETON.md) for the route-less Android TUN preview and opt-in TEST-NET route preview, and [`docs/FLOW_SCANNER.md`](docs/FLOW_SCANNER.md) for the 0.6.2-alpha Flow Scanner live TEST-NET counters.
 
 - Kotlin Android app using Gradle Kotlin DSL.
 - Jetpack Compose UI with Material 3.
@@ -14,7 +14,7 @@ See [`docs/TUN_SKELETON.md`](docs/TUN_SKELETON.md) for the route-less Android TU
 - Package name: `dev.vifs.viroutefs`.
 - App version shown on the Settings screen.
 - Bottom navigation screens: Dashboard, VPN, Routes, DNS, Tools, Logs, Settings.
-- Safe `ViRouteVpnService` preview declared with `android.permission.BIND_VPN_SERVICE`; it requests VPN permission and starts a route-less TUN preview by default. An explicit test-route mode adds only `203.0.113.0/24`, counts packets/bytes read from TUN, and drops them without payload logging, DNS, forwarding, proxying, or real tunnel engines.
+- Safe `ViRouteVpnService` preview declared with `android.permission.BIND_VPN_SERVICE`; it requests VPN permission and starts a route-less TUN preview by default. An explicit test-route mode adds only `203.0.113.0/24`, counts packets/bytes read from TUN, exposes those counters to Flow Scanner as live local TEST-NET data, and drops packets without payload logging, DNS, forwarding, proxying, or real tunnel engines.
 - Editable **Маршруты** screen with sections for simulator, route diagnostics, route profiles, DNS policies, rules, scenarios, and import/export.
 - Platform-neutral routing model for Android, Linux, Windows, macOS, and `any` text/app matchers.
 - Local app-private JSON persistence for routing configuration.
@@ -24,7 +24,7 @@ See [`docs/TUN_SKELETON.md`](docs/TUN_SKELETON.md) for the route-less Android TU
 - Route rules with enabled state, priority, target profile, optional DNS policy, APP_GROUP/APP/DOMAIN/CIDR/DEFAULT types, validation, and reset to defaults.
 - User-triggered DNS/TCP/TLS/HTTP diagnostics and route diagnostic reports with copy/share actions.
 - Last five route diagnostic reports kept in memory for the current session only.
-- Sample human-readable flow events on the Logs screen.
+- Flow Scanner keeps demo/preview sample events and can show live local TEST-NET test-route counters when explicitly enabled.
 
 ## Diagnostics behavior
 

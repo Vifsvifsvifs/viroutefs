@@ -8,21 +8,34 @@ The FS tab keeps the title **Flow Scanner** and the Russian subtitle:
 
 FS is a friendly network-event explanation module. It is not a raw packet table and it does not use third-party branding.
 
-## 0.4.5-alpha behavior
+## 0.6.2-alpha behavior
 
-The screen is still a demo/preview UI. It does **not** start real packet capture, a real `VpnService`, or real VPN engines.
+The screen remains a demo/preview UI for future flow explanations, but it can also display live local counters from the opt-in TEST-NET TUN test route. It does **not** start full packet capture, full-device routing, DNS routing, forwarding/proxying, or real VPN engines.
 
 Main screen behavior:
 
 - shows a compact top control card with an all-apps placeholder, a **Start analysis** button, and demo/local status;
 - shows dense sample flow rows with only app name, target domain/IP:port, selected route/tunnel, and a small status chip;
+- clearly labels sample rows as **demo / preview**;
+- shows a compact **Live test route** row when the VPN TEST-NET preview is active or its counters are non-zero;
 - moves explanations, routing reasons, warnings, recommendations, and technical notes into **Details / Подробнее**;
 - opens a dedicated flow event details screen when a sample event row is tapped.
 
 Details screen behavior:
 
-- shows app, domain, resolved IP when available, port/protocol, DNS policy, selected route/tunnel, route-selection reason, risk/warning, and recommendation;
+- demo details show app, domain, resolved IP when available, port/protocol, DNS policy, selected route/tunnel, route-selection reason, risk/warning, and recommendation;
+- live TEST-NET details show route `203.0.113.0/24`, VPN mode `TUN test-route preview`, packets read, bytes read, last packet time, safety notes, and how to test;
 - keeps long technical data collapsed behind **Details / Подробнее**.
+
+Live local TEST-NET event in `0.6.2-alpha`:
+
+- Source: `ViRouteFS TUN test route`;
+- Route: `203.0.113.0/24`;
+- Counters: `packetsRead`, `bytesRead`, `lastPacketAt`;
+- Safety notes: no default route, no DNS, no payload logging, and packets are dropped after counting;
+- Test hint: open `http://203.0.113.1` or try connecting to `203.0.113.1`.
+
+This live row is local test data only. It is not a claim that Flow Scanner performs real app traffic analysis yet.
 
 Demo sample events:
 
@@ -34,4 +47,4 @@ Demo sample events:
 
 ## Privacy and safety boundary
 
-FS will work only after the user explicitly enables future local VPN mode. 0.4.5-alpha has no hidden interception, packet capture, real `VpnService`, real VPN engines, telemetry, analytics, tracking SDKs, or cloud upload of logs/PCAP files.
+FS will work only after the user explicitly enables local VPN preview features. `0.6.2-alpha` has no hidden interception, full packet capture, default route, VPN DNS server injection, packet payload logging, packet payload inspection, domain extraction from packets, forwarding, proxying, telemetry, analytics, tracking SDKs, or cloud upload of logs/PCAP files. The live TEST-NET counters are runtime app-local state and are not persisted beyond existing service state behavior.

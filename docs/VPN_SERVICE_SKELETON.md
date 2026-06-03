@@ -1,6 +1,6 @@
-# ViRouteFS safe TUN skeleton — 0.6.1-alpha
+# ViRouteFS safe TUN skeleton — 0.6.2-alpha
 
-ViRouteFS `0.6.1-alpha` keeps the route-less TUN preview as the default and adds an opt-in TEST-NET route preview for validating the TUN read/drop lifecycle.
+ViRouteFS `0.6.2-alpha` keeps the route-less TUN preview as the default and adds an opt-in TEST-NET route preview for validating the TUN read/drop lifecycle.
 
 ## Default route-less preview
 
@@ -35,9 +35,13 @@ The loop keeps only safe counters:
 - `bytesRead`
 - `lastPacketAt`
 
-It does not log packet payload bytes, does not log destinations, does not forward packets, does not proxy packets, and does not capture traffic to a file.
+It does not log packet payload bytes, does not inspect payloads, does not parse or extract domains from packets, does not log destinations, does not forward packets, does not proxy packets, and does not capture traffic to a file.
 
 If the TUN read loop fails unexpectedly, the service publishes an `Error` state with a short safe message and stops the preview.
+
+## Flow Scanner visibility in 0.6.2-alpha
+
+Flow Scanner can show the local runtime counters from the opt-in TEST-NET route preview (`203.0.113.0/24`) when the route is active or when counters are non-zero. This is live local test data only, not full packet capture or real app traffic analysis. There is still no default route, IPv6 default route, VPN DNS, payload logging, domain extraction, forwarding, proxying, telemetry, or cloud upload.
 
 ## Lifecycle guarantees
 
@@ -45,7 +49,7 @@ If the TUN read loop fails unexpectedly, the service publishes an `Error` state 
 - Switching test-route preview on or off while the preview is active restarts the preview with the requested route mode.
 - There is no duplicate packet loop.
 - Stopping, service destruction, or VPN revoke closes the TUN descriptor and stops the packet loop.
-- Counters reset when the TUN preview is closed or recreated.
+- Counters reset when the TUN preview is recreated. After stopping, the last runtime counters can remain visible locally in Flow Scanner as inactive test data until the service is started again or the app process is recreated.
 
 ## Manual test notes
 
