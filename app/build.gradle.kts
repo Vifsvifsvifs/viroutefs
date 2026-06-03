@@ -26,15 +26,6 @@ android {
         }
     }
 
-    applicationVariants.all {
-        if (name == "debug") {
-            outputs.all {
-                val variantOutput = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
-                variantOutput.outputFileName = "ViRouteFS-debug-0.4.1-alpha.apk"
-            }
-        }
-    }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
