@@ -79,6 +79,10 @@ import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
 import dev.vifs.viroutefs.routing.TunnelType
+import dev.vifs.viroutefs.routing.findConflictsForCandidate
+import dev.vifs.viroutefs.routing.findExactRouteConflicts
+import dev.vifs.viroutefs.routing.isValidIpOrCidr
+import dev.vifs.viroutefs.routing.validateRouteEditorDraft
 import dev.vifs.viroutefs.settings.AppLanguage
 import dev.vifs.viroutefs.settings.AppSettings
 import dev.vifs.viroutefs.settings.AppSettingsRepository
@@ -91,6 +95,8 @@ import dev.vifs.viroutefs.vpn.VpnServiceController
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
 import kotlinx.coroutines.launch
+import java.util.Locale
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -297,23 +303,34 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
     var target by rememberSaveable { mutableStateOf("") }
     var selectedRouteId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedAppPackage by rememberSaveable { mutableStateOf<String?>(null) }
+    var creatingRoute by rememberSaveable { mutableStateOf(false) }
+    var draftRoute by remember { mutableStateOf<RouteRule?>(null) }
     val installedApps = remember(context) { context.loadLaunchableApps() }
     val userRules = config.rules.filter { it.type != RouteRuleType.DEFAULT }
     val selectedRoute = userRules.firstOrNull { it.id == selectedRouteId }
     val simulationInput = selectedAppPackage ?: target.ifBlank { "example.com" }
     val decision = remember(config, simulationInput) { RouteEngine(config).simulate(simulationInput) }
+    val conflicts = remember(config.rules) { findExactRouteConflicts(config.rules) }
+    val conflictsByRuleId = remember(conflicts) { conflicts.flatMap { conflict -> conflict.ruleIds.map { it to conflict } }.groupBy({ it.first }, { it.second }) }
 
-    if (selectedRoute != null) {
+    if (selectedRoute != null || creatingRoute) {
         RouteDetailsScreen(
             padding = padding,
             text = text,
-            rule = selectedRoute,
+            rule = selectedRoute ?: draftRoute ?: newRouteDraft(config).also { draftRoute = it },
             config = config,
             installedApps = installedApps,
-            onBack = { selectedRouteId = null },
+            isNew = selectedRoute == null,
+            onBack = {
+                selectedRouteId = null
+                creatingRoute = false
+                draftRoute = null
+            },
             onConfig = { next, message ->
                 onConfig(next, message)
-                if (next.rules.none { it.id == selectedRoute.id }) selectedRouteId = null
+                if (selectedRoute != null && next.rules.none { it.id == selectedRoute.id }) selectedRouteId = null
+                creatingRoute = false
+                draftRoute = null
             },
         )
         return
@@ -323,7 +340,13 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
         item { Header(text.routes, text.routesSubtitle) }
         item {
             CardBlock {
-                Text(text.simulation, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text(text.simulation, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Button(onClick = {
+                        draftRoute = newRouteDraft(config)
+                        creatingRoute = true
+                    }) { Text(text.addRoute) }
+                }
                 Text(text.routeEmptyState, style = MaterialTheme.typography.bodySmall)
                 if (installedApps.isNotEmpty()) {
                     Text(text.installedApps, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
@@ -360,13 +383,16 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
                 RouteRuleCard(
                     text = text,
                     rule = rule,
-                    profileName = config.profiles.firstOrNull { it.id == rule.targetProfileId }?.name ?: rule.targetProfileId,
+                    profileName = routeTargetName(config, rule.targetProfileId),
+                    warnings = conflictsByRuleId[rule.id].orEmpty() + unavailableTargetWarning(config, rule),
                     onOpen = { selectedRouteId = rule.id },
                 )
             }
         }
     }
 }
+
+private enum class RouteMatcherKind { App, Domain, Cidr }
 
 data class InstalledAppUi(val label: String, val packageName: String)
 
@@ -380,11 +406,11 @@ private fun android.content.Context.loadLaunchableApps(): List<InstalledAppUi> {
             )
         }
         .distinctBy { it.packageName }
-        .sortedBy { it.label.lowercase() }
+        .sortedWith(compareBy<InstalledAppUi> { it.label.lowercase(Locale.ROOT) }.thenBy { it.packageName })
 }
 
 @Composable
-private fun RouteRuleCard(text: UiText, rule: RouteRule, profileName: String, onOpen: () -> Unit) {
+private fun RouteRuleCard(text: UiText, rule: RouteRule, profileName: String, warnings: List<Any>, onOpen: () -> Unit) {
     CardBlock {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -393,12 +419,15 @@ private fun RouteRuleCard(text: UiText, rule: RouteRule, profileName: String, on
                 .fillMaxWidth()
                 .clickable(onClick = onOpen),
         ) {
-            Column(Modifier.weight(1f)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(rule.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Text(matcherSummary(rule), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("→ $profileName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(rule.matchers.joinToString(" • ").ifBlank { text.none }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    StatusChip(if (rule.enabled) text.on else text.off)
+                    if (warnings.isNotEmpty()) StatusChip(text.warning)
+                }
             }
-            StatusChip(if (rule.enabled) text.on else text.off)
         }
     }
 }
@@ -410,100 +439,281 @@ private fun RouteDetailsScreen(
     rule: RouteRule,
     config: RoutingConfig,
     installedApps: List<InstalledAppUi>,
+    isNew: Boolean,
     onBack: () -> Unit,
     onConfig: (RoutingConfig, String?) -> Unit,
 ) {
     var name by rememberSaveable(rule.id) { mutableStateOf(rule.name) }
     var enabled by rememberSaveable(rule.id) { mutableStateOf(rule.enabled) }
+    var matcherKind by rememberSaveable(rule.id) { mutableStateOf(rule.type.toMatcherKind()) }
     var targetProfileId by rememberSaveable(rule.id) { mutableStateOf(rule.targetProfileId) }
-    var appPackage by rememberSaveable(rule.id) { mutableStateOf(rule.appMatchers.firstOrNull()?.value.orEmpty()) }
-    val dnsPolicy = rule.dnsPolicyId?.let { id -> config.dnsPolicies.firstOrNull { it.id == id } }
-    val availableProfiles = config.profiles.filter { !it.mockOnly && it.enabled }
+    var selectedAppPackage by rememberSaveable(rule.id) { mutableStateOf(rule.appMatchers.firstOrNull()?.value.orEmpty()) }
+    var matcherText by rememberSaveable(rule.id) { mutableStateOf(rule.matchers.firstOrNull().orEmpty()) }
+    var appSearch by rememberSaveable { mutableStateOf("") }
+    var saveErrors by rememberSaveable(rule.id) { mutableStateOf<List<String>>(emptyList()) }
+    val availableProfiles = config.profiles.filter { profile ->
+        profile.type == TunnelType.Direct || profile.type == TunnelType.Block || !profile.mockOnly
+    }
+    val targetProfile = config.profiles.firstOrNull { it.id == targetProfileId }
+    val filteredApps = remember(installedApps, appSearch) {
+        val query = appSearch.trim().lowercase(Locale.ROOT)
+        installedApps.filter { app ->
+            query.isBlank() || app.label.lowercase(Locale.ROOT).contains(query) || app.packageName.lowercase(Locale.ROOT).contains(query)
+        }.take(30)
+    }
+    val selectedApp = installedApps.firstOrNull { it.packageName == selectedAppPackage }
+    val draft = remember(name, enabled, matcherKind, targetProfileId, selectedAppPackage, matcherText, selectedApp, rule) {
+        rule.copy(
+            name = name.trim().ifBlank { rule.name },
+            enabled = enabled,
+            type = matcherKind.toRuleType(),
+            targetProfileId = targetProfileId,
+            matchers = when (matcherKind) {
+                RouteMatcherKind.App -> emptyList()
+                RouteMatcherKind.Domain -> listOf(matcherText.trim().trimEnd('.').lowercase(Locale.ROOT)).filter { it.isNotBlank() }
+                RouteMatcherKind.Cidr -> listOf(matcherText.trim()).filter { it.isNotBlank() }
+            },
+            appMatchers = if (matcherKind == RouteMatcherKind.App && selectedAppPackage.isNotBlank()) {
+                listOf(AppMatcher(AppMatcherPlatform.Android, selectedAppPackage, selectedApp?.label ?: selectedAppPackage))
+            } else {
+                emptyList()
+            },
+            reason = routeReason(matcherKind),
+            technicalDetails = routeTechnicalDetails(matcherKind),
+            recommendedAction = routeRecommendedAction(targetProfileId),
+        )
+    }
+    val liveConflicts = remember(draft, config.rules) { findConflictsForCandidate(draft, config.rules) }
+    val targetWarning = unavailableTargetWarning(config, draft)
 
     ScreenList(padding) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(onClick = onBack) { Text(text.back) }
-                Header(text.routeDetails, text.routeDetailsSubtitle)
+                Header(if (isNew) text.addRoute else text.routeDetails, text.routeDetailsSubtitle)
             }
         }
         item {
             CardBlock {
-                OutlinedTextField(name, { name = it }, label = { Text(text.name) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(name, { name = it }, label = { Text(text.routeName) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Text(text.matcherType, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                ChipRow {
+                    FilterChip(selected = matcherKind == RouteMatcherKind.App, onClick = { matcherKind = RouteMatcherKind.App }, label = { Text(text.matcherApp) })
+                    FilterChip(selected = matcherKind == RouteMatcherKind.Domain, onClick = { matcherKind = RouteMatcherKind.Domain }, label = { Text(text.matcherDomain) })
+                    FilterChip(selected = matcherKind == RouteMatcherKind.Cidr, onClick = { matcherKind = RouteMatcherKind.Cidr }, label = { Text(text.matcherCidr) })
+                }
+                RouteMatcherEditor(
+                    text = text,
+                    kind = matcherKind,
+                    installedApps = filteredApps,
+                    selectedAppPackage = selectedAppPackage,
+                    appSearch = appSearch,
+                    matcherText = matcherText,
+                    onAppSearch = { appSearch = it },
+                    onSelectedAppPackage = { selectedAppPackage = it },
+                    onMatcherText = { matcherText = it },
+                )
                 Text(text.targetProfile, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
                 ChipRow {
                     availableProfiles.forEach { profile ->
                         FilterChip(
                             selected = targetProfileId == profile.id,
                             onClick = { targetProfileId = profile.id },
-                            label = { Text(profile.name, maxLines = 1) },
+                            label = { Text(routeTargetName(config, profile.id), maxLines = 1) },
                         )
                     }
                 }
+                if (availableProfiles.isEmpty()) StatusChip(text.systemBlockOnly)
+                targetWarning.forEach { StatusChip(it) }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                     Text(text.enabled, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
-                dnsPolicy?.let { StatusChip("DNS: ${it.name}") }
+                Text("${text.targetProfile}: ${targetProfile?.name ?: targetProfileId}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         item {
             CardBlock {
-                Text(text.installedApps, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
-                if (installedApps.isEmpty()) {
-                    Text(text.noInstalledApps, style = MaterialTheme.typography.bodySmall)
-                } else {
-                    ChipRow {
-                        installedApps.take(8).forEach { app ->
-                            FilterChip(
-                                selected = appPackage == app.packageName,
-                                onClick = { appPackage = app.packageName },
-                                label = { Text(app.label, maxLines = 1) },
-                            )
-                        }
+                Text(text.details, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                RouteDetailLine(text.matcherType, matcherKind.label(text))
+                RouteDetailLine(text.selectedMatcher, matcherSummary(draft))
+                RouteDetailLine(text.targetProfile, routeTargetName(config, targetProfileId))
+                Details(text.advanced, "${text.routeIsolationNote}\n\n${text.runtimeRoutingFuture}\n\n${rule.reason}\n${rule.technicalDetails}\n${rule.recommendedAction}")
+            }
+        }
+        if (liveConflicts.isNotEmpty() || saveErrors.isNotEmpty()) {
+            item {
+                CardBlock {
+                    Text(text.validation, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                    (saveErrors + liveConflicts.map { it.message }).distinct().forEach { error ->
+                        Text("• $error", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     }
-                    Text(appPackage.ifBlank { text.none }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }
-        }
-        item {
-            CardBlock {
-                Text(text.apps, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
-                Text(rule.appMatchers.map { it.displayName ?: it.value }.joinToString(" • ").ifBlank { text.none }, style = MaterialTheme.typography.bodySmall)
-                Text(text.domainsIps, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
-                Text(rule.matchers.joinToString(" • ").ifBlank { text.none }, style = MaterialTheme.typography.bodySmall)
-                Details(text.details, "${rule.reason}\n${rule.technicalDetails}\n${rule.recommendedAction}\n\n${text.routeIsolationNote}")
             }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = {
-                    val selectedApp = installedApps.firstOrNull { it.packageName == appPackage }
-                    onConfig(
-                        config.copy(rules = config.rules.map {
-                            if (it.id == rule.id) {
-                                it.copy(
-                                    name = name.ifBlank { rule.name },
-                                    enabled = enabled,
-                                    targetProfileId = targetProfileId,
-                                    appMatchers = if (appPackage.isNotBlank()) {
-                                        listOf(AppMatcher(AppMatcherPlatform.Android, appPackage, selectedApp?.label ?: appPackage))
-                                    } else {
-                                        it.appMatchers
-                                    },
-                                )
-                            } else {
-                                it
-                            }
-                        }),
-                        text.saved,
-                    )
-                    onBack()
+                    val errors = validateRouteEditorDraft(draft, config.rules)
+                    saveErrors = errors
+                    if (errors.isEmpty()) {
+                        val nextRules = if (isNew) {
+                            config.rules + draft
+                        } else {
+                            config.rules.map { if (it.id == rule.id) draft else it }
+                        }
+                        onConfig(config.copy(rules = nextRules), text.saved)
+                        onBack()
+                    }
                 }) { Text(text.save) }
-                OutlinedButton(onClick = { onConfig(config.copy(rules = config.rules.filterNot { it.id == rule.id }), text.routeDeleted) }) { Text(text.delete) }
+                if (!isNew) {
+                    OutlinedButton(onClick = { onConfig(config.copy(rules = config.rules.filterNot { it.id == rule.id }), text.routeDeleted) }) { Text(text.delete) }
+                }
             }
         }
     }
+}
+
+@Composable
+private fun RouteMatcherEditor(
+    text: UiText,
+    kind: RouteMatcherKind,
+    installedApps: List<InstalledAppUi>,
+    selectedAppPackage: String,
+    appSearch: String,
+    matcherText: String,
+    onAppSearch: (String) -> Unit,
+    onSelectedAppPackage: (String) -> Unit,
+    onMatcherText: (String) -> Unit,
+) {
+    when (kind) {
+        RouteMatcherKind.App -> {
+            OutlinedTextField(
+                value = appSearch,
+                onValueChange = onAppSearch,
+                label = { Text(text.searchApps) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            if (installedApps.isEmpty()) {
+                Text(text.noInstalledApps, style = MaterialTheme.typography.bodySmall)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    installedApps.forEach { app ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth().clickable { onSelectedAppPackage(app.packageName) },
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (selectedAppPackage == app.packageName) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+                            ),
+                        ) {
+                            Column(Modifier.padding(10.dp)) {
+                                Text(app.label, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                                Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        RouteMatcherKind.Domain -> OutlinedTextField(
+            value = matcherText,
+            onValueChange = onMatcherText,
+            label = { Text(text.domainHostInput) },
+            placeholder = { Text("example.org") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            isError = matcherText.isBlank(),
+        )
+        RouteMatcherKind.Cidr -> OutlinedTextField(
+            value = matcherText,
+            onValueChange = onMatcherText,
+            label = { Text(text.ipCidrInput) },
+            placeholder = { Text("192.0.2.0/24") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            isError = matcherText.isNotBlank() && !isValidIpOrCidr(matcherText),
+        )
+    }
+}
+
+@Composable
+private fun RouteDetailLine(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+private fun newRouteDraft(config: RoutingConfig): RouteRule = RouteRule(
+    id = "route_${UUID.randomUUID()}",
+    name = "New route",
+    type = RouteRuleType.APP,
+    targetProfileId = config.defaultProfileId ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID,
+    dnsPolicyId = RoutingConfigDefaults.SYSTEM_DNS_ID,
+    priority = (config.rules.maxOfOrNull { it.priority } ?: 1000) + 10,
+    matchers = emptyList(),
+    appMatchers = emptyList(),
+    reason = routeReason(RouteMatcherKind.App),
+    technicalDetails = routeTechnicalDetails(RouteMatcherKind.App),
+    recommendedAction = routeRecommendedAction(config.defaultProfileId ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID),
+)
+
+private fun RouteRuleType.toMatcherKind(): RouteMatcherKind = when (this) {
+    RouteRuleType.APP, RouteRuleType.APP_GROUP -> RouteMatcherKind.App
+    RouteRuleType.DOMAIN -> RouteMatcherKind.Domain
+    RouteRuleType.CIDR -> RouteMatcherKind.Cidr
+    RouteRuleType.DEFAULT -> RouteMatcherKind.App
+}
+
+private fun RouteMatcherKind.toRuleType(): RouteRuleType = when (this) {
+    RouteMatcherKind.App -> RouteRuleType.APP
+    RouteMatcherKind.Domain -> RouteRuleType.DOMAIN
+    RouteMatcherKind.Cidr -> RouteRuleType.CIDR
+}
+
+private fun RouteMatcherKind.label(text: UiText): String = when (this) {
+    RouteMatcherKind.App -> text.matcherApp
+    RouteMatcherKind.Domain -> text.matcherDomain
+    RouteMatcherKind.Cidr -> text.matcherCidr
+}
+
+private fun matcherSummary(rule: RouteRule): String = when (rule.type) {
+    RouteRuleType.APP, RouteRuleType.APP_GROUP -> rule.appMatchers.joinToString(" • ") { matcher ->
+        matcher.displayName?.let { "$it (${matcher.value})" } ?: matcher.value
+    }.ifBlank { "App matcher not selected" }
+    RouteRuleType.DOMAIN -> rule.matchers.joinToString(" • ").ifBlank { "Domain / host not set" }
+    RouteRuleType.CIDR -> rule.matchers.joinToString(" • ").ifBlank { "IP / CIDR not set" }
+    RouteRuleType.DEFAULT -> "Default System route"
+}
+
+private fun routeTargetName(config: RoutingConfig, profileId: String): String = when (profileId) {
+    RoutingConfigDefaults.SYSTEM_PROFILE_ID -> "System / Система"
+    RoutingConfigDefaults.BLOCK_PROFILE_ID -> "Block / Блокировать"
+    else -> config.profiles.firstOrNull { it.id == profileId }?.name ?: profileId
+}
+
+private fun unavailableTargetWarning(config: RoutingConfig, rule: RouteRule): List<String> {
+    val profile = config.profiles.firstOrNull { it.id == rule.targetProfileId }
+    return when {
+        profile == null -> listOf("Target unavailable: fail closed")
+        !profile.enabled -> listOf("Target disabled: fail closed")
+        profile.mockOnly -> listOf("Target is mock-only")
+        else -> emptyList()
+    }
+}
+
+private fun routeReason(kind: RouteMatcherKind): String = when (kind) {
+    RouteMatcherKind.App -> "Explicit app route selected by the local route editor."
+    RouteMatcherKind.Domain -> "Explicit domain / host route selected by the local route editor."
+    RouteMatcherKind.Cidr -> "Explicit IP / CIDR route selected by the local route editor."
+}
+
+private fun routeTechnicalDetails(kind: RouteMatcherKind): String = "Matcher type: ${kind.name}. Exact duplicate conflicts are validated locally before save. Runtime packet enforcement is still planned."
+
+private fun routeRecommendedAction(targetProfileId: String): String = if (targetProfileId == RoutingConfigDefaults.BLOCK_PROFILE_ID) {
+    "Traffic matching this rule should be blocked when runtime enforcement is implemented."
+} else {
+    "Keep the target profile available; explicit rules are fail-closed and must not silently fall back."
 }
 
 @Composable
@@ -775,7 +985,7 @@ internal class UiText(private val language: AppLanguage) {
     val networkControlSummary = vpnNoTrafficRoutingYet
     val vpnNoHiddenInterception = t("Нет скрытого перехвата", "No hidden interception", "没有隐藏拦截")
     val vpnPacketProcessingLater = t("Интернет должен остаться без изменений.", "Internet should remain unchanged.", "互联网应保持不变。")
-    val vpnLifecycleOnlyDetails = t("0.6.5-alpha по умолчанию создаёт минимальный route-less TUN с адресом 10.250.0.2/32 только для проверки VpnService. В режиме тестового маршрута явно добавляется только 203.0.113.0/24 (TEST-NET-3); runtime default-route enforcement, DNS-серверов, логирования payload, пересылки, прокси и VPN-движков нет.", "0.6.5-alpha creates a minimal route-less TUN with address 10.250.0.2/32 by default only to verify VpnService. Test-route mode explicitly adds only 203.0.113.0/24 (TEST-NET-3); there is no runtime default-route enforcement, DNS servers, payload logging, forwarding, proxying, or VPN engines.", "0.6.5-alpha 默认仅创建地址为 10.250.0.2/32 的最小无路由 TUN 来验证 VpnService。测试路由模式仅显式添加 203.0.113.0/24 (TEST-NET-3)；没有运行时默认路由执行、DNS 服务器、payload 日志、转发、代理或 VPN 引擎。")
+    val vpnLifecycleOnlyDetails = t("0.6.6-alpha по умолчанию создаёт минимальный route-less TUN с адресом 10.250.0.2/32 только для проверки VpnService. В режиме тестового маршрута явно добавляется только 203.0.113.0/24 (TEST-NET-3); runtime default-route enforcement, DNS-серверов, логирования payload, пересылки, прокси и VPN-движков нет.", "0.6.6-alpha creates a minimal route-less TUN with address 10.250.0.2/32 by default only to verify VpnService. Test-route mode explicitly adds only 203.0.113.0/24 (TEST-NET-3); there is no runtime default-route enforcement, DNS servers, payload logging, forwarding, proxying, or VPN engines.", "0.6.6-alpha 默认仅创建地址为 10.250.0.2/32 的最小无路由 TUN 来验证 VpnService。测试路由模式仅显式添加 203.0.113.0/24 (TEST-NET-3)；没有运行时默认路由执行、DNS 服务器、payload 日志、转发、代理或 VPN 引擎。")
     val vpnTestRoutePreview = t("Тестовый маршрут", "Test route preview", "测试路由预览")
     val vpnTestRoute = t("Тестовый маршрут: 203.0.113.0/24", "Test route: 203.0.113.0/24", "测试路由：203.0.113.0/24")
     val vpnPacketsRead = t("Прочитано пакетов", "Packets read", "已读取数据包")
@@ -829,7 +1039,7 @@ internal class UiText(private val language: AppLanguage) {
     val noRoutesConfigured = t("Маршруты не настроены", "No routes configured yet", "尚未配置路由")
     val installedApps = t("Установленные приложения", "Installed apps", "已安装应用")
     val noInstalledApps = t("Список приложений недоступен на этом устройстве.", "Installed app list is not available on this device.", "此设备无法使用已安装应用列表。")
-    val routeIsolationNote = t("Когда контроль сети включён, весь трафик концептуально входит в ViRouteFS. Маршруты эксклюзивны: нет тихого fallback; если выбранный профиль недоступен — Block / fail closed.", "When network control is active, all traffic conceptually enters ViRouteFS. Routes are exclusive: no silent fallback; if the chosen profile is unavailable, behavior is Block / fail closed.", "网络控制激活时，所有流量概念上进入 ViRouteFS。路由是排他的：不静默回退；所选配置不可用时 Block / fail closed。")
+    val routeIsolationNote = t("Это эксклюзивное правило. Если выбранный профиль недоступен, трафик блокируется, а не уходит через другой профиль. Когда контроль сети включён, весь трафик концептуально входит в ViRouteFS.", "This rule is exclusive. If the selected profile is unavailable, traffic must be blocked, not sent through another profile. When network control is active, all traffic conceptually enters ViRouteFS.", "网络控制激活时，所有流量概念上进入 ViRouteFS。路由是排他的：不静默回退；所选配置不可用时 Block / fail closed。")
     val domainIpApp = t("домен/IP/приложение", "domain/IP/app", "域名/IP/应用")
     val matchers = t("условий", "matchers", "匹配项")
     val disable = t("Выкл", "Disable", "禁用")
@@ -844,6 +1054,21 @@ internal class UiText(private val language: AppLanguage) {
     val apps = t("Приложения", "Apps", "应用")
     val domainsIps = t("Домены и IP/CIDR", "Domains and IP/CIDR", "域名和 IP/CIDR")
     val routeDeleted = t("Маршрут удалён.", "Route deleted.", "路由已删除。")
+    val addRoute = t("+ Маршрут", "+ Route", "+ 路由")
+    val routeName = t("Название маршрута", "Route name", "路由名称")
+    val matcherType = t("Тип условия", "Matcher type", "匹配类型")
+    val matcherApp = t("Приложение", "App", "应用")
+    val matcherDomain = t("Домен / host", "Domain / host", "域名 / 主机")
+    val matcherCidr = t("IP / CIDR", "IP / CIDR", "IP / CIDR")
+    val selectedMatcher = t("Выбранное условие", "Selected matcher", "已选匹配项")
+    val searchApps = t("Поиск по названию или package", "Search label or package", "搜索名称或包名")
+    val domainHostInput = t("Домен или host", "Domain or host", "域名或主机")
+    val ipCidrInput = t("IPv4 или CIDR", "IPv4 or CIDR", "IPv4 或 CIDR")
+    val advanced = t("Дополнительно", "Advanced", "高级")
+    val validation = t("Проверка конфликтов", "Conflict validation", "冲突检查")
+    val warning = t("предупреждение", "warning", "警告")
+    val systemBlockOnly = t("Доступны встроенные System и Block; внешних реальных профилей нет.", "Built-in System and Block are available; no real external profiles exist.", "可用内置 System 和 Block；没有真实外部配置。")
+    val runtimeRoutingFuture = t("Runtime enforcement ещё не добавлен: ViRouteFS пока не захватывает default route и не пересылает пакеты через профили.", "Runtime enforcement is still planned: ViRouteFS does not capture the default route or forward packets through profiles yet.", "运行时执行仍在计划中：ViRouteFS 尚未捕获默认路由或通过配置转发数据包。")
     val lookup = t("DNS-запрос", "DNS lookup", "DNS 查询")
     val domain = t("Домен", "Domain", "域名")
     val type = t("Тип", "Type", "类型")
@@ -872,7 +1097,7 @@ internal class UiText(private val language: AppLanguage) {
     val waiting = t("ожидание", "waiting", "等待")
     val limitation = t("Ограничение", "Limitation", "限制")
     val fsLimitShort = t("Пока нет полного анализа трафика; доступны только локальные счётчики при явном включении диагностики.", "No full traffic analysis yet; only local counters are available when diagnostics are explicitly enabled.", "尚无完整流量分析；仅在明确启用诊断时可用本地计数器。")
-    val fsLimitDetails = t("FS 0.6.5 показывает локальные счётчики только при явном включении developer diagnostics. Это не полный packet capture: нет runtime default-route enforcement, DNS в VPN, payload logging, извлечения доменов, forwarding/proxying или облачной загрузки.", "FS 0.6.5 shows local counters only when developer diagnostics are explicitly enabled. This is not full packet capture: there is no runtime default-route enforcement, VPN DNS, payload logging, domain extraction, forwarding/proxying, or cloud upload.", "FS 0.6.5 仅在明确启用开发者诊断时显示本地计数。这不是完整抓包：没有运行时默认路由执行、VPN DNS、负载日志、域名提取、转发/代理或云上传。")
+    val fsLimitDetails = t("FS 0.6.6 показывает локальные счётчики только при явном включении developer diagnostics. Это не полный packet capture: нет runtime default-route enforcement, DNS в VPN, payload logging, извлечения доменов, forwarding/proxying или облачной загрузки.", "FS 0.6.6 shows local counters only when developer diagnostics are explicitly enabled. This is not full packet capture: there is no runtime default-route enforcement, VPN DNS, payload logging, domain extraction, forwarding/proxying, or cloud upload.", "FS 0.6.6 仅在明确启用开发者诊断时显示本地计数。这不是完整抓包：没有运行时默认路由执行、VPN DNS、负载日志、域名提取、转发/代理或云上传。")
     val flowScannerTitle = "Flow Scanner"
     val flowScannerSubtitle = t("кто куда подключается и почему", "who connects where and why", "谁连接到哪里以及原因")
     val flowAppFilter = t("Приложения", "Apps", "应用")
@@ -979,9 +1204,9 @@ Packets are dropped after counting""",
     val projectGoalsShort = t("Сети, маршруты, DNS, Flow Scanner, диагностика и безопасные локальные аудиты.", "Networks, routes, DNS, Flow Scanner, diagnostics, and safe local audits.", "网络、路由、DNS、Flow Scanner、诊断和安全本地审计。")
     val projectGoalsDetails = t("Один VpnService, внутренние политики маршрутизации, Xray/OpenVPN позже, DNS/TCP/TLS/HTTP/UDP/MTU диагностика, понятные логи и локальный PCAP export по явному действию пользователя.", "A single VpnService, internal routing policies, Xray/OpenVPN later, DNS/TCP/TLS/HTTP/UDP/MTU diagnostics, readable logs, and local PCAP export only by explicit user action.", "单个 VpnService、内部路由策略、未来 Xray/OpenVPN、DNS/TCP/TLS/HTTP/UDP/MTU 诊断、可读日志，以及仅用户明确操作的本地 PCAP 导出。")
     val beginnerMode = t("Для самых маленьких", "For beginners", "初学者")
-    val beginnerHelp = t("Когда контроль сети включён, трафик проходит через ViRouteFS. Если для приложения нет правила, оно идёт через Система. Сети: куда может идти трафик. Маршруты: правила выбора. DNS: как планировать имена.", "When network control is on, traffic goes through ViRouteFS. Apps without rules use System. Networks show where traffic may go; Routes choose rules; DNS plans name handling.", "网络控制开启时，流量通过 ViRouteFS。没有规则的应用使用 System。网络显示流量可去向；路由选择规则；DNS 规划名称处理。")
+    val beginnerHelp = t("Маршруты — это правила вида: это приложение, домен или IP идёт через этот маршрут. System / Система — обычный системный путь Android внутри модели ViRouteFS для приложений без явного правила. Block / Блокировать означает: совпавший трафик должен быть закрыт.", "Routes are rules like: this app, domain, or IP goes through this route. System is the normal Android system path inside the ViRouteFS model for apps without an explicit rule. Block means matching traffic should be denied.", "网络控制开启时，流量通过 ViRouteFS。没有规则的应用使用 System。网络显示流量可去向；路由选择规则；DNS 规划名称处理。")
     val adminMode = t("Для админов", "For admins", "管理员")
-    val adminHelp = t("Модель: контроль сети ON → весь трафик через ViRouteFS; unmatched → System; matched → только выбранный профиль; unavailable → Block / fail closed. Сейчас VpnService/TUN skeleton без runtime default-route enforcement, DNS в builder, payload logging или forwarding/proxying.", "Model: network control ON → all traffic through ViRouteFS; unmatched → System; matched → selected profile only; unavailable → Block / fail closed. Current VpnService/TUN skeleton has no runtime default-route enforcement, builder DNS, payload logging, or forwarding/proxying.", "模型：网络控制 ON → 所有流量通过 ViRouteFS；未匹配 → System；已匹配 → 仅所选配置；不可用 → Block / fail closed。当前 VpnService/TUN 骨架没有运行时默认路由执行、builder DNS、payload 日志或转发/代理。")
+    val adminHelp = t("Модель: app/domain/IP/CIDR matchers; точные дубликаты блокируются перед сохранением; unmatched → System; matched → только выбранный профиль; unavailable → Block / fail closed. Runtime enforcement ещё планируется: нет default-route capture, DNS в builder, payload logging или forwarding/proxying.", "Model: app/domain/IP/CIDR matchers; exact duplicates are blocked before save; unmatched → System; matched → selected profile only; unavailable → Block / fail closed. Runtime enforcement is still planned: no default-route capture, builder DNS, payload logging, or forwarding/proxying.", "模型：app/domain/IP/CIDR 匹配；保存前阻止精确重复；未匹配 → System；已匹配 → 仅所选配置；不可用 → Block / fail closed。运行时执行仍在计划中：没有默认路由捕获、builder DNS、payload 日志或转发/代理。")
     val developerDiagnostics = t("Developer diagnostics", "Developer diagnostics", "开发者诊断")
     val developerDiagnosticsWarning = t("Не обычная функция пользователя. Используется для внутренней проверки безопасного TEST-NET маршрута.", "Not a normal user feature. Used for internal validation of the safe TEST-NET route.", "不是普通用户功能。用于安全 TEST-NET 路由的内部验证。")
     val supportProject = t("Поддержать проект", "Support project", "支持项目")

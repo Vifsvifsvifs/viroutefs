@@ -68,6 +68,16 @@ Focus: ship a stable defensive routing and diagnostics app for normal users.
 
 ## 0.6.5-alpha routing defaults and icon
 
+## 0.6.6-alpha route editor and conflict validation
+
+- Route creation/editing becomes an admin-style flow: route name, matcher type, matcher value, target profile, and enabled state.
+- Matchers supported in the local editor: installed Android app, domain/host, and IPv4/IP-CIDR.
+- App selection uses installed applications from PackageManager with label/package display and search filtering.
+- Target route list uses actual profiles only: System / Система, Block / Блокировать, and user-created real profiles. Mock tunnels, fake categories, and TEST-NET developer routes are not normal targets.
+- Exact duplicate conflict validation blocks saving duplicate app, duplicate domain/host, and exact duplicate IP/CIDR rules. Default System route is not a conflict. Broad CIDR overlap detection remains TODO.
+- System remains the internal route for apps without explicit rules. Block remains fail-closed behavior. Explicit rules remain exclusive and must never silently fall back to another profile.
+- Runtime enforcement remains future work. Full "no kilobyte bypass" enforcement requires default-route capture plus a safe forwarding/routing engine in a later milestone. 0.6.6-alpha does not add default-route enforcement, VPN builder DNS servers, packet payload logging, forwarding/proxying, or tunnel engines.
+
 - System / Система is the built-in internal default route for apps without explicit rules when network control is active; it is not bypass.
 - The old Direct wording is removed from normal UI as a duplicate of System. Legacy `direct` ids/types may remain only for saved-config compatibility.
 - DNS defaults to Android system DNS unless the user explicitly configures DNS; missing DNS is not silently replaced by public resolvers.

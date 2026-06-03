@@ -315,10 +315,11 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
         rule.dnsPolicyId?.takeIf { it !in dnsPolicyIds }?.let { add("Правило ${rule.name}: DNS-политика $it не найдена.") }
         if (rule.type == RouteRuleType.CIDR) {
             rule.matchers
-                .filterNot { isValidCidr(it) }
-                .forEach { add("Правило ${rule.name}: некорректный CIDR $it.") }
+                .filterNot { isValidIpOrCidr(it) }
+                .forEach { add("Правило ${rule.name}: некорректный IP/CIDR $it.") }
         }
     }
+    findExactRouteConflicts(config.rules).forEach { add(it.message) }
     if (config.rules.count { it.enabled && it.type == RouteRuleType.DEFAULT } != 1) {
         add("Должно быть активно ровно одно правило DEFAULT.")
     }

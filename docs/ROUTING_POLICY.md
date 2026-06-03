@@ -48,10 +48,18 @@ Example: if `MAX` is assigned to `System / Система` or to a future `Russi
 - User-defined DNS applies only where explicitly configured.
 - If user-defined DNS is unavailable, the route/profile should show an error or fail-safe state; ViRouteFS must not silently swap to another resolver.
 
-## Current 0.6.5-alpha behavior
+## Current 0.6.6-alpha behavior
 
 - Normal UI exposes only real built-in profiles: `System / Система` and `Block`.
 - User-facing route and DNS targets come from actual available profiles.
 - Fake tunnels, fake categories, and TEST-NET route controls are not normal user features.
 - The internal TEST-NET route remains developer/testing-only documentation for the safe TUN skeleton.
-- No runtime VPN/TUN routing behavior changes are introduced by the routing wording and icon update.
+- 0.6.6-alpha adds a route editor for app, domain/host, and IP/CIDR matchers.
+- App rules use installed-app selection from Android PackageManager instead of requiring normal users to type package names.
+- Route targets in the editor are built from actual profiles only: built-in System / Система, built-in Block / Блокировать, and user-created real profiles. Mock/developer profiles and TEST-NET entries are not normal route targets.
+- Exact duplicate conflict validation blocks save for duplicate app matchers, duplicate domain/host matchers, and exact duplicate IP/CIDR matchers. Broad CIDR overlap analysis is TODO for a later routing-engine milestone.
+- No runtime VPN/TUN routing behavior changes are introduced by 0.6.6-alpha route editor work.
+
+## Runtime enforcement still future
+
+Full "no kilobyte bypass" enforcement requires a later milestone with safe default-route capture and a forwarding engine that can apply System, Block, and explicit profile routing without leaking payload data or silently falling back. 0.6.6-alpha intentionally does **not** add `addRoute("0.0.0.0", 0)`, VPN builder DNS servers, packet payload logging, forwarding/proxying, cloud upload, or tunnel runtime enforcement.
