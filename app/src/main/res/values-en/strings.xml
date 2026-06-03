@@ -168,7 +168,7 @@
     <string name="tools_result_not_run">This check has not run yet. Fill in the fields and press the check button.</string>
     <string name="settings_version_title">App version</string>
     <string name="settings_version_simple">ViRouteFS version %1$s is installed.</string>
-    <string name="settings_version_details">versionCode: %1$d. Milestone: 0.6.5-alpha — System route wording, safe route-less TUN preview, and no runtime default-route enforcement, VPN builder DNS, payload logging, forwarding, or proxying.</string>
+    <string name="settings_version_details">versionCode: %1$d. Milestone: 0.6.7-alpha — engine candidate, profile type, and third-party license planning; no runtime engine integration, dependency/native binary additions, default-route enforcement, VPN builder DNS, payload logging, forwarding, or proxying.</string>
     <string name="settings_version_action">Update the app only from a trusted source and review the changelog before installing.</string>
 
 </resources>

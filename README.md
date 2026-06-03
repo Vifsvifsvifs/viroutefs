@@ -17,9 +17,9 @@ ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project 
 - No hidden interception of third-party traffic.
 - No offensive security features.
 
-## Current status: 0.6.5-alpha
+## Current status: 0.6.7-alpha
 
-Version `0.6.5-alpha` refines the System route model, DNS default wording, and black/red app icon direction without changing runtime VPN/TUN routing behavior. Home content remains in Settings → Help, and the main VPN concept remains Networks / Сети.
+Version `0.6.7-alpha` adds engine candidate, profile type, and third-party license planning documentation without changing runtime VPN/TUN routing behavior. Home content remains in Settings → Help, and the main VPN concept remains Networks / Сети.
 
 What exists now:
 
@@ -43,6 +43,10 @@ What is intentionally not implemented yet:
 - No Play Store or F-Droid release is claimed yet.
 
 See [`docs/TUN_SKELETON.md`](docs/TUN_SKELETON.md) for the safe Android TUN preview, [`docs/FLOW_SCANNER.md`](docs/FLOW_SCANNER.md) for Flow Scanner behavior, [`docs/ROUTING_POLICY.md`](docs/ROUTING_POLICY.md) for strict route isolation, and [`docs/UI_DIRECTION.md`](docs/UI_DIRECTION.md) for navigation/icon direction.
+
+## Engine roadmap and licenses
+
+Future engines and profile types are planned before integration. See [`docs/ENGINE_CANDIDATES.md`](docs/ENGINE_CANDIDATES.md), [`docs/THIRD_PARTY_LICENSES.md`](docs/THIRD_PARTY_LICENSES.md), and [`docs/PROFILE_TYPES.md`](docs/PROFILE_TYPES.md). No external VPN/proxy/DPI engine binaries are bundled yet.
 
 ## Screenshots
 
@@ -76,9 +80,9 @@ The Route Simulator and Route Diagnostics route selection use the saved local ro
 
 The public roadmap is maintained in [`ROADMAP.md`](ROADMAP.md). In short:
 
-- `0.6.x`: navigation cleanup, Networks naming, System-route wording, aggressive black/red icon direction, safe developer-only TUN test route, Flow Scanner local counters, release polish.
-- `0.7.x`: controlled System/Block route experiments without runtime full-device enforcement.
-- `0.8.x`: first external outbound experiment, likely SOCKS5, with route decision explanation.
+- `0.6.x`: navigation cleanup, Networks naming, route editor work, engine candidate/license planning, profile type documentation, release polish.
+- `0.7.x`: first real outbound experiment, likely SOCKS5, while preserving no-payload-logging and fail-closed policy.
+- `0.8.x`: expanded outbound experiments with route decision explanation.
 - `0.9.x`: import preparation for WireGuard, Xray, and Hysteria2 configs.
 - `1.0`: stable local-first routing profiles, DNS policy, Flow Scanner explanations, and privacy-safe export/reporting.
 
