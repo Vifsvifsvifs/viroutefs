@@ -15,6 +15,13 @@ ViRouteFS supports optional stable alpha signing through GitHub Secrets:
 
 After the project switches from random debug signing to stable alpha signing, users who installed an older randomly signed APK must uninstall it once. After installing the first APK signed with the stable alpha key, future APKs signed with the same key should update over it.
 
+
+## Published alpha updates
+
+Published alpha APKs are now distributed through GitHub Releases. Because those APKs use the stable alpha signing model when CI secrets are configured, updates should install over previous alpha builds that use the same `applicationId` and signing key.
+
+If a user installed an older randomly-signed debug APK, Android may reject an update from the stable alpha-signed release APK. In that case, the user may need to uninstall the older debug APK once, then install the GitHub Releases APK and continue updating from Releases afterward.
+
 ## Generate an alpha keystore
 
 Run this locally and keep the output private:
