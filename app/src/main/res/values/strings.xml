@@ -32,7 +32,7 @@
     <string name="dashboard_privacy_action">Проверьте настройки перед включением будущего захвата или экспорта данных.</string>
 
     <string name="vpn_header_subtitle">Заготовка управления для будущего маршрутизатора на одном VpnService.</string>
-    <string name="vpn_service_title">ViRouteFsVpnService</string>
+    <string name="vpn_service_title">ViRouteVpnService</string>
     <string name="vpn_service_simple">В следующем этапе приложение сможет запрашивать разрешение Android VPN.</string>
     <string name="vpn_service_details">Сервис объявлен с android.permission.BIND_VPN_SERVICE и сейчас не выполняет маршрутизацию.</string>
     <string name="vpn_service_action">Не используйте эту сборку для реального туннелирования трафика.</string>
@@ -168,7 +168,7 @@
     <string name="tools_result_not_run">Проверка ещё не запускалась. Заполните поля и нажмите кнопку проверки.</string>
     <string name="settings_version_title">Версия приложения</string>
     <string name="settings_version_simple">Установлена версия ViRouteFS %1$s.</string>
-    <string name="settings_version_details">versionCode: %1$d. Веха: 0.4-alpha — редактируемая локальная конфигурация маршрутов и DNS-политик.</string>
+    <string name="settings_version_details">versionCode: %1$d. Веха: 0.5.0-alpha — безопасный каркас Android VpnService без маршрутизации и захвата пакетов.</string>
     <string name="settings_version_action">Обновляйте приложение только из доверенного источника и проверяйте список изменений перед установкой.</string>
 
 </resources>
