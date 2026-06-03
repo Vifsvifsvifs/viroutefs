@@ -10,11 +10,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag, for example v0.6.9-alpha'
+        description: 'Release tag, for example v0.6.11-alpha'
         required: true
         type: string
       release_name:
-        description: 'Release title, for example ViRouteFS 0.6.9-alpha'
+        description: 'Release title, for example ViRouteFS 0.6.11-alpha'
         required: true
         type: string
       prerelease:
@@ -169,15 +169,22 @@ jobs:
 
           versionCode ${VERSION_CODE}
 
-          This alpha APK is published through GitHub Releases as the user-facing download channel.
+          This alpha APK is published through GitHub Releases as the official alpha APK channel.
 
-          Highlights:
-          - GitHub Releases APK distribution.
-          - Manual in-app update checking aligned with published GitHub Releases.
-          - Minimalist black/red launcher icon refresh with adaptive, round, themed, and legacy-compatible resources.
+          Highlights for 0.6.11-alpha:
+          - Launcher icon consistency fix so adaptive, round, monochrome/themed, and legacy fallback resources use the same minimalist red V with LAN motif.
+          - Settings Help is collapsed by default so long beginner/admin explanations stay behind expanders.
 
-          Notes:
-          - Manual update checks only; the app does not auto-download or auto-install APKs.
+          Alpha update behavior:
+          - The app supports manual update checking from Settings.
+          - APK download starts only after the user taps Download APK.
+          - Install update opens Android's system package installer.
+          - No background checks.
+          - No auto-download.
+          - No silent install.
+          - Android / Play Protect may show sideload warnings outside Google Play; ViRouteFS cannot suppress system install warnings.
+
+          Safety notes:
           - No runtime VPN engine, packet forwarding, default route, telemetry, analytics, ads, tracking, or cloud upload is added by this release path.
           - If you installed an older randomly-signed debug APK, Android may require one uninstall before installing stable alpha-signed builds.
           EOF
