@@ -49,6 +49,8 @@ class RoutingConfigRepository(
         put("profiles", JSONArray(config.profiles.map { it.toJson() }))
         put("dnsPolicies", JSONArray(config.dnsPolicies.map { it.toJson() }))
         put("rules", JSONArray(config.rules.map { it.toJson() }))
+        put("defaultProfileId", config.defaultProfileId)
+        put("hostOverrides", JSONArray(config.hostOverrides.map { it.toJson() }))
     }.toString(2)
 
     private fun decodeConfig(json: String): RoutingConfig {
@@ -58,6 +60,8 @@ class RoutingConfigRepository(
             profiles = root.getJSONArray("profiles").mapObjects { it.toTunnelProfile() },
             dnsPolicies = root.getJSONArray("dnsPolicies").mapObjects { it.toDnsPolicy() },
             rules = root.getJSONArray("rules").mapObjects { it.toRouteRule() },
+            defaultProfileId = root.optNullableString("defaultProfileId"),
+            hostOverrides = root.optJSONArray("hostOverrides")?.mapObjects { it.toDnsHostOverride() }.orEmpty(),
         )
     }
 
@@ -69,16 +73,37 @@ class RoutingConfigRepository(
         put("enabled", enabled)
         put("mockOnly", mockOnly)
         put("platformNotes", platformNotes)
+        put("dnsPolicyId", dnsPolicyId)
     }
 
-    private fun JSONObject.toTunnelProfile(): TunnelProfile = TunnelProfile(
+    private fun JSONObject.toTunnelProfile(): TunnelProfile {
+        val type = optEnum("type", TunnelType.Direct)
+        return TunnelProfile(
+            id = getString("id"),
+            name = getString("name"),
+            type = type,
+            description = optString("description"),
+            enabled = optBoolean("enabled", true),
+            mockOnly = optBoolean("mockOnly", type.isMockOnly),
+            platformNotes = optNullableString("platformNotes"),
+            dnsPolicyId = optNullableString("dnsPolicyId"),
+        )
+    }
+
+    private fun DnsHostOverride.toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("hostname", hostname)
+        put("ipAddress", ipAddress)
+        put("enabled", enabled)
+        put("note", note)
+    }
+
+    private fun JSONObject.toDnsHostOverride(): DnsHostOverride = DnsHostOverride(
         id = getString("id"),
-        name = getString("name"),
-        type = enumValueOf(optString("type", TunnelType.Direct.name)),
-        description = optString("description"),
+        hostname = getString("hostname"),
+        ipAddress = getString("ipAddress"),
         enabled = optBoolean("enabled", true),
-        mockOnly = optBoolean("mockOnly", enumValueOf<TunnelType>(optString("type", TunnelType.Direct.name)).isMockOnly),
-        platformNotes = optNullableString("platformNotes"),
+        note = optNullableString("note"),
     )
 
     private fun DnsPolicy.toJson(): JSONObject = JSONObject().apply {
@@ -94,7 +119,7 @@ class RoutingConfigRepository(
     private fun JSONObject.toDnsPolicy(): DnsPolicy = DnsPolicy(
         id = getString("id"),
         name = getString("name"),
-        type = enumValueOf(optString("type", DnsPolicyType.System.name)),
+        type = optEnum("type", DnsPolicyType.System),
         serverText = optNullableString("serverText"),
         resolveThroughProfileId = optNullableString("resolveThroughProfileId"),
         description = optString("description"),
@@ -119,7 +144,7 @@ class RoutingConfigRepository(
     private fun JSONObject.toRouteRule(): RouteRule = RouteRule(
         id = getString("id"),
         name = getString("name"),
-        type = enumValueOf(optString("type", RouteRuleType.DOMAIN.name)),
+        type = optEnum("type", RouteRuleType.DOMAIN),
         targetProfileId = optString("targetProfileId", optString("targetTunnelId")),
         dnsPolicyId = optNullableString("dnsPolicyId"),
         priority = optInt("priority", 1000),
@@ -148,6 +173,9 @@ class RoutingConfigRepository(
     private fun <T> JSONArray.mapObjects(transform: (JSONObject) -> T): List<T> = (0 until length()).map { index ->
         transform(getJSONObject(index))
     }
+
+    private inline fun <reified T : Enum<T>> JSONObject.optEnum(key: String, fallback: T): T =
+        enumValues<T>().firstOrNull { it.name == optString(key) } ?: fallback
 
     private fun JSONObject.optNullableString(key: String): String? = if (has(key) && !isNull(key)) optString(key).takeIf { it.isNotBlank() } else null
 }

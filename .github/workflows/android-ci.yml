@@ -38,11 +38,11 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Rename debug APK artifact
-        run: cp app/build/outputs/apk/debug/app-debug.apk ViRouteFS-debug-0.4.0-alpha.apk
+        run: cp app/build/outputs/apk/debug/ViRouteFS-debug-0.4.1-alpha.apk ViRouteFS-debug-0.4.1-alpha.apk
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: ViRouteFS-debug-0.4.0-alpha
-          path: ViRouteFS-debug-0.4.0-alpha.apk
+          name: ViRouteFS-debug-0.4.1-alpha
+          path: ViRouteFS-debug-0.4.1-alpha.apk
           if-no-files-found: error
