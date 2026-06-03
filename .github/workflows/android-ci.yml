@@ -11,6 +11,9 @@ on:
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     name: Build debug APK
@@ -40,23 +43,38 @@ jobs:
       - name: Prepare debug APK artifact
         run: |
           set -euo pipefail
-          EXPECTED_APK="app/build/outputs/apk/debug/ViRouteFS-debug-0.4.1-alpha.apk"
-          FALLBACK_APK="app/build/outputs/apk/debug/app-debug.apk"
-          ARTIFACT_APK="ViRouteFS-debug-0.4.1-alpha.apk"
 
-          if [ -f "$EXPECTED_APK" ]; then
-            cp "$EXPECTED_APK" "$ARTIFACT_APK"
-          elif [ -f "$FALLBACK_APK" ]; then
-            cp "$FALLBACK_APK" "$ARTIFACT_APK"
-          else
-            echo "No debug APK found. Expected $EXPECTED_APK or fallback $FALLBACK_APK." >&2
-            find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print >&2 || true
+          VERSION_NAME="$(awk -F'"' '/^[[:space:]]*versionName[[:space:]]*=/ { print $2; exit }' app/build.gradle.kts)"
+          if [ -z "$VERSION_NAME" ]; then
+            echo "Unable to detect versionName from app/build.gradle.kts." >&2
             exit 1
           fi
+
+          mapfile -t DEBUG_APKS < <(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' | sort)
+          if [ "${#DEBUG_APKS[@]}" -eq 0 ]; then
+            echo "No debug APK found under app/build/outputs/apk/debug/*.apk." >&2
+            echo "Debug APK output directory contents:" >&2
+            find app/build/outputs/apk/debug -maxdepth 2 -print >&2 || true
+            exit 1
+          fi
+
+          SELECTED_APK="${DEBUG_APKS[0]}"
+          ARTIFACT_NAME="ViRouteFS-debug-${VERSION_NAME}"
+          ARTIFACT_APK="${ARTIFACT_NAME}.apk"
+
+          echo "Detected VERSION_NAME: ${VERSION_NAME}"
+          echo "Selected APK path: ${SELECTED_APK}"
+          echo "Final artifact filename: ${ARTIFACT_APK}"
+
+          cp "$SELECTED_APK" "$ARTIFACT_APK"
+          {
+            echo "ARTIFACT_NAME=${ARTIFACT_NAME}"
+            echo "ARTIFACT_APK=${ARTIFACT_APK}"
+          } >> "$GITHUB_ENV"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: ViRouteFS-debug-0.4.1-alpha
-          path: ViRouteFS-debug-0.4.1-alpha.apk
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.ARTIFACT_APK }}
           if-no-files-found: error
