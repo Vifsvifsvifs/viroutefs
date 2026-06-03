@@ -70,3 +70,17 @@ Scenario buttons reset/apply predefined local configs:
 - Безопасный дефолт.
 
 Each scenario explains what it changes before the user applies it.
+
+## 0.4.1-alpha compact Routes model
+
+Routes are presented to users as assignments from matchers to connection profiles:
+
+- apps;
+- sites/domains;
+- IP/CIDR.
+
+The UI groups matchers by profile instead of showing every raw rule in one technical list. Advanced fields such as priority, reason, technical details and recommended action are still part of the local model, but the compact editor fills sensible defaults for user-added rules.
+
+The configuration now also carries a default/main profile id and optional per-profile DNS policy links. Existing exported JSON keeps compatibility through defaults for missing fields.
+
+Real VPN routing is not implemented in 0.4.1-alpha; route decisions remain simulation/configuration behavior.

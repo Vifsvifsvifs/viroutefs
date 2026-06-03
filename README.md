@@ -94,3 +94,15 @@ If you generate the Gradle wrapper locally, you can also use:
 - Routing configuration is local app-private JSON unless the user explicitly copies it.
 - Keep logs and future PCAP exports local unless the user explicitly exports them.
 - Prefer small, compiling pull requests with clear commit messages.
+
+## 0.4.1-alpha compact UI concept
+
+ViRouteFS 0.4.1-alpha reorganizes the Android UI into a compact, friendly product structure:
+
+- **VPN** manages added connection profiles and a global demonstration switch. Adding profiles supports UI placeholders for QR code, clipboard, file import and manual creation.
+- **Routes / Маршруты** answers “Что через какое подключение ходит?” by grouping app, site/domain and IP/CIDR matchers under connection profile cards.
+- **DNS** contains DNS lookup, app DNS check concept, hosts-like local overrides and DNS per connection.
+- **FS** is **Flow Scanner**, a friendly flow-event explanation module. It is demo-only until explicit local VPN observation is implemented.
+- **Settings / Настройки** contains language, theme and support-project sections.
+
+The release remains local-first: no telemetry, analytics, ads, tracking SDKs, cloud log upload, hidden interception, root features, real VPN routing or real packet capture are added.

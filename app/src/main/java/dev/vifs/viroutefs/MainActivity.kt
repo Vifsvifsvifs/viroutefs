@@ -1,12 +1,9 @@
 package dev.vifs.viroutefs
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.annotation.StringRes
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -19,13 +16,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AltRoute
-import androidx.compose.material.icons.outlined.Article
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Home
@@ -36,45 +32,57 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenu
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import dev.vifs.viroutefs.BuildConfig
 import dev.vifs.viroutefs.diagnostics.DiagnosticResult
-import dev.vifs.viroutefs.diagnostics.DiagnosticStatus
 import dev.vifs.viroutefs.diagnostics.DnsDiagnostic
 import dev.vifs.viroutefs.diagnostics.HttpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TcpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TlsDiagnostic
-import dev.vifs.viroutefs.route.RouteDiagnosticReport
-import dev.vifs.viroutefs.route.RouteDiagnosticRunner
-import dev.vifs.viroutefs.routing.RouteDecision
+import dev.vifs.viroutefs.routing.AppMatcher
+import dev.vifs.viroutefs.routing.AppMatcherPlatform
+import dev.vifs.viroutefs.routing.CURRENT_ROUTING_CONFIG_VERSION
+import dev.vifs.viroutefs.routing.DnsHostOverride
+import dev.vifs.viroutefs.routing.DnsPolicy
+import dev.vifs.viroutefs.routing.DnsPolicyType
+import dev.vifs.viroutefs.routing.MOCK_PROFILE_LIMITATION
 import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.routing.RouteRule
 import dev.vifs.viroutefs.routing.RouteRuleType
+import dev.vifs.viroutefs.routing.RoutingConfig
+import dev.vifs.viroutefs.routing.RoutingConfigDefaults
+import dev.vifs.viroutefs.routing.RoutingConfigRepository
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.ui.theme.ViRouteFsTheme
@@ -85,52 +93,55 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             ViRouteFsTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    ViRouteFsApp()
-                }
+                Surface(modifier = Modifier.fillMaxSize()) { ViRouteFsApp() }
             }
         }
     }
 }
 
-private enum class AppScreen(
-    @StringRes val labelResId: Int,
-    val icon: ImageVector,
-) {
-    Dashboard(R.string.screen_dashboard, Icons.Outlined.Home),
-    Vpn(R.string.screen_vpn, Icons.Outlined.Shield),
-    Routes(R.string.screen_routes, Icons.Outlined.AltRoute),
-    Dns(R.string.screen_dns, Icons.Outlined.Dns),
-    Tools(R.string.screen_tools, Icons.Outlined.Build),
-    Logs(R.string.screen_logs, Icons.Outlined.Article),
-    Settings(R.string.screen_settings, Icons.Outlined.Settings),
+private enum class AppScreen(val label: String, val icon: ImageVector) {
+    Dashboard("Главная", Icons.Outlined.Home),
+    Vpn("VPN", Icons.Outlined.Shield),
+    Routes("Маршруты", Icons.Outlined.AltRoute),
+    Dns("DNS", Icons.Outlined.Dns),
+    Fs("FS", Icons.Outlined.Security),
+    Tools("Инструменты", Icons.Outlined.Build),
+    Settings("Настройки", Icons.Outlined.Settings),
 }
-
-private data class InfoCardContent(
-    val title: String,
-    val simpleExplanation: String,
-    val technicalDetails: String,
-    val recommendedAction: String,
-)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ViRouteFsApp() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val repository = remember(context) { RoutingConfigRepository(context.applicationContext) }
     var selectedScreen by rememberSaveable { mutableStateOf(AppScreen.Dashboard) }
+    var config by remember { mutableStateOf(RoutingConfigDefaults.defaultConfig()) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var loaded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        val result = repository.load()
+        config = result.config
+        message = result.errorMessage
+        loaded = true
+    }
+
+    fun updateConfig(newConfig: RoutingConfig, note: String? = null) {
+        val normalizedConfig = newConfig.copy(version = CURRENT_ROUTING_CONFIG_VERSION)
+        config = normalizedConfig
+        message = note
+        scope.launch { repository.save(normalizedConfig) }
+    }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(text = stringResource(R.string.app_name))
-                        Text(
-                            text = stringResource(R.string.app_tagline),
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-                },
-            )
+            TopAppBar(title = {
+                Column {
+                    Text("ViRouteFS")
+                    Text("Visual Route & Flow Scanner", style = MaterialTheme.typography.labelMedium)
+                }
+            })
         },
         bottomBar = {
             NavigationBar {
@@ -139,952 +150,325 @@ private fun ViRouteFsApp() {
                         selected = selectedScreen == screen,
                         onClick = { selectedScreen = screen },
                         icon = { Icon(screen.icon, contentDescription = null) },
-                        label = { Text(stringResource(screen.labelResId)) },
+                        label = { Text(screen.label) },
                     )
                 }
             }
         },
-    ) { innerPadding ->
+    ) { padding ->
         when (selectedScreen) {
-            AppScreen.Dashboard -> DashboardScreen(innerPadding)
-            AppScreen.Vpn -> VpnScreen(innerPadding)
-            AppScreen.Routes -> RoutesScreen(innerPadding)
-            AppScreen.Dns -> DnsScreen(innerPadding)
-            AppScreen.Tools -> ToolsScreen(innerPadding)
-            AppScreen.Logs -> LogsScreen(innerPadding)
-            AppScreen.Settings -> SettingsScreen(innerPadding)
+            AppScreen.Dashboard -> DashboardScreen(padding, loaded, message)
+            AppScreen.Vpn -> VpnScreen(padding, config, ::updateConfig)
+            AppScreen.Routes -> RoutesScreen(padding, config, ::updateConfig)
+            AppScreen.Dns -> DnsScreen(padding, config, ::updateConfig)
+            AppScreen.Fs -> FlowScannerScreen(padding)
+            AppScreen.Tools -> ToolsScreen(padding, config)
+            AppScreen.Settings -> SettingsScreen(padding)
         }
     }
 }
 
 @Composable
-private fun DashboardScreen(contentPadding: PaddingValues) {
-    ScreenList(contentPadding = contentPadding) {
-        item {
-            SectionHeader(
-                title = stringResource(R.string.dashboard_header_title),
-                subtitle = stringResource(R.string.dashboard_header_subtitle),
-            )
-        }
-        item {
-            InfoCard(
-                InfoCardContent(
-                    title = stringResource(R.string.dashboard_vpn_status_title),
-                    simpleExplanation = stringResource(R.string.dashboard_vpn_status_simple),
-                    technicalDetails = stringResource(R.string.dashboard_vpn_status_details),
-                    recommendedAction = stringResource(R.string.dashboard_vpn_status_action),
-                ),
-            )
-        }
-        item {
-            InfoCard(
-                InfoCardContent(
-                    title = stringResource(R.string.dashboard_flow_title),
-                    simpleExplanation = stringResource(R.string.dashboard_flow_simple),
-                    technicalDetails = stringResource(R.string.dashboard_flow_details),
-                    recommendedAction = stringResource(R.string.dashboard_flow_action),
-                ),
-            )
-        }
-        item {
-            InfoCard(
-                InfoCardContent(
-                    title = stringResource(R.string.dashboard_privacy_title),
-                    simpleExplanation = stringResource(R.string.dashboard_privacy_simple),
-                    technicalDetails = stringResource(R.string.dashboard_privacy_details),
-                    recommendedAction = stringResource(R.string.dashboard_privacy_action),
-                ),
-            )
-        }
-    }
+private fun DashboardScreen(padding: PaddingValues, loaded: Boolean, message: String?) = ScreenList(padding) {
+    item { Header("Главная", "Компактная карта: VPN → Маршруты → DNS → FS.") }
+    item { CompactCard("0.4.1-alpha", "Профили подключений настраиваются отдельно от правил маршрутизации.", "versionCode 5 • локальная конфигурация • без телеметрии") }
+    item { CompactCard("Приватность", "Все проверки запускаются пользователем. Скрытого перехвата, облачной отправки логов и аналитики нет.", "Будущие PCAP/логи остаются локально до явного экспорта.") }
+    item { CompactCard("Статус конфигурации", if (loaded) "Локальная конфигурация загружена." else "Загрузка…", message ?: "Готово.") }
 }
 
 @Composable
-private fun VpnScreen(contentPadding: PaddingValues) {
-    ScreenList(contentPadding = contentPadding) {
-        item {
-            SectionHeader(
-                title = stringResource(R.string.screen_vpn),
-                subtitle = stringResource(R.string.vpn_header_subtitle),
-            )
-        }
-        item {
-            InfoCard(
-                InfoCardContent(
-                    title = stringResource(R.string.vpn_service_title),
-                    simpleExplanation = stringResource(R.string.vpn_service_simple),
-                    technicalDetails = stringResource(R.string.vpn_service_details),
-                    recommendedAction = stringResource(R.string.vpn_service_action),
-                ),
-            )
-        }
-        item {
-            PlaceholderCard(
-                title = stringResource(R.string.vpn_future_rules_title),
-                body = stringResource(R.string.vpn_future_rules_body),
-            )
+private fun VpnScreen(padding: PaddingValues, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
+    var vpnEnabled by rememberSaveable { mutableStateOf(false) }
+    var showAdd by rememberSaveable { mutableStateOf(false) }
+    var name by rememberSaveable { mutableStateOf("") }
+    var desc by rememberSaveable { mutableStateOf("") }
+    var type by rememberSaveable { mutableStateOf(TunnelType.WireGuard) }
+
+    ScreenList(padding) {
+    item { Header("VPN", "Профили подключений и общий демонстрационный переключатель.") }
+    item {
+        CardBlock {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                Text("Подключить активные соединения", fontWeight = FontWeight.SemiBold)
+                Switch(checked = vpnEnabled, onCheckedChange = { vpnEnabled = it })
+            }
+            Text("В этой версии переключатель управляет демонстрационным состоянием. Реальное Android VpnService-подключение будет добавлено позже.", style = MaterialTheme.typography.bodySmall)
         }
     }
-}
-
-@Composable
-private fun RoutesScreen(contentPadding: PaddingValues) {
-    val context = LocalContext.current
-    val repository = remember(context) { dev.vifs.viroutefs.routing.RoutingConfigRepository(context.applicationContext) }
-    val scope = rememberCoroutineScope()
-    val defaultInput = stringResource(R.string.routes_default_input)
-
-    var routingConfig by remember { mutableStateOf(dev.vifs.viroutefs.routing.RoutingConfigDefaults.defaultConfig()) }
-    var configMessage by remember { mutableStateOf<String?>(null) }
-    var loaded by remember { mutableStateOf(false) }
-    val validationErrors = remember(routingConfig) { dev.vifs.viroutefs.routing.validateRoutingConfig(routingConfig) }
-    val routeEngine = remember(routingConfig) { RouteEngine(routingConfig) }
-    val routeDiagnosticRunner = remember(routeEngine) { RouteDiagnosticRunner(routeEngine) }
-
-    var simulatorInput by rememberSaveable { mutableStateOf(defaultInput) }
-    var routeDecision by remember { mutableStateOf(routeEngine.simulate(defaultInput)) }
-
-    var diagnosticTarget by rememberSaveable { mutableStateOf("example.com") }
-    var diagnosticPort by rememberSaveable { mutableStateOf("443") }
-    var diagnosticSni by rememberSaveable { mutableStateOf("example.com") }
-    var routeDiagnosticRunning by rememberSaveable { mutableStateOf(false) }
-    var routeDiagnosticReport by remember { mutableStateOf<RouteDiagnosticReport?>(null) }
-    var routeDiagnosticHistory by remember { mutableStateOf<List<RouteDiagnosticReport>>(emptyList()) }
-
-    fun applyConfig(newConfig: dev.vifs.viroutefs.routing.RoutingConfig, message: String) {
-        routingConfig = newConfig
-        routeDecision = RouteEngine(newConfig).simulate(simulatorInput)
-        configMessage = message
-        scope.launch { repository.save(newConfig) }
+    item {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { showAdd = !showAdd }) { Text("+ Добавить профиль") }
+            AssistChip(onClick = {}, label = { Text("${config.profiles.size} профилей") })
+        }
     }
-
-    LaunchedEffect(Unit) {
-        val result = repository.load()
-        routingConfig = result.config
-        routeDecision = RouteEngine(result.config).simulate(simulatorInput)
-        configMessage = result.errorMessage
-        loaded = true
-    }
-
-    ScreenList(contentPadding = contentPadding) {
+    if (showAdd) {
         item {
-            SectionHeader(
-                title = stringResource(R.string.screen_routes),
-                subtitle = "Редактируемая локальная конфигурация 0.4: симулятор, диагностика, профили, DNS-политики, правила, сценарии и JSON-импорт/экспорт.",
-            )
-        }
-        item {
-            PlaceholderCard(
-                title = "Локально и без скрытых проверок",
-                body = "Конфигурация хранится только в app-private JSON. Реальное VPN/DNS-маршрутизирование, Xray, OpenVPN, WireGuard, Hysteria2, SOCKS5 и захват пакетов пока не реализованы.",
-            )
-        }
-        configMessage?.let { message ->
-            item { PlaceholderCard(title = "Статус конфигурации", body = message) }
-        }
-        if (validationErrors.isNotEmpty()) {
-            item { PlaceholderCard(title = "Ошибки проверки", body = validationErrors.joinToString("\n")) }
-        }
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Симулятор", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    OutlinedTextField(
-                        value = simulatorInput,
-                        onValueChange = { simulatorInput = it },
-                        label = { Text(stringResource(R.string.routes_simulator_input_label)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Button(onClick = { routeDecision = routeEngine.simulate(simulatorInput) }, modifier = Modifier.align(Alignment.End)) {
-                        Text(stringResource(R.string.routes_simulator_button))
-                    }
+            CardBlock {
+                Text("Добавить профиль", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("QR-код", "Буфер", "Файл", "Вручную").forEach { AssistChip(onClick = {}, label = { Text(it) }) }
                 }
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Название") }, modifier = Modifier.fillMaxWidth())
+                TunnelTypeDropdown(type, onSelect = { type = it })
+                OutlinedTextField(value = desc, onValueChange = { desc = it }, label = { Text("Описание") }, modifier = Modifier.fillMaxWidth())
+                Button(onClick = {
+                    val id = "profile_${System.currentTimeMillis()}"
+                    val dnsId = when (type) {
+                        TunnelType.Direct -> RoutingConfigDefaults.DIRECT_DNS_ID
+                        TunnelType.Block -> RoutingConfigDefaults.SYSTEM_DNS_ID
+                        else -> RoutingConfigDefaults.TUNNEL_DNS_ID
+                    }
+                    val profile = TunnelProfile(id, name.ifBlank { type.label }, type, desc.ifBlank { "Профиль добавлен вручную. Движок пока не реализован." }, mockOnly = type.isMockOnly, platformNotes = MOCK_PROFILE_LIMITATION.takeIf { type.isMockOnly }, dnsPolicyId = dnsId)
+                    onConfig(config.copy(profiles = config.profiles + profile), "Профиль добавлен локально.")
+                    name = ""; desc = ""; showAdd = false
+                }) { Text("Создать") }
             }
         }
-        item { RouteDecisionCard(routeDecision) }
-        item {
-            RouteDiagnosticsInputCard(
-                target = diagnosticTarget,
-                port = diagnosticPort,
-                sni = diagnosticSni,
-                isRunning = routeDiagnosticRunning,
-                onTargetChange = { diagnosticTarget = it },
-                onPortChange = { diagnosticPort = it.filter(Char::isDigit) },
-                onSniChange = { diagnosticSni = it },
-                onRun = {
-                    routeDiagnosticRunning = true
-                    scope.launch {
-                        val report = routeDiagnosticRunner.run(
-                            target = diagnosticTarget,
-                            portText = diagnosticPort,
-                            sni = diagnosticSni,
-                            appVersion = BuildConfig.VERSION_NAME,
-                        )
-                        routeDiagnosticReport = report
-                        routeDiagnosticHistory = (listOf(report) + routeDiagnosticHistory).take(5)
-                        routeDiagnosticRunning = false
-                    }
-                },
-            )
+    }
+    items(config.profiles, key = { it.id }) { profile ->
+        ProfileCard(profile, config, onConfig)
+    }
+}
+
+}
+@Composable
+private fun ProfileCard(profile: TunnelProfile, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
+    var edit by rememberSaveable(profile.id) { mutableStateOf(false) }
+    var name by rememberSaveable(profile.id) { mutableStateOf(profile.name) }
+    var desc by rememberSaveable(profile.id) { mutableStateOf(profile.description) }
+    val used = config.rules.any { it.targetProfileId == profile.id }
+    val dns = config.dnsPolicies.firstOrNull { it.id == profile.dnsPolicyId }?.name ?: "DNS не выбран"
+    CardBlock {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(profile.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("${profile.type.label} • ${if (profile.enabled) "включён" else "выключен"} • $dns", style = MaterialTheme.typography.bodySmall)
+            }
+            Switch(profile.enabled, onCheckedChange = { onConfig(config.copy(profiles = config.profiles.map { if (it.id == profile.id) it.copy(enabled = it.enabled.not()) else it }), null) })
         }
-        item {
-            routeDiagnosticReport?.let { report ->
-                RouteDiagnosticReportCard(report = report, onCopy = { context.copyRouteReport(report) }, onShare = { context.shareRouteReport(report) })
-            } ?: InfoCard(
-                InfoCardContent(
-                    title = "Итог",
-                    simpleExplanation = "Диагностика маршрута ещё не запускалась.",
-                    technicalDetails = "Проверки выполняются только после нажатия кнопки и используют текущее подключение Android.",
-                    recommendedAction = "Проверяйте только свои ресурсы или сети, где у вас есть разрешение.",
-                ),
-            )
-        }
-        item { SectionTitle("Профили маршрутов") }
-        items(routingConfig.profiles) { profile ->
-            EditableProfileCard(
-                profile = profile,
-                usedByRules = routingConfig.rules.any { it.enabled && it.targetProfileId == profile.id },
-                onChange = { updated ->
-                    applyConfig(routingConfig.copy(profiles = routingConfig.profiles.map { if (it.id == profile.id) updated else it }), "Профиль сохранён")
-                },
-                onDelete = {
-                    applyConfig(routingConfig.copy(profiles = routingConfig.profiles.filterNot { it.id == profile.id }), "Профиль удалён")
-                },
-            )
-        }
-        item {
-            Button(onClick = {
-                val id = "profile_${System.currentTimeMillis()}"
-                applyConfig(
-                    routingConfig.copy(profiles = routingConfig.profiles + TunnelProfile(id, "Новый профиль", TunnelType.Direct, "Описание профиля", mockOnly = false)),
-                    "Создан новый профиль",
-                )
-            }) { Text("Создать профиль") }
-        }
-        item { SectionTitle("DNS-политики") }
-        items(routingConfig.dnsPolicies) { policy ->
-            DnsPolicyCard(policy, routingConfig.profiles)
-        }
-        item { Text(dev.vifs.viroutefs.routing.DNS_POLICY_LIMITATION) }
-        item { SectionTitle("Правила маршрутизации") }
-        items(routingConfig.rules.sortedBy { it.priority }) { rule ->
-            EditableRouteRuleCard(
-                rule = rule,
-                profiles = routingConfig.profiles,
-                dnsPolicies = routingConfig.dnsPolicies,
-                onChange = { updated ->
-                    applyConfig(routingConfig.copy(rules = routingConfig.rules.map { if (it.id == rule.id) updated else it }), "Правило сохранено")
-                },
-                onDelete = { applyConfig(routingConfig.copy(rules = routingConfig.rules.filterNot { it.id == rule.id }), "Правило удалено") },
-            )
-        }
-        item {
-            Button(onClick = {
-                val id = "rule_${System.currentTimeMillis()}"
-                val profileId = routingConfig.profiles.firstOrNull()?.id.orEmpty()
-                val dnsId = routingConfig.dnsPolicies.firstOrNull()?.id
-                applyConfig(
-                    routingConfig.copy(rules = routingConfig.rules + RouteRule(id, "Новое правило", RouteRuleType.DOMAIN, profileId, dnsId, 100, listOf("example.com"), reason = "Пользовательское правило.", technicalDetails = "Создано в редакторе маршрутов.", recommendedAction = "Проверьте правило симулятором.")),
-                    "Создано новое правило",
-                )
-            }) { Text("Создать правило") }
-        }
-        item { SectionTitle("Сценарии") }
-        item {
-            ScenarioButtons(onApply = { name, config -> applyConfig(config, "Применён сценарий: $name") })
-        }
-        item { SectionTitle("Импорт/экспорт") }
-        item {
-            ImportExportCard(
-                canExport = loaded,
-                onCopy = {
-                    val json = repository.exportJson(routingConfig)
-                    context.copyText("ViRouteFS routing config", json)
-                    configMessage = "Конфигурация скопирована в буфер обмена"
-                },
-                onPaste = {
-                    val text = context.readClipboardText()
-                    if (text.isBlank()) {
-                        configMessage = "Буфер обмена пуст или содержит не текст"
+        if (config.defaultProfileId == profile.id) AssistChip(onClick = {}, label = { Text("Основной") }) else OutlinedButton(onClick = { onConfig(config.copy(defaultProfileId = profile.id), "Основной профиль изменён.") }) { Text("Сделать основным") }
+        if (profile.mockOnly) Text("Демонстрационный профиль: реальный движок не запускается.", style = MaterialTheme.typography.bodySmall)
+        profile.warningText?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { edit = !edit }) { Text(if (edit) "Скрыть" else "Изменить") }
+            OutlinedButton(
+                enabled = !used && profile.type !in listOf(TunnelType.Direct, TunnelType.Block),
+                onClick = {
+                    val remainingProfiles = config.profiles.filterNot { it.id == profile.id }
+                    val nextDefaultProfileId = if (config.defaultProfileId == profile.id) {
+                        remainingProfiles.firstOrNull { it.type == TunnelType.Direct }?.id
+                            ?: remainingProfiles.firstOrNull()?.id
                     } else {
-                        repository.importJson(text).onSuccess { imported ->
-                            applyConfig(imported, "Конфигурация импортирована")
-                        }.onFailure { error ->
-                            configMessage = "Импорт не выполнен: ${error.message.orEmpty()}"
-                        }
+                        config.defaultProfileId
                     }
+                    onConfig(
+                        config.copy(profiles = remainingProfiles, defaultProfileId = nextDefaultProfileId),
+                        "Профиль удалён.",
+                    )
                 },
-                onReset = { applyConfig(dev.vifs.viroutefs.routing.RoutingConfigDefaults.defaultConfig(), "Восстановлены настройки по умолчанию") },
-            )
+            ) { Text("Удалить") }
         }
-        item { SectionTitle("Последние проверки") }
-        if (routeDiagnosticHistory.isEmpty()) {
-            item { Text("История текущей сессии пока пуста. Отчёты не сохраняются в файлы или базу данных.") }
-        } else {
-            items(routeDiagnosticHistory) { report -> RouteDiagnosticHistoryCard(report) }
+        if (edit) {
+            OutlinedTextField(name, { name = it }, label = { Text("Название") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(desc, { desc = it }, label = { Text("Описание") }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = { onConfig(config.copy(profiles = config.profiles.map { if (it.id == profile.id) it.copy(name = name, description = desc) else it }), "Профиль обновлён."); edit = false }) { Text("Сохранить") }
         }
     }
 }
 
 @Composable
-private fun SectionTitle(text: String) {
-    Text(text = text, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+private fun RoutesScreen(padding: PaddingValues, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
+    val engine = remember(config) { RouteEngine(config) }
+    var input by rememberSaveable { mutableStateOf("telegram") }
+    var decision by remember(config) { mutableStateOf(engine.simulate(input)) }
+    ScreenList(padding) {
+    item { Header("Маршруты", "Что через какое подключение ходит?") }
+    item {
+        CardBlock {
+            OutlinedTextField(input, { input = it }, label = { Text("домен, IP или приложение") }, modifier = Modifier.fillMaxWidth())
+            Button(onClick = { decision = engine.simulate(input) }) { Text("Показать маршрут") }
+            Text("Профиль: ${decision.tunnelProfile.name}", fontWeight = FontWeight.SemiBold)
+            Text("Правило: ${decision.matchedRule.name}")
+            Text("DNS: ${decision.dnsPolicySummary}")
+            Text("Почему: ${decision.plainReason}", style = MaterialTheme.typography.bodySmall)
+            decision.warnings.take(2).forEach { Text("⚠ $it", style = MaterialTheme.typography.bodySmall) }
+        }
+    }
+    items(config.profiles, key = { it.id }) { profile -> RouteProfileRulesCard(profile, config, onConfig) }
 }
 
+}
 @Composable
-private fun EditableProfileCard(
-    profile: TunnelProfile,
-    usedByRules: Boolean,
-    onChange: (TunnelProfile) -> Unit,
-    onDelete: () -> Unit,
-) {
-    var name by remember(profile.id) { mutableStateOf(profile.name) }
-    var description by remember(profile.id) { mutableStateOf(profile.description) }
-    var type by remember(profile.id) { mutableStateOf(profile.type) }
-    var enabled by remember(profile.id) { mutableStateOf(profile.enabled) }
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("${profile.id}", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-                Text("Вкл.")
-                androidx.compose.material3.Switch(checked = enabled, onCheckedChange = { enabled = it })
+private fun RouteProfileRulesCard(profile: TunnelProfile, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
+    var expanded by rememberSaveable(profile.id) { mutableStateOf(false) }
+    var appText by rememberSaveable(profile.id) { mutableStateOf("") }
+    var domainText by rememberSaveable(profile.id) { mutableStateOf("") }
+    var cidrText by rememberSaveable(profile.id) { mutableStateOf("") }
+    val rules = config.rules.filter { it.targetProfileId == profile.id }
+    val apps = rules.filter { it.type == RouteRuleType.APP || it.type == RouteRuleType.APP_GROUP }
+    val domains = rules.filter { it.type == RouteRuleType.DOMAIN }
+    val cidrs = rules.filter { it.type == RouteRuleType.CIDR }
+    CardBlock {
+        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column { Text(profile.name, fontWeight = FontWeight.SemiBold); Text("Apps: ${apps.flatMap { it.matchers + it.appMatchers.map { app -> app.displayName ?: app.value } }.size} • Sites: ${domains.sumOf { it.matchers.size }} • IP/CIDR: ${cidrs.sumOf { it.matchers.size }}", style = MaterialTheme.typography.bodySmall) }
+            OutlinedButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Свернуть" else "Открыть") }
+        }
+        if (expanded) {
+            MatcherSection("Приложения", apps, appText, { appText = it }, "Добавить приложение") {
+                addRule(config, profile.id, RouteRuleType.APP, appText, RoutingConfigDefaults.SYSTEM_DNS_ID, onConfig); appText = ""
             }
-            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Имя") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            CycleEnumRow(label = "Тип", value = type.label, onNext = { type = TunnelType.entries[(type.ordinal + 1) % TunnelType.entries.size] })
-            OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text("Описание") }, modifier = Modifier.fillMaxWidth())
-            if (type.isMockOnly) Text(dev.vifs.viroutefs.routing.MOCK_PROFILE_LIMITATION)
-            profile.platformNotes?.let { Text(it) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { onChange(profile.copy(name = name.trim(), description = description.trim(), type = type, enabled = enabled, mockOnly = type.isMockOnly)) }) { Text("Сохранить") }
-                Button(onClick = onDelete, enabled = !usedByRules) { Text("Удалить") }
+            MatcherSection("Сайты / домены", domains, domainText, { domainText = it }, "Добавить домен") {
+                addRule(config, profile.id, RouteRuleType.DOMAIN, domainText, profile.dnsPolicyId, onConfig); domainText = ""
             }
-            if (usedByRules) Text("Нельзя удалить: активные правила используют этот профиль.")
-        }
-    }
-}
-
-@Composable
-private fun DnsPolicyCard(policy: dev.vifs.viroutefs.routing.DnsPolicy, profiles: List<TunnelProfile>) {
-    val profileName = policy.resolveThroughProfileId?.let { id -> profiles.firstOrNull { it.id == id }?.name ?: id }
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(policy.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text(policy.type.label)
-            Text(policy.description)
-            policy.serverText?.let { Text("Сервер: $it") }
-            profileName?.let { Text("Ожидаемый профиль: $it") }
-            Text(if (policy.enabled) "Включена" else "Отключена")
-        }
-    }
-}
-
-@Composable
-private fun EditableRouteRuleCard(
-    rule: RouteRule,
-    profiles: List<TunnelProfile>,
-    dnsPolicies: List<dev.vifs.viroutefs.routing.DnsPolicy>,
-    onChange: (RouteRule) -> Unit,
-    onDelete: () -> Unit,
-) {
-    var name by remember(rule.id) { mutableStateOf(rule.name) }
-    var type by remember(rule.id) { mutableStateOf(rule.type) }
-    var matchersText by remember(rule.id) { mutableStateOf(rule.matchers.joinToString(", ")) }
-    var targetProfileId by remember(rule.id) { mutableStateOf(rule.targetProfileId) }
-    var dnsPolicyId by remember(rule.id) { mutableStateOf(rule.dnsPolicyId.orEmpty()) }
-    var priorityText by remember(rule.id) { mutableStateOf(rule.priority.toString()) }
-    var enabled by remember(rule.id) { mutableStateOf(rule.enabled) }
-    val priority = priorityText.toIntOrNull()
-    val matchers = matchersText.split(',').map { it.trim() }.filter { it.isNotBlank() }
-    val errors = buildList {
-        if (name.isBlank()) add("имя пустое")
-        if (type != RouteRuleType.DEFAULT && matchers.isEmpty()) add("нет матчеров")
-        if (priority == null || priority < 0) add("приоритет некорректен")
-        if (targetProfileId !in profiles.map { it.id }) add("профиль не найден")
-        if (dnsPolicyId.isNotBlank() && dnsPolicyId !in dnsPolicies.map { it.id }) add("DNS-политика не найдена")
-        if (type == RouteRuleType.CIDR) matchers.filterNot { dev.vifs.viroutefs.routing.isValidCidr(it) }.forEach { add("CIDR $it некорректен") }
-    }
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(rule.id, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-                Text("Вкл.")
-                androidx.compose.material3.Switch(checked = enabled, onCheckedChange = { enabled = it })
+            MatcherSection("IP / CIDR", cidrs, cidrText, { cidrText = it }, "Добавить IP/CIDR") {
+                addRule(config, profile.id, RouteRuleType.CIDR, cidrText, profile.dnsPolicyId, onConfig); cidrText = ""
             }
-            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Имя правила") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            CycleEnumRow(label = "Тип", value = type.name, onNext = { type = RouteRuleType.entries[(type.ordinal + 1) % RouteRuleType.entries.size] })
-            OutlinedTextField(value = matchersText, onValueChange = { matchersText = it }, label = { Text("Матчеры через запятую") }, modifier = Modifier.fillMaxWidth())
-            CycleChoiceRow("Профиль", profiles, targetProfileId, { it.name }) { targetProfileId = it.id }
-            CycleChoiceRow("DNS", dnsPolicies, dnsPolicyId, { it.name }) { dnsPolicyId = it.id }
-            OutlinedTextField(value = priorityText, onValueChange = { priorityText = it.filter(Char::isDigit) }, label = { Text("Приоритет") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true, modifier = Modifier.fillMaxWidth())
-            Text("Причина: ${rule.reason}")
-            if (errors.isNotEmpty()) Text("Ошибки: ${errors.joinToString()}", color = MaterialTheme.colorScheme.error)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = {
-                        onChange(rule.copy(name = name.trim(), type = type, matchers = matchers, targetProfileId = targetProfileId, dnsPolicyId = dnsPolicyId.takeIf { it.isNotBlank() }, priority = priority ?: rule.priority, enabled = enabled))
-                    },
-                    enabled = errors.isEmpty(),
-                ) { Text("Сохранить") }
-                Button(onClick = onDelete) { Text("Удалить") }
+            rules.filter { it.type != RouteRuleType.DEFAULT }.forEach { rule ->
+                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(rule.matchers.joinToString().ifBlank { rule.appMatchers.joinToString { it.displayName ?: it.value } }, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = { onConfig(config.copy(rules = config.rules.filterNot { it.id == rule.id }), "Маршрут удалён.") }) { Text("×") }
+                }
             }
         }
     }
 }
 
-@Composable
-private fun <T> CycleChoiceRow(label: String, values: List<T>, currentId: String, name: (T) -> String, onSelect: (T) -> Unit) where T : Any {
-    val currentIndex = values.indexOfFirst { item ->
-        when (item) {
-            is TunnelProfile -> item.id == currentId
-            is dev.vifs.viroutefs.routing.DnsPolicy -> item.id == currentId
-            else -> false
-        }
-    }.coerceAtLeast(0)
-    val currentName = values.getOrNull(currentIndex)?.let(name) ?: "не выбрано"
-    CycleEnumRow(label = label, value = currentName, onNext = {
-        if (values.isNotEmpty()) onSelect(values[(currentIndex + 1) % values.size])
-    })
+private fun addRule(config: RoutingConfig, profileId: String, type: RouteRuleType, value: String, dnsPolicyId: String?, onConfig: (RoutingConfig, String?) -> Unit) {
+    val v = value.trim()
+    if (v.isBlank()) return
+    val rule = RouteRule(
+        id = "rule_${System.currentTimeMillis()}", name = "$v → $profileId", type = type, targetProfileId = profileId, dnsPolicyId = dnsPolicyId,
+        priority = 100 + config.rules.size, matchers = listOf(v), appMatchers = if (type == RouteRuleType.APP) listOf(AppMatcher(AppMatcherPlatform.Any, v, v)) else emptyList(),
+        reason = "Добавлено пользователем в компактном редакторе.", technicalDetails = "Скрытые технические поля заполнены автоматически.", recommendedAction = "Проверьте результат симулятором.",
+    )
+    onConfig(config.copy(rules = config.rules + rule), "Маршрут добавлен.")
 }
 
 @Composable
-private fun CycleEnumRow(label: String, value: String, onNext: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("$label: $value", modifier = Modifier.weight(1f))
-        Button(onClick = onNext) { Text("Выбрать") }
+private fun MatcherSection(title: String, rules: List<RouteRule>, value: String, onValue: (String) -> Unit, button: String, onAdd: () -> Unit) {
+    Text(title, fontWeight = FontWeight.SemiBold)
+    Text(rules.flatMap { it.matchers }.take(6).joinToString().ifBlank { "Пока пусто" }, style = MaterialTheme.typography.bodySmall)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(value, onValue, label = { Text(title) }, modifier = Modifier.weight(1f))
+        Button(onClick = onAdd) { Text(button) }
     }
 }
 
 @Composable
-private fun ScenarioButtons(onApply: (String, dev.vifs.viroutefs.routing.RoutingConfig) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Сценарии заменяют текущую конфигурацию преднастроенным локальным набором. Перед применением скопируйте JSON, если хотите сохранить текущие правила.")
-        Button(onClick = { onApply("Работа и личное", dev.vifs.viroutefs.routing.RoutingConfigDefaults.workPersonalConfig()) }) { Text("Работа и личное") }
-        Text("Корпоративные домены и рабочие CIDR идут через OpenVPN Work mock, личное остаётся по правилам.")
-        Button(onClick = { onApply("Медиа через быстрый тоннель", dev.vifs.viroutefs.routing.RoutingConfigDefaults.mediaFastTunnelConfig()) }) { Text("Медиа через быстрый тоннель") }
-        Text("YouTube/googlevideo получают высокий приоритет Hysteria2 NL mock.")
-        Button(onClick = { onApply("Банки напрямую", dev.vifs.viroutefs.routing.RoutingConfigDefaults.banksDirectConfig()) }) { Text("Банки напрямую") }
-        Text("Банки, госуслуги и платежи получают максимальный приоритет Direct DNS/Direct.")
-        Button(onClick = { onApply("Безопасный дефолт", dev.vifs.viroutefs.routing.RoutingConfigDefaults.safeDefaultConfig()) }) { Text("Безопасный дефолт") }
-        Text("Неизвестные направления блокируются, пока пользователь не добавит явное правило.")
-    }
-}
-
-@Composable
-private fun ImportExportCard(canExport: Boolean, onCopy: () -> Unit, onPaste: () -> Unit, onReset: () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("JSON включает version, profiles, dnsPolicies и rules. Буфер обмена используется только по нажатию кнопки.")
-            Button(onClick = onCopy, enabled = canExport) { Text("Скопировать конфигурацию") }
-            Button(onClick = onPaste) { Text("Вставить конфигурацию") }
-            Button(onClick = onReset) { Text("Сбросить к настройкам по умолчанию") }
-        }
-    }
-}
-
-private fun Context.copyText(label: String, text: String) {
-    val clipboard = getSystemService(ClipboardManager::class.java)
-    clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
-    Toast.makeText(this, "Скопировано", Toast.LENGTH_SHORT).show()
-}
-
-private fun Context.readClipboardText(): String =
-    getSystemService(ClipboardManager::class.java).primaryClip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
-
-@Composable
-private fun DnsScreen(contentPadding: PaddingValues) {
-    val defaultDomain = stringResource(R.string.dns_default_domain)
-    val defaultDnsServer = stringResource(R.string.dns_default_server)
-    val defaultRecordType = stringResource(R.string.dns_default_record_type)
+private fun DnsScreen(padding: PaddingValues, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
     val scope = rememberCoroutineScope()
-    val diagnostic = remember { DnsDiagnostic() }
-
-    var domain by rememberSaveable { mutableStateOf(defaultDomain) }
-    var dnsServer by rememberSaveable { mutableStateOf(defaultDnsServer) }
-    var recordType by rememberSaveable { mutableStateOf(defaultRecordType) }
-    var isRunning by rememberSaveable { mutableStateOf(false) }
+    var domain by rememberSaveable { mutableStateOf("example.com") }
+    var server by rememberSaveable { mutableStateOf("1.1.1.1") }
+    var record by rememberSaveable { mutableStateOf("A") }
+    var selectedProfile by rememberSaveable { mutableStateOf(config.defaultProfileId ?: config.profiles.first().id) }
     var result by remember { mutableStateOf<DiagnosticResult?>(null) }
+    var app by rememberSaveable { mutableStateOf("Telegram") }
+    var host by rememberSaveable { mutableStateOf("") }
+    var ip by rememberSaveable { mutableStateOf("") }
+    ScreenList(padding) {
+    item { Header("DNS", "Проверка DNS, приложение, hosts-like overrides и DNS per connection.") }
+    item { CardBlock { Text("DNS lookup checker", fontWeight = FontWeight.SemiBold); OutlinedTextField(domain, { domain = it }, label = { Text("адрес/домен") }, modifier = Modifier.fillMaxWidth()); OutlinedTextField(server, { server = it }, label = { Text("DNS server") }, modifier = Modifier.fillMaxWidth()); OutlinedTextField(record, { record = it }, label = { Text("A / AAAA") }); Text("Профиль: ${config.profiles.firstOrNull { it.id == selectedProfile }?.name ?: selectedProfile}"); Button(onClick = { scope.launch { result = DnsDiagnostic().lookup(domain, server, record) } }) { Text("Проверить DNS") }; Text("В этой версии Android может использовать системный резолвер. Прямой запрос к выбранному DNS будет улучшен позже.", style = MaterialTheme.typography.bodySmall); result?.let { DiagnosticCard("Результат DNS", it) } } }
+    item { CardBlock { Text("Проверить приложение", fontWeight = FontWeight.SemiBold); Text("Выберите приложение и посмотрите, через какой DNS и маршрут должны идти его запросы."); OutlinedTextField(app, { app = it }, label = { Text("Приложение") }, modifier = Modifier.fillMaxWidth()); val d = RouteEngine(config).simulate(app); Text("Маршрут: ${d.tunnelProfile.name}"); Text("DNS policy: ${d.dnsPolicySummary}"); Text("Возможный риск: ${d.dnsLeakSummary}", style = MaterialTheme.typography.bodySmall); Text("Реальные домены приложения будут видны в FS после включения локального VPN-режима.", style = MaterialTheme.typography.bodySmall) } }
+    item { CardBlock { Text("hosts-like overrides", fontWeight = FontWeight.SemiBold); Text("Локальная привязка имени к IP, аналог hosts. В этой версии используется для конфигурации и симуляции; реальное применение в DNS engine будет добавлено позже.", style = MaterialTheme.typography.bodySmall); OutlinedTextField(host, { host = it }, label = { Text("hostname") }, modifier = Modifier.fillMaxWidth()); OutlinedTextField(ip, { ip = it }, label = { Text("IP") }, modifier = Modifier.fillMaxWidth()); Button(onClick = { if (host.isNotBlank() && ip.isNotBlank()) { onConfig(config.copy(hostOverrides = config.hostOverrides + DnsHostOverride("host_${System.currentTimeMillis()}", host, ip, true, null)), "Override добавлен."); host = ""; ip = "" } }) { Text("Добавить override") }; config.hostOverrides.forEach { override -> Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) { Text("${if (override.enabled) "✓" else "—"} ${override.hostname} → ${override.ipAddress}", modifier = Modifier.weight(1f)); Switch(override.enabled, { onConfig(config.copy(hostOverrides = config.hostOverrides.map { if (it.id == override.id) it.copy(enabled = it.enabled.not()) else it }), null) }); OutlinedButton(onClick = { onConfig(config.copy(hostOverrides = config.hostOverrides.filterNot { it.id == override.id }), "Override удалён.") }) { Text("×") } } } } }
+    item { CardBlock { Text("DNS per connection", fontWeight = FontWeight.SemiBold); config.profiles.forEach { profile -> DnsPerProfileRow(profile, config, onConfig) } } }
+}
 
-    ScreenList(contentPadding = contentPadding) {
-        item {
-            SectionHeader(
-                title = stringResource(R.string.dns_header_title),
-                subtitle = stringResource(R.string.dns_header_subtitle),
-            )
+}
+@Composable
+private fun DnsPerProfileRow(profile: TunnelProfile, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
+    var custom by rememberSaveable(profile.id) { mutableStateOf("") }
+    val policy = config.dnsPolicies.firstOrNull { it.id == profile.dnsPolicyId } ?: config.dnsPolicies.first()
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+        Text(profile.name, fontWeight = FontWeight.SemiBold)
+        Text("${policy.name} • ${policy.serverText ?: policy.type.label}", style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            config.dnsPolicies.take(4).forEach { p -> FilterChip(selected = p.id == profile.dnsPolicyId, onClick = { onConfig(config.copy(profiles = config.profiles.map { if (it.id == profile.id) it.copy(dnsPolicyId = p.id) else it }), "DNS профиль обновлён.") }, label = { Text(p.type.label.take(10)) }) }
         }
-        item {
-            PlaceholderCard(
-                title = stringResource(R.string.dns_system_resolver_title),
-                body = stringResource(R.string.dns_system_resolver_body),
-            )
-        }
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    OutlinedTextField(
-                        value = domain,
-                        onValueChange = { domain = it },
-                        label = { Text(stringResource(R.string.dns_field_domain)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = dnsServer,
-                        onValueChange = { dnsServer = it },
-                        label = { Text(stringResource(R.string.dns_field_server)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = recordType,
-                        onValueChange = { recordType = it.uppercase() },
-                        label = { Text(stringResource(R.string.dns_field_record_type)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Button(
-                        onClick = {
-                            isRunning = true
-                            scope.launch {
-                                result = diagnostic.lookup(domain, dnsServer, recordType)
-                                isRunning = false
-                            }
-                        },
-                        enabled = !isRunning,
-                        modifier = Modifier.align(Alignment.End),
-                    ) {
-                        Text(if (isRunning) stringResource(R.string.action_checking) else stringResource(R.string.action_check))
-                    }
-                }
-            }
-        }
-        item {
-            DiagnosticResultCard(
-                title = stringResource(R.string.dns_result_title),
-                result = result,
-                notRunText = stringResource(R.string.dns_result_not_run),
-            )
-        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) { OutlinedTextField(custom, { custom = it }, label = { Text("Custom DNS") }, modifier = Modifier.weight(1f)); Button(onClick = { if (custom.isNotBlank()) { val id = "dns_${System.currentTimeMillis()}"; val newPolicy = DnsPolicy(id, "Custom DNS ${profile.name}", DnsPolicyType.Custom, custom, profile.id, "Пользовательский DNS для симуляции."); onConfig(config.copy(dnsPolicies = config.dnsPolicies + newPolicy, profiles = config.profiles.map { if (it.id == profile.id) it.copy(dnsPolicyId = id) else it }), "Custom DNS сохранён.") } }) { Text("Set") } }
+        Text("DNS per connection — конфигурация/симуляция до реализации DNS engine.", style = MaterialTheme.typography.bodySmall)
     }
 }
 
 @Composable
-private fun ToolsScreen(contentPadding: PaddingValues) {
-    val scope = rememberCoroutineScope()
-    val tcpDiagnostic = remember { TcpDiagnostic() }
-    val tlsDiagnostic = remember { TlsDiagnostic() }
-    val httpDiagnostic = remember { HttpDiagnostic() }
-
-    var tcpHost by rememberSaveable { mutableStateOf("example.com") }
-    var tcpPort by rememberSaveable { mutableStateOf("443") }
-    var tcpTimeout by rememberSaveable { mutableStateOf("5") }
-    var tcpRunning by rememberSaveable { mutableStateOf(false) }
-    var tcpResult by remember { mutableStateOf<DiagnosticResult?>(null) }
-
-    var tlsHost by rememberSaveable { mutableStateOf("example.com") }
-    var tlsPort by rememberSaveable { mutableStateOf("443") }
-    var tlsSni by rememberSaveable { mutableStateOf("example.com") }
-    var tlsRunning by rememberSaveable { mutableStateOf(false) }
-    var tlsResult by remember { mutableStateOf<DiagnosticResult?>(null) }
-
-    var httpUrl by rememberSaveable { mutableStateOf("https://example.com") }
-    var httpRunning by rememberSaveable { mutableStateOf(false) }
-    var httpResult by remember { mutableStateOf<DiagnosticResult?>(null) }
-
-    ScreenList(contentPadding = contentPadding) {
-        item {
-            SectionHeader(
-                title = stringResource(R.string.screen_tools),
-                subtitle = stringResource(R.string.tools_header_subtitle),
-            )
-        }
-        item {
-            PlaceholderCard(
-                title = stringResource(R.string.tools_safety_title),
-                body = stringResource(R.string.tools_safety_body),
-            )
-        }
-        item {
-            DiagnosticInputCard(title = stringResource(R.string.tools_tcp_title)) {
-                OutlinedTextField(
-                    value = tcpHost,
-                    onValueChange = { tcpHost = it },
-                    label = { Text(stringResource(R.string.tools_field_host)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(
-                        value = tcpPort,
-                        onValueChange = { tcpPort = it.filter(Char::isDigit) },
-                        label = { Text(stringResource(R.string.tools_field_port)) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    OutlinedTextField(
-                        value = tcpTimeout,
-                        onValueChange = { tcpTimeout = it.filter(Char::isDigit) },
-                        label = { Text(stringResource(R.string.tools_field_timeout)) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                Button(
-                    onClick = {
-                        tcpRunning = true
-                        scope.launch {
-                            tcpResult = tcpDiagnostic.check(tcpHost, tcpPort, tcpTimeout)
-                            tcpRunning = false
-                        }
-                    },
-                    enabled = !tcpRunning,
-                    modifier = Modifier.align(Alignment.End),
-                ) {
-                    Text(if (tcpRunning) stringResource(R.string.action_checking) else stringResource(R.string.tools_tcp_button))
-                }
-            }
-        }
-        item {
-            DiagnosticResultCard(
-                title = stringResource(R.string.tools_tcp_result_title),
-                result = tcpResult,
-                notRunText = stringResource(R.string.tools_result_not_run),
-            )
-        }
-        item {
-            DiagnosticInputCard(title = stringResource(R.string.tools_tls_title)) {
-                OutlinedTextField(
-                    value = tlsHost,
-                    onValueChange = { tlsHost = it },
-                    label = { Text(stringResource(R.string.tools_field_host)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = tlsPort,
-                    onValueChange = { tlsPort = it.filter(Char::isDigit) },
-                    label = { Text(stringResource(R.string.tools_field_port)) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = tlsSni,
-                    onValueChange = { tlsSni = it },
-                    label = { Text(stringResource(R.string.tools_field_sni)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Button(
-                    onClick = {
-                        tlsRunning = true
-                        scope.launch {
-                            tlsResult = tlsDiagnostic.check(tlsHost, tlsPort, tlsSni)
-                            tlsRunning = false
-                        }
-                    },
-                    enabled = !tlsRunning,
-                    modifier = Modifier.align(Alignment.End),
-                ) {
-                    Text(if (tlsRunning) stringResource(R.string.action_checking) else stringResource(R.string.tools_tls_button))
-                }
-            }
-        }
-        item {
-            DiagnosticResultCard(
-                title = stringResource(R.string.tools_tls_result_title),
-                result = tlsResult,
-                notRunText = stringResource(R.string.tools_result_not_run),
-            )
-        }
-        item {
-            DiagnosticInputCard(title = stringResource(R.string.tools_http_title)) {
-                OutlinedTextField(
-                    value = httpUrl,
-                    onValueChange = { httpUrl = it },
-                    label = { Text(stringResource(R.string.tools_field_url)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Button(
-                    onClick = {
-                        httpRunning = true
-                        scope.launch {
-                            httpResult = httpDiagnostic.check(httpUrl)
-                            httpRunning = false
-                        }
-                    },
-                    enabled = !httpRunning,
-                    modifier = Modifier.align(Alignment.End),
-                ) {
-                    Text(if (httpRunning) stringResource(R.string.action_checking) else stringResource(R.string.tools_http_button))
-                }
-            }
-        }
-        item {
-            DiagnosticResultCard(
-                title = stringResource(R.string.tools_http_result_title),
-                result = httpResult,
-                notRunText = stringResource(R.string.tools_result_not_run),
-            )
-        }
-    }
-}
-
-@Composable
-private fun LogsScreen(contentPadding: PaddingValues) {
+private fun FlowScannerScreen(padding: PaddingValues) {
+    var selectedApp by rememberSaveable { mutableStateOf("Telegram") }
+    var analyzing by rememberSaveable { mutableStateOf(false) }
     val events = listOf(
-        stringResource(R.string.logs_event_telegram),
-        stringResource(R.string.logs_event_browser_dns),
-        stringResource(R.string.logs_event_banking),
-        stringResource(R.string.logs_event_mtu),
-        stringResource(R.string.logs_event_wps),
+        FlowEvent("Telegram", "api.telegram.org → 149.154.x.x:443", "Xray Germany", "rule \"Telegram\"", "Tunnel DNS mock"),
+        FlowEvent("Browser", "example.com → 93.184.216.34:443", "Direct", "default direct", "System DNS"),
+        FlowEvent("Work", "gitlab.corp → 10.0.0.25:443", "OpenVPN Work", "*.corp", "Work DNS mock"),
     )
-
-    ScreenList(contentPadding = contentPadding) {
-        item {
-            SectionHeader(
-                title = stringResource(R.string.screen_logs),
-                subtitle = stringResource(R.string.logs_header_subtitle),
-            )
-        }
-        items(events) { event ->
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = event,
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Text(
-                        text = stringResource(R.string.logs_event_details_placeholder),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-            }
-        }
-    }
+    ScreenList(padding) {
+    item { Header("Flow Scanner", "кто куда подключается и почему") }
+    item { CompactCard("FS", "FS показывает сетевые события после явного включения локального VPN-режима ViRouteFS. Скрытого перехвата нет.", "Демонстрационный режим: реального packet capture и фонового мониторинга нет.") }
+    item { CardBlock { OutlinedTextField(selectedApp, { selectedApp = it }, label = { Text("Приложение") }, modifier = Modifier.fillMaxWidth()); Button(onClick = { analyzing = true }) { Text("Старт анализа") }; AssistChip(onClick = {}, label = { Text(if (analyzing) "Демонстрационный режим" else "Ожидание") }) } }
+    items(events) { event -> FlowEventCard(event) }
 }
+
+}
+private data class FlowEvent(val app: String, val target: String, val route: String, val why: String, val dns: String)
 
 @Composable
-private fun SettingsScreen(contentPadding: PaddingValues) {
-    ScreenList(contentPadding = contentPadding) {
-        item {
-            SectionHeader(
-                title = stringResource(R.string.screen_settings),
-                subtitle = stringResource(R.string.settings_header_subtitle),
-            )
-        }
-        item {
-            InfoCard(
-                InfoCardContent(
-                    title = stringResource(R.string.settings_local_first_title),
-                    simpleExplanation = stringResource(R.string.settings_local_first_simple),
-                    technicalDetails = stringResource(R.string.settings_local_first_details),
-                    recommendedAction = stringResource(R.string.settings_local_first_action),
-                ),
-            )
-        }
-        item {
-            InfoCard(
-                InfoCardContent(
-                    title = stringResource(R.string.settings_safety_title),
-                    simpleExplanation = stringResource(R.string.settings_safety_simple),
-                    technicalDetails = stringResource(R.string.settings_safety_details),
-                    recommendedAction = stringResource(R.string.settings_safety_action),
-                ),
-            )
-        }
-        item {
-            InfoCard(
-                InfoCardContent(
-                    title = stringResource(R.string.settings_version_title),
-                    simpleExplanation = stringResource(R.string.settings_version_simple, BuildConfig.VERSION_NAME),
-                    technicalDetails = stringResource(R.string.settings_version_details, BuildConfig.VERSION_CODE),
-                    recommendedAction = stringResource(R.string.settings_version_action),
-                ),
-            )
-        }
-    }
-}
-
+private fun FlowEventCard(event: FlowEvent) { var details by rememberSaveable(event.target) { mutableStateOf(false) }; CardBlock { Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) { Column { Text("App: ${event.app}", fontWeight = FontWeight.SemiBold); Text("Target: ${event.target}") }; AssistChip(onClick = {}, label = { Text("demo") }) }; Text("Route: ${event.route} • DNS: ${event.dns}"); Text("Why: ${event.why}", style = MaterialTheme.typography.bodySmall); OutlinedButton(onClick = { details = !details }) { Text("Детали") }; if (details) Text("DNS: ${event.dns}\nTCP/TLS/SNI: будет показано после локального VPN-режима\nRoute decision: ${event.why}\nРекомендация: проверьте правило в Routes.", style = MaterialTheme.typography.bodySmall) } }
 
 @Composable
-private fun DiagnosticInputCard(
-    title: String,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            content()
+private fun ToolsScreen(padding: PaddingValues, config: RoutingConfig) {
+    val scope = rememberCoroutineScope()
+    var host by rememberSaveable { mutableStateOf("example.com") }
+    var port by rememberSaveable { mutableStateOf("443") }
+    var sni by rememberSaveable { mutableStateOf("example.com") }
+    var url by rememberSaveable { mutableStateOf("https://example.com") }
+    var tcp by remember { mutableStateOf<DiagnosticResult?>(null) }
+    var tls by remember { mutableStateOf<DiagnosticResult?>(null) }
+    var http by remember { mutableStateOf<DiagnosticResult?>(null) }
+    var routeTarget by rememberSaveable { mutableStateOf("10.0.0.5") }
+    ScreenList(padding) {
+    item { Header("Инструменты", "Ручная диагностика: TCP, TLS/SNI, HTTP и маршрутная симуляция.") }
+    item { CompactCard("Безопасное использование", "Проверяйте только свои ресурсы или сети, где у вас есть разрешение.", "Инструменты запускаются вручную и не выполняют скрытого мониторинга.") }
+    item { CardBlock { Text("TCP / TLS", fontWeight = FontWeight.SemiBold); OutlinedTextField(host, { host = it }, label = { Text("Host") }, modifier = Modifier.fillMaxWidth()); OutlinedTextField(port, { port = it }, label = { Text("Port") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)); OutlinedTextField(sni, { sni = it }, label = { Text("SNI") }, modifier = Modifier.fillMaxWidth()); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Button(onClick = { scope.launch { tcp = TcpDiagnostic().check(host, port, "5") } }) { Text("TCP check") }; Button(onClick = { scope.launch { tls = TlsDiagnostic().check(host, port, sni) } }) { Text("TLS/SNI check") } }; tcp?.let { DiagnosticCard("TCP result", it) }; tls?.let { DiagnosticCard("TLS result", it) } } }
+    item { CardBlock { Text("HTTP", fontWeight = FontWeight.SemiBold); OutlinedTextField(url, { url = it }, label = { Text("URL") }, modifier = Modifier.fillMaxWidth()); Button(onClick = { scope.launch { http = HttpDiagnostic().check(url) } }) { Text("HTTP check") }; http?.let { DiagnosticCard("HTTP result", it) } } }
+    item { CardBlock { val d = RouteEngine(config).simulate(routeTarget); Text("Route diagnostics", fontWeight = FontWeight.SemiBold); OutlinedTextField(routeTarget, { routeTarget = it }, label = { Text("домен/IP/приложение") }, modifier = Modifier.fillMaxWidth()); Text("${d.input} → ${d.tunnelProfile.name} • ${d.dnsPolicySummary}") } }
+    item { CompactCard("MTU", "Плейсхолдер будущей проверки MTU.", "Пока без активных сетевых действий.") }
+}
+
+}
+@Composable
+private fun SettingsScreen(padding: PaddingValues) {
+    val context = LocalContext.current
+    var language by rememberSaveable { mutableStateOf("Русский") }
+    var theme by rememberSaveable { mutableStateOf("System") }
+    ScreenList(padding) {
+    item { Header("Настройки", "Язык, тема и поддержка проекта.") }
+    item { CardBlock { Text("Language", fontWeight = FontWeight.SemiBold); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("Русский", "English", "中文简体").forEach { FilterChip(selected = language == it, onClick = { language = it }, label = { Text(it) }) } }; Text("Полное переключение языка будет добавлено позже."); Text("Roadmap: فارسی / Persian • Türkçe / Turkish • العربية / Arabic • Español / Spanish • Português / Portuguese • Bahasa Indonesia • Deutsch", style = MaterialTheme.typography.bodySmall) } }
+    item { CardBlock { Text("Theme", fontWeight = FontWeight.SemiBold); Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("System", "Light", "Dark", "AMOLED black").forEach { FilterChip(selected = theme == it, onClick = { theme = it }, label = { Text(it) }) } }; Text("AMOLED black будет означать настоящий чёрный фон в будущей теме.", style = MaterialTheme.typography.bodySmall) } }
+    item { CardBlock { Text("Поддержать проект", fontWeight = FontWeight.SemiBold); Text("ViRouteFS — свободное open-source приложение без рекламы, телеметрии и облачной зависимости. Поддержка помогает развивать Android, Linux и Windows версии."); val links = listOf("GitHub" to "https://github.com/Vifsvifsvifs/viroutefs", "GitHub Sponsors" to "https://github.com/sponsors", "Boosty" to "https://boosty.to", "DonationAlerts" to "https://www.donationalerts.com", "Project page" to "https://github.com/Vifsvifsvifs/viroutefs"); links.forEach { (label, url) -> OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }) { Text(label) } } } }
+    item { CompactCard("Версия", "ViRouteFS ${BuildConfig.VERSION_NAME}", "versionCode ${BuildConfig.VERSION_CODE}") }
+}
+
+}
+@Composable
+private fun DiagnosticCard(title: String, result: DiagnosticResult) = CompactCard(title, result.simpleExplanation, result.technicalDetailsWithElapsed() + "\nЧто сделать: " + result.recommendedAction)
+
+@Composable
+private fun Header(title: String, subtitle: String) = Column(verticalArrangement = Arrangement.spacedBy(6.dp)) { Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text(subtitle, style = MaterialTheme.typography.bodyMedium) }
+
+@Composable
+private fun CompactCard(title: String, simple: String, details: String) = CardBlock { Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold); Text(simple); Text(details, style = MaterialTheme.typography.bodySmall) }
+
+@Composable
+private fun CardBlock(content: @Composable ColumnScope.() -> Unit) = Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest)) { Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content) }
+
+@Composable
+private fun ScreenList(padding: PaddingValues, content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) = LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 14.dp, top = padding.calculateTopPadding() + 14.dp, end = 14.dp, bottom = padding.calculateBottomPadding() + 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TunnelTypeDropdown(value: TunnelType, onSelect: (TunnelType) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
+        OutlinedTextField(value = value.label, onValueChange = {}, readOnly = true, label = { Text("Тип") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            TunnelType.entries.filterNot { it.name.endsWith("Mock") }.forEach { type -> DropdownMenuItem(text = { Text(type.label) }, onClick = { onSelect(type); expanded = false }) }
         }
-    }
-}
-
-@Composable
-private fun DiagnosticResultCard(
-    title: String,
-    result: DiagnosticResult?,
-    notRunText: String,
-) {
-    val content = if (result == null) {
-        InfoCardContent(
-            title = title,
-            simpleExplanation = notRunText,
-            technicalDetails = stringResource(R.string.diagnostic_not_run_details),
-            recommendedAction = stringResource(R.string.diagnostic_not_run_action),
-        )
-    } else {
-        InfoCardContent(
-            title = title,
-            simpleExplanation = result.simpleExplanation,
-            technicalDetails = result.technicalDetailsWithElapsed(),
-            recommendedAction = result.recommendedAction,
-        )
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        result?.let { diagnosticResult ->
-            AssistChip(
-                onClick = {},
-                label = { Text(diagnosticResult.status.toRussianLabel()) },
-            )
-        }
-        InfoCard(content = content)
-    }
-}
-
-private fun DiagnosticStatus.toRussianLabel(): String = when (this) {
-    DiagnosticStatus.SUCCESS -> "Успех"
-    DiagnosticStatus.WARNING -> "Предупреждение"
-    DiagnosticStatus.ERROR -> "Ошибка"
-}
-
-@Composable
-private fun ScreenList(
-    contentPadding: PaddingValues,
-    content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit,
-) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(
-            start = 16.dp,
-            top = contentPadding.calculateTopPadding() + 16.dp,
-            end = 16.dp,
-            bottom = contentPadding.calculateBottomPadding() + 16.dp,
-        ),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        content = content,
-    )
-}
-
-@Composable
-private fun SectionHeader(
-    title: String,
-    subtitle: String,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-        )
-        Text(
-            text = subtitle,
-            style = MaterialTheme.typography.bodyMedium,
-        )
-    }
-}
-
-@Composable
-private fun InfoCard(content: InfoCardContent) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-        ),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.Security, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = content.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            LabeledText(
-                label = stringResource(R.string.card_label_simple_explanation),
-                body = content.simpleExplanation,
-            )
-            LabeledText(
-                label = stringResource(R.string.card_label_technical_details),
-                body = content.technicalDetails,
-            )
-            LabeledText(
-                label = stringResource(R.string.card_label_recommended_action),
-                body = content.recommendedAction,
-            )
-        }
-    }
-}
-
-@Composable
-private fun PlaceholderCard(
-    title: String,
-    body: String,
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            AssistChip(onClick = {}, label = { Text(stringResource(R.string.label_placeholder)) })
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(text = body)
-        }
-    }
-}
-
-@Composable
-private fun LabeledText(
-    label: String,
-    body: String,
-) {
-    Column {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = body,
-            style = MaterialTheme.typography.bodyMedium,
-        )
     }
 }
