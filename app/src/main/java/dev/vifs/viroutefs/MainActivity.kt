@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -38,6 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -159,6 +161,11 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
                         onClick = { selectedScreen = screen },
                         icon = { Icon(screen.icon, contentDescription = null) },
                         label = { Text(text.screen(screen), maxLines = 1, style = MaterialTheme.typography.labelSmall) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                        ),
                     )
                 }
             }
@@ -290,7 +297,25 @@ private fun ProfileCard(text: UiText, profile: TunnelProfile, config: RoutingCon
 @Composable
 private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
     var target by rememberSaveable { mutableStateOf("telegram") }
+    var selectedRouteId by rememberSaveable { mutableStateOf<String?>(null) }
+    val selectedRoute = config.rules.firstOrNull { it.id == selectedRouteId }
     val decision = remember(config, target) { RouteEngine(config).simulate(target) }
+
+    if (selectedRoute != null) {
+        RouteDetailsScreen(
+            padding = padding,
+            text = text,
+            rule = selectedRoute,
+            config = config,
+            onBack = { selectedRouteId = null },
+            onConfig = { next, message ->
+                onConfig(next, message)
+                if (next.rules.none { it.id == selectedRoute.id }) selectedRouteId = null
+            },
+        )
+        return
+    }
+
     ScreenList(padding) {
         item { Header(text.routes, text.routesSubtitle) }
         item {
@@ -299,34 +324,101 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
                 OutlinedTextField(target, { target = it }, label = { Text(text.domainIpApp) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Text("${decision.input} → ${decision.tunnelProfile.name}", style = MaterialTheme.typography.bodySmall)
                 StatusChip(decision.dnsPolicySummary)
-                Details(text.details, "${decision.plainReason}\n${decision.technicalDetails}\n${decision.recommendedAction}")
             }
         }
-        items(config.rules, key = { it.id }) { rule -> RouteRuleCard(text, rule, config, onConfig) }
+        items(config.rules, key = { it.id }) { rule ->
+            RouteRuleCard(
+                text = text,
+                rule = rule,
+                profileName = config.profiles.firstOrNull { it.id == rule.targetProfileId }?.name ?: rule.targetProfileId,
+                onOpen = { selectedRouteId = rule.id },
+            )
+        }
     }
 }
 
 @Composable
-private fun RouteRuleCard(text: UiText, rule: RouteRule, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
-    var expanded by rememberSaveable(rule.id) { mutableStateOf(false) }
-    val profile = config.profiles.firstOrNull { it.id == rule.targetProfileId }?.name ?: rule.targetProfileId
+private fun RouteRuleCard(text: UiText, rule: RouteRule, profileName: String, onOpen: () -> Unit) {
     CardBlock {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpen),
+        ) {
             Column(Modifier.weight(1f)) {
                 Text(rule.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                Text("${rule.type} • #${rule.priority} • ${rule.matchers.size + rule.appMatchers.size} ${text.matchers}", style = MaterialTheme.typography.labelSmall)
+                Text("→ $profileName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             StatusChip(if (rule.enabled) text.on else text.off)
         }
-        Text("→ $profile", style = MaterialTheme.typography.bodySmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(onClick = { onConfig(config.copy(rules = config.rules.map { if (it.id == rule.id) it.copy(enabled = !it.enabled) else it }), text.saved) }) { Text(if (rule.enabled) text.disable else text.enable) }
-            OutlinedButton(onClick = { expanded = !expanded }) { Text(if (expanded) text.less else text.editors) }
+    }
+}
+
+@Composable
+private fun RouteDetailsScreen(
+    padding: PaddingValues,
+    text: UiText,
+    rule: RouteRule,
+    config: RoutingConfig,
+    onBack: () -> Unit,
+    onConfig: (RoutingConfig, String?) -> Unit,
+) {
+    var name by rememberSaveable(rule.id) { mutableStateOf(rule.name) }
+    var enabled by rememberSaveable(rule.id) { mutableStateOf(rule.enabled) }
+    var targetProfileId by rememberSaveable(rule.id) { mutableStateOf(rule.targetProfileId) }
+    val dnsPolicy = rule.dnsPolicyId?.let { id -> config.dnsPolicies.firstOrNull { it.id == id } }
+
+    ScreenList(padding) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onBack) { Text(text.back) }
+                Header(text.routeDetails, text.routeDetailsSubtitle)
+            }
         }
-        if (expanded) {
-            Text(text.appsDomainsIps, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
-            Text((rule.appMatchers.map { it.displayName ?: it.value } + rule.matchers).joinToString(" • "), style = MaterialTheme.typography.bodySmall)
-            Details(text.details, "${rule.reason}\n${rule.technicalDetails}\n${rule.recommendedAction}")
+        item {
+            CardBlock {
+                OutlinedTextField(name, { name = it }, label = { Text(text.name) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Text(text.targetProfile, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                ChipRow {
+                    config.profiles.forEach { profile ->
+                        FilterChip(
+                            selected = targetProfileId == profile.id,
+                            onClick = { targetProfileId = profile.id },
+                            label = { Text(profile.name, maxLines = 1) },
+                        )
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                    Text(text.enabled, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = enabled, onCheckedChange = { enabled = it })
+                }
+                dnsPolicy?.let { StatusChip("DNS: ${it.name}") }
+            }
+        }
+        item {
+            CardBlock {
+                Text(text.apps, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                Text(rule.appMatchers.map { it.displayName ?: it.value }.joinToString(" • ").ifBlank { text.none }, style = MaterialTheme.typography.bodySmall)
+                Text(text.domainsIps, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                Text(rule.matchers.joinToString(" • ").ifBlank { text.none }, style = MaterialTheme.typography.bodySmall)
+                Details(text.details, "${rule.reason}\n${rule.technicalDetails}\n${rule.recommendedAction}")
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    onConfig(
+                        config.copy(rules = config.rules.map {
+                            if (it.id == rule.id) it.copy(name = name.ifBlank { rule.name }, enabled = enabled, targetProfileId = targetProfileId) else it
+                        }),
+                        text.saved,
+                    )
+                    onBack()
+                }) { Text(text.save) }
+                OutlinedButton(onClick = { onConfig(config.copy(rules = config.rules.filterNot { it.id == rule.id }), text.routeDeleted) }) { Text(text.delete) }
+            }
         }
     }
 }
@@ -586,7 +678,7 @@ private class UiText(private val language: AppLanguage) {
     val more = t("Ещё", "More", "更多")
     val dashboardSubtitle = t("Короткий статус приложения и приватности.", "Short app and privacy status.", "应用和隐私状态概览。")
     val vpnSubtitle = t("Профили и общий демонстрационный переключатель.", "Profiles and the master demo switch.", "配置文件和主演示开关。")
-    val routesSubtitle = t("Симуляция правил без реального VPN-движка.", "Rule simulation without a real VPN engine.", "无真实 VPN 引擎的规则模拟。")
+    val routesSubtitle = t("Какой тоннель используется. Нажмите маршрут для деталей.", "Which tunnel is used. Tap a route for details.", "查看使用哪个隧道。点按路由查看详情。")
     val dnsSubtitle = t("Проверка DNS и локальные политики.", "DNS checks and local policies.", "DNS 检查和本地策略。")
     val fsSubtitle = t("Плотная лента событий, пока только пример.", "Dense event feed, sample only for now.", "紧凑事件列表，目前仅为示例。")
     val toolsSubtitle = t("TCP, TLS, HTTP и маршрутная диагностика.", "TCP, TLS, HTTP, and route diagnostics.", "TCP、TLS、HTTP 和路由诊断。")
@@ -636,6 +728,14 @@ private class UiText(private val language: AppLanguage) {
     val enable = t("Вкл", "Enable", "启用")
     val editors = t("Редакторы", "Editors", "编辑器")
     val appsDomainsIps = t("Приложения / домены / IP", "Apps / domains / IPs", "应用 / 域名 / IP")
+    val back = t("Назад", "Back", "返回")
+    val routeDetails = t("Детали маршрута", "Route details", "路由详情")
+    val routeDetailsSubtitle = t("Настройте цель и состояние маршрута.", "Adjust the route target and state.", "调整路由目标和状态。")
+    val targetProfile = t("Тоннель / профиль", "Tunnel / profile", "隧道 / 配置")
+    val enabled = t("Включён", "Enabled", "已启用")
+    val apps = t("Приложения", "Apps", "应用")
+    val domainsIps = t("Домены и IP/CIDR", "Domains and IP/CIDR", "域名和 IP/CIDR")
+    val routeDeleted = t("Маршрут удалён.", "Route deleted.", "路由已删除。")
     val lookup = t("DNS-запрос", "DNS lookup", "DNS 查询")
     val domain = t("Домен", "Domain", "域名")
     val type = t("Тип", "Type", "类型")
