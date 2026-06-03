@@ -36,22 +36,33 @@ private val DarkColors = darkColorScheme(
     surfaceContainerHighest = Color(0xFF252832),
 )
 
+private val AmoledAccentRed = Color(0xFFFF3B30)
+private val AmoledAccentRedContainer = Color(0xFF5F0000)
+
 private val AmoledColors = darkColorScheme(
-    primary = Color(0xFF9DBBFF),
-    onPrimary = Color(0xFF002D68),
-    primaryContainer = Color(0xFF0B3A7A),
-    onPrimaryContainer = Color(0xFFD9E2FF),
-    secondary = Color(0xFFB5C7E4),
-    onSecondary = Color(0xFF203044),
+    primary = AmoledAccentRed,
+    onPrimary = Color.White,
+    primaryContainer = AmoledAccentRedContainer,
+    onPrimaryContainer = Color(0xFFFFDAD6),
+    secondary = Color(0xFFBDBDBD),
+    onSecondary = Color.Black,
+    secondaryContainer = AmoledAccentRedContainer,
+    onSecondaryContainer = Color.White,
+    tertiary = AmoledAccentRed,
+    onTertiary = Color.White,
     surface = Color.Black,
-    onSurface = Color(0xFFE8E8EE),
+    onSurface = Color(0xFFF2F2F2),
+    surfaceVariant = Color(0xFF161616),
+    onSurfaceVariant = Color(0xFFC7C7C7),
     background = Color.Black,
-    onBackground = Color(0xFFE8E8EE),
+    onBackground = Color(0xFFF2F2F2),
+    outline = Color(0xFF777777),
+    outlineVariant = Color(0xFF2A2A2A),
     surfaceContainerLowest = Color.Black,
-    surfaceContainerLow = Color(0xFF050505),
-    surfaceContainer = Color(0xFF080808),
-    surfaceContainerHigh = Color(0xFF101010),
-    surfaceContainerHighest = Color(0xFF171717),
+    surfaceContainerLow = Color.Black,
+    surfaceContainer = Color(0xFF050505),
+    surfaceContainerHigh = Color(0xFF0D0D0D),
+    surfaceContainerHighest = Color(0xFF151515),
 )
 
 @Composable
