@@ -17,6 +17,8 @@ object RoutingConfigDefaults {
         profiles = defaultProfiles(),
         dnsPolicies = defaultDnsPolicies(),
         rules = defaultRules(),
+        defaultProfileId = DIRECT_PROFILE_ID,
+        hostOverrides = defaultHostOverrides(),
     )
 
     fun workPersonalConfig(): RoutingConfig = defaultConfig()
@@ -57,6 +59,7 @@ object RoutingConfigDefaults {
             description = "Трафик остаётся в текущей сети устройства без тоннеля.",
             mockOnly = false,
             platformNotes = "Подходит для Android, Linux и Windows как модель прямого выхода.",
+            dnsPolicyId = DIRECT_DNS_ID,
         ),
         TunnelProfile(
             id = BLOCK_PROFILE_ID,
@@ -64,34 +67,39 @@ object RoutingConfigDefaults {
             type = TunnelType.Block,
             description = "Маршрут должен быть запрещён политикой пользователя.",
             mockOnly = false,
+            dnsPolicyId = SYSTEM_DNS_ID,
         ),
         TunnelProfile(
             id = XRAY_GERMANY_PROFILE_ID,
             name = "Xray Германия",
-            type = TunnelType.XrayMock,
+            type = TunnelType.XrayVlessReality,
             description = "Mock-профиль будущего Xray-маршрута через Германию.",
             platformNotes = MOCK_PROFILE_LIMITATION,
+            dnsPolicyId = TUNNEL_DNS_ID,
         ),
         TunnelProfile(
             id = HYSTERIA2_NL_PROFILE_ID,
             name = "Hysteria2 Нидерланды",
-            type = TunnelType.Hysteria2Mock,
+            type = TunnelType.Hysteria2,
             description = "Mock-профиль будущего быстрого Hysteria2-маршрута для медиа.",
             platformNotes = MOCK_PROFILE_LIMITATION,
+            dnsPolicyId = TUNNEL_DNS_ID,
         ),
         TunnelProfile(
             id = OPENVPN_WORK_PROFILE_ID,
             name = "OpenVPN Работа",
-            type = TunnelType.OpenVpnMock,
+            type = TunnelType.OpenVpn,
             description = "Mock-профиль будущего рабочего OpenVPN-маршрута.",
             platformNotes = MOCK_PROFILE_LIMITATION,
+            dnsPolicyId = WORK_DNS_ID,
         ),
         TunnelProfile(
             id = SOCKS5_WORK_VM_PROFILE_ID,
             name = "SOCKS5 рабочая VM",
-            type = TunnelType.Socks5Mock,
+            type = TunnelType.Socks5,
             description = "Mock-профиль будущего SOCKS5-прокси на рабочей виртуальной машине.",
             platformNotes = MOCK_PROFILE_LIMITATION,
+            dnsPolicyId = WORK_DNS_ID,
         ),
     )
 
@@ -125,6 +133,15 @@ object RoutingConfigDefaults {
             serverText = "DNS внутри выбранного тоннеля",
             resolveThroughProfileId = HYSTERIA2_NL_PROFILE_ID,
             description = "Mock-политика DNS внутри медиа/тоннельного профиля.",
+        ),
+    )
+
+    private fun defaultHostOverrides(): List<DnsHostOverride> = listOf(
+        DnsHostOverride(
+            id = "local_dev",
+            hostname = "router.test",
+            ipAddress = "192.168.1.1",
+            note = "Пример локальной hosts-like привязки для симуляции.",
         ),
     )
 

@@ -2,7 +2,7 @@ package dev.vifs.viroutefs.routing
 
 import java.util.Locale
 
-const val CURRENT_ROUTING_CONFIG_VERSION = 1
+const val CURRENT_ROUTING_CONFIG_VERSION = 2
 const val MOCK_PROFILE_LIMITATION = "Профиль пока не подключает реальный тоннель. Он используется для симуляции маршрутов."
 const val DNS_POLICY_LIMITATION = "DNS-политика пока используется для объяснения и проверки риска утечки. Реальное DNS-маршрутизирование будет добавлено позже."
 
@@ -11,6 +11,8 @@ data class RoutingConfig(
     val profiles: List<TunnelProfile>,
     val dnsPolicies: List<DnsPolicy>,
     val rules: List<RouteRule>,
+    val defaultProfileId: String? = null,
+    val hostOverrides: List<DnsHostOverride> = emptyList(),
 )
 
 data class TunnelProfile(
@@ -21,11 +23,58 @@ data class TunnelProfile(
     val enabled: Boolean = true,
     val mockOnly: Boolean = type.isMockOnly,
     val platformNotes: String? = null,
+    val dnsPolicyId: String? = null,
+) {
+    val warningText: String?
+        get() = when (type) {
+            TunnelType.Pptp -> "Устаревший и небезопасный протокол. Используйте только для старых сетей, если другого варианта нет."
+            TunnelType.L2tp -> "Устаревший и небезопасный режим."
+            TunnelType.L2tpIpSec, TunnelType.Sstp -> "Legacy/corporate compatibility: используйте только при необходимости совместимости."
+            else -> null
+        }
+}
+
+data class DnsHostOverride(
+    val id: String,
+    val hostname: String,
+    val ipAddress: String,
+    val enabled: Boolean = true,
+    val note: String? = null,
 )
 
 enum class TunnelType(val label: String, val isMockOnly: Boolean) {
     Direct("Direct", false),
     Block("Block", false),
+    WireGuard("WireGuard", true),
+    OpenVpn("OpenVPN", true),
+    OpenConnectAnyConnect("OpenConnect / AnyConnect", true),
+    Ikev2IpSec("IKEv2 / IPSec", true),
+    SoftEther("SoftEther", true),
+    ZeroTier("ZeroTier", true),
+    TailscaleCompatible("Tailscale-compatible", true),
+    HeadscaleCompatible("Headscale-compatible", true),
+    XrayVlessReality("Xray / VLESS / Reality", true),
+    VMess("VMess", true),
+    Trojan("Trojan", true),
+    Shadowsocks("Shadowsocks", true),
+    Shadowsocks2022("Shadowsocks 2022", true),
+    Hysteria2("Hysteria2", true),
+    Tuic("TUIC", true),
+    NaiveProxy("NaiveProxy", true),
+    Brook("Brook", true),
+    ShadowTls("ShadowTLS", true),
+    Socks5("SOCKS5", true),
+    HttpProxy("HTTP proxy", true),
+    HttpsProxy("HTTPS proxy", true),
+    SshTunnel("SSH tunnel", true),
+    L2tpIpSec("L2TP/IPSec", true),
+    L2tp("L2TP", true),
+    Pptp("PPTP", true),
+    Sstp("SSTP", true),
+    IpSecXAuth("IPSec XAuth", true),
+    IpSecPsk("IPSec PSK", true),
+
+    // Backward-compatible names used by exported 0.4.0-alpha configs.
     XrayMock("Xray mock", true),
     Hysteria2Mock("Hysteria2 mock", true),
     OpenVpnMock("OpenVPN mock", true),
@@ -48,6 +97,7 @@ enum class DnsPolicyType(val label: String) {
     Direct("Direct DNS"),
     WorkMock("Work DNS mock"),
     TunnelMock("Tunnel DNS mock"),
+    Custom("Custom DNS"),
 }
 
 data class AppMatcher(
@@ -124,7 +174,8 @@ class RouteEngine(
         ?: config.rules.first { it.type == RouteRuleType.DEFAULT }
 
         val targetProfile = profilesById[matchedRule.targetProfileId]
-        val fallbackProfile = config.profiles.firstOrNull { it.enabled && it.type == TunnelType.Direct }
+        val fallbackProfile = config.defaultProfileId?.let { profilesById[it] }?.takeIf { it.enabled }
+            ?: config.profiles.firstOrNull { it.enabled && it.type == TunnelType.Direct }
             ?: config.profiles.first()
         val selectedProfile = targetProfile?.takeIf { it.enabled } ?: fallbackProfile
         val dnsPolicy = matchedRule.dnsPolicyId?.let { dnsPoliciesById[it] }?.takeIf { it.enabled }
@@ -231,11 +282,13 @@ class RouteEngine(
 fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
     val profileIds = config.profiles.map { it.id }.toSet()
     val dnsPolicyIds = config.dnsPolicies.map { it.id }.toSet()
+    config.defaultProfileId?.takeIf { it !in profileIds }?.let { add("Основной профиль $it не найден.") }
     if (config.profiles.isEmpty()) add("Нужен хотя бы один профиль маршрута.")
     if (config.rules.isEmpty()) add("Нужно хотя бы одно правило маршрутизации.")
     config.profiles.forEach { profile ->
         if (profile.id.isBlank()) add("Профиль без id: ${profile.name}")
         if (profile.name.isBlank()) add("Профиль ${profile.id} без имени.")
+        profile.dnsPolicyId?.takeIf { it !in dnsPolicyIds }?.let { add("Профиль ${profile.name}: DNS-политика $it не найдена.") }
     }
     config.dnsPolicies.forEach { policy ->
         if (policy.id.isBlank()) add("DNS-политика без id: ${policy.name}")
@@ -243,6 +296,11 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
         policy.resolveThroughProfileId?.takeIf { it !in profileIds }?.let {
             add("DNS-политика ${policy.name} ссылается на отсутствующий профиль $it.")
         }
+    }
+    config.hostOverrides.forEach { override ->
+        if (override.id.isBlank()) add("DNS override без id: ${override.hostname}")
+        if (override.hostname.isBlank()) add("DNS override ${override.id} без hostname.")
+        if (override.ipAddress.isBlank()) add("DNS override ${override.hostname} без IP.")
     }
     config.rules.forEach { rule ->
         if (rule.name.isBlank()) add("Правило ${rule.id} без имени.")

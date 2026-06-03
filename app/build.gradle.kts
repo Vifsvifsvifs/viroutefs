@@ -12,8 +12,8 @@ android {
         applicationId = "dev.vifs.viroutefs"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0-alpha"
+        versionCode = 5
+        versionName = "0.4.1-alpha"
     }
 
     buildTypes {
@@ -23,6 +23,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+        }
+    }
+
+    applicationVariants.all {
+        if (name == "debug") {
+            outputs.all {
+                val variantOutput = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
+                variantOutput.outputFileName = "ViRouteFS-debug-0.4.1-alpha.apk"
+            }
         }
     }
 
