@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 package dev.vifs.viroutefs.vpn
 
 import android.content.BroadcastReceiver
