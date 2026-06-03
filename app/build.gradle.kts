@@ -40,15 +40,6 @@ android {
         buildConfig = true
     }
 
-    // Keep the default debug APK name (app-debug.apk); CI copies it to the release artifact name.
-}
-
-androidComponents {
-    onVariants(selector().withBuildType("debug")) { variant ->
-        variant.outputs.forEach { output ->
-            output.outputFileName.set("ViRouteFS-debug-0.4.1-alpha.apk")
-        }
-    }
 }
 
 dependencies {
