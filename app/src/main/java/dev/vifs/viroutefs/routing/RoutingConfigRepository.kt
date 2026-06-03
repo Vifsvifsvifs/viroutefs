@@ -76,16 +76,19 @@ class RoutingConfigRepository(
         put("dnsPolicyId", dnsPolicyId)
     }
 
-    private fun JSONObject.toTunnelProfile(): TunnelProfile = TunnelProfile(
-        id = getString("id"),
-        name = getString("name"),
-        type = enumValueOf(optString("type", TunnelType.Direct.name)),
-        description = optString("description"),
-        enabled = optBoolean("enabled", true),
-        mockOnly = optBoolean("mockOnly", enumValueOf<TunnelType>(optString("type", TunnelType.Direct.name)).isMockOnly),
-        platformNotes = optNullableString("platformNotes"),
-        dnsPolicyId = optNullableString("dnsPolicyId"),
-    )
+    private fun JSONObject.toTunnelProfile(): TunnelProfile {
+        val type = optTunnelType("type", TunnelType.Direct)
+        return TunnelProfile(
+            id = getString("id"),
+            name = getString("name"),
+            type = type,
+            description = optString("description"),
+            enabled = optBoolean("enabled", true),
+            mockOnly = optBoolean("mockOnly", type.isMockOnly),
+            platformNotes = optNullableString("platformNotes"),
+            dnsPolicyId = optNullableString("dnsPolicyId"),
+        )
+    }
 
     private fun DnsHostOverride.toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -116,7 +119,7 @@ class RoutingConfigRepository(
     private fun JSONObject.toDnsPolicy(): DnsPolicy = DnsPolicy(
         id = getString("id"),
         name = getString("name"),
-        type = enumValueOf(optString("type", DnsPolicyType.System.name)),
+        type = optEnum("type", DnsPolicyType.System),
         serverText = optNullableString("serverText"),
         resolveThroughProfileId = optNullableString("resolveThroughProfileId"),
         description = optString("description"),
@@ -141,7 +144,7 @@ class RoutingConfigRepository(
     private fun JSONObject.toRouteRule(): RouteRule = RouteRule(
         id = getString("id"),
         name = getString("name"),
-        type = enumValueOf(optString("type", RouteRuleType.DOMAIN.name)),
+        type = optEnum("type", RouteRuleType.DOMAIN),
         targetProfileId = optString("targetProfileId", optString("targetTunnelId")),
         dnsPolicyId = optNullableString("dnsPolicyId"),
         priority = optInt("priority", 1000),
@@ -171,7 +174,31 @@ class RoutingConfigRepository(
         transform(getJSONObject(index))
     }
 
+    private inline fun <reified T : Enum<T>> JSONObject.optEnum(key: String, fallback: T): T {
+        val value = optNullableString(key) ?: return fallback
+        return enumValues<T>().firstOrNull { it.name.equals(value, ignoreCase = true) } ?: fallback
+    }
+
+    private fun JSONObject.optTunnelType(key: String, fallback: TunnelType): TunnelType {
+        val value = optNullableString(key) ?: return fallback
+        return enumValues<TunnelType>().firstOrNull { it.name.equals(value, ignoreCase = true) }
+            ?: legacyTunnelTypeAliases[value.lowercase()]
+            ?: fallback
+    }
+
     private fun JSONObject.optNullableString(key: String): String? = if (has(key) && !isNull(key)) optString(key).takeIf { it.isNotBlank() } else null
+
+    private companion object {
+        val legacyTunnelTypeAliases = mapOf(
+            "xray" to TunnelType.XrayMock,
+            "xrayvless" to TunnelType.XrayVlessReality,
+            "vless" to TunnelType.XrayVlessReality,
+            "hysteria" to TunnelType.Hysteria2,
+            "openvpn" to TunnelType.OpenVpn,
+            "socks" to TunnelType.Socks5,
+            "socks5" to TunnelType.Socks5,
+        )
+    }
 }
 
 data class RoutingConfigLoadResult(
