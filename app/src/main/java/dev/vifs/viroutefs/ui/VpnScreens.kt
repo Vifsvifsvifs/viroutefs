@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 package dev.vifs.viroutefs.ui
 
 import androidx.compose.foundation.clickable
@@ -98,6 +100,7 @@ internal fun VpnScreen(
                         Text(text.vpnLocalPreviewTitle, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                         StatusChip(vpnState.label(text))
                         Text(text.vpnNoTrafficRoutingYet, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(text.vpnPacketProcessingLater, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(checked = vpnState.switchChecked, onCheckedChange = onVpnSwitch)
                 }
@@ -106,7 +109,7 @@ internal fun VpnScreen(
         item {
             CardBlock {
                 Text(text.vpnNoHiddenInterception, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                Text(text.vpnPacketProcessingLater, style = MaterialTheme.typography.bodySmall)
+                StatusChip(if (vpnState.status == VpnServiceStatus.TunPreviewActive) text.vpnTunActive else text.vpnTunInactive)
                 Details(text.details, text.vpnLifecycleOnlyDetails)
                 vpnState.detail?.let { WarningText(it) }
             }
@@ -305,14 +308,17 @@ private fun TunnelTypeDropdown(text: UiText, value: TunnelType, onSelect: (Tunne
 
 
 private val VpnServiceUiState.switchChecked: Boolean
-    get() = status == VpnServiceStatus.Starting || status == VpnServiceStatus.Active
+    get() = status == VpnServiceStatus.Starting ||
+        status == VpnServiceStatus.ServiceActiveNoTun ||
+        status == VpnServiceStatus.TunPreviewActive
 
 private fun VpnServiceUiState.label(text: UiText): String = when (status) {
     VpnServiceStatus.Off -> text.off
     VpnServiceStatus.PermissionRequired -> text.vpnPermissionRequired
     VpnServiceStatus.NotificationPermissionRequired -> text.vpnNotificationPermissionRequired
     VpnServiceStatus.Starting -> text.vpnStarting
-    VpnServiceStatus.Active -> text.vpnLocalServiceActive
+    VpnServiceStatus.ServiceActiveNoTun -> text.vpnLocalServiceActive
+    VpnServiceStatus.TunPreviewActive -> text.vpnTunPreviewActive
     VpnServiceStatus.Stopped -> text.vpnStopped
     VpnServiceStatus.Error -> text.vpnError
 }

@@ -10,25 +10,28 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import dev.vifs.viroutefs.MainActivity
 import dev.vifs.viroutefs.R
 
 /**
- * Safe ViRouteFS VpnService preview for 0.5.1-alpha.
+ * Safe ViRouteFS route-less TUN preview for 0.6.0-alpha.
  *
- * This service intentionally does not call Builder.establish(), does not create
- * a TUN interface, and does not capture, inspect, route, or tunnel packets yet.
- * It only proves the Android VPN permission and local foreground service
- * lifecycle so device connectivity is not broken by an unfinished tunnel.
+ * This service creates a minimal Android TUN interface only when the local VPN
+ * preview is explicitly started. It deliberately does not add routes, DNS
+ * servers, packet reading, packet inspection, packet forwarding, proxying, or
+ * tunnel engines, so normal device internet should remain unchanged.
  */
 class ViRouteVpnService : VpnService() {
+    private var tunDescriptor: ParcelFileDescriptor? = null
+
     override fun onCreate() {
         super.onCreate()
         publishState(VpnServiceStatus.Starting)
         runCatching {
             createNotificationChannel()
-            startForeground(NOTIFICATION_ID, buildNotification())
+            startForeground(NOTIFICATION_ID, buildNotification(VpnServiceStatus.ServiceActiveNoTun))
         }.onFailure { error ->
             val detail = error.localizedMessage ?: "Foreground service notification setup failed."
             publishState(VpnServiceStatus.Error, detail)
@@ -38,26 +41,87 @@ class ViRouteVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == VpnServiceController.ACTION_STOP) {
-            isRunning = false
-            publishState(VpnServiceStatus.Stopped)
-            stopSelf()
+            stopPreview()
             return START_NOT_STICKY
         }
 
         if (lastState.status == VpnServiceStatus.Error) return START_NOT_STICKY
 
         isRunning = true
-        publishState(VpnServiceStatus.Active)
+        if (!SAFE_TUN_PREVIEW_ENABLED) {
+            publishState(VpnServiceStatus.ServiceActiveNoTun, "TUN preview is disabled.")
+            updateNotification(VpnServiceStatus.ServiceActiveNoTun)
+            return START_STICKY
+        }
+
+        if (tunDescriptor != null) {
+            publishState(VpnServiceStatus.TunPreviewActive)
+            updateNotification(VpnServiceStatus.TunPreviewActive)
+            return START_STICKY
+        }
+
+        establishTunPreview()
         return START_STICKY
     }
 
+    override fun onRevoke() {
+        stopPreview()
+        super.onRevoke()
+    }
+
     override fun onDestroy() {
+        closeTunDescriptor()
         isRunning = false
         if (lastState.status != VpnServiceStatus.Error) publishState(VpnServiceStatus.Stopped)
         super.onDestroy()
     }
 
-    private fun buildNotification(): Notification {
+    private fun establishTunPreview() {
+        publishState(VpnServiceStatus.Starting)
+        val descriptor = runCatching {
+            Builder()
+                .setSession(TUN_SESSION_NAME)
+                .setMtu(TUN_MTU)
+                .addAddress(TUN_IPV4_ADDRESS, TUN_IPV4_PREFIX_LENGTH)
+                .establish()
+        }.onFailure { error ->
+            val detail = error.localizedMessage ?: "Could not establish route-less TUN preview."
+            publishState(VpnServiceStatus.Error, detail)
+            updateNotification(VpnServiceStatus.ServiceActiveNoTun)
+            isRunning = false
+            stopSelf()
+        }.getOrNull()
+
+        if (descriptor == null) {
+            if (lastState.status != VpnServiceStatus.Error) {
+                publishState(VpnServiceStatus.Error, "Android returned no TUN descriptor for the route-less preview.")
+                updateNotification(VpnServiceStatus.ServiceActiveNoTun)
+                isRunning = false
+                stopSelf()
+            }
+            return
+        }
+
+        tunDescriptor = descriptor
+        publishState(VpnServiceStatus.TunPreviewActive)
+        updateNotification(VpnServiceStatus.TunPreviewActive)
+    }
+
+    private fun stopPreview() {
+        closeTunDescriptor()
+        isRunning = false
+        publishState(VpnServiceStatus.Stopped)
+        stopSelf()
+    }
+
+    private fun closeTunDescriptor() {
+        tunDescriptor?.let { descriptor ->
+            runCatching { descriptor.close() }
+        }
+        tunDescriptor = null
+    }
+
+    private fun buildNotification(status: VpnServiceStatus): Notification {
         val openIntent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -65,20 +129,29 @@ class ViRouteVpnService : VpnService() {
             openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val text = when (status) {
+            VpnServiceStatus.TunPreviewActive -> "TUN preview active — no traffic routes installed"
+            else -> "Local VPN preview — no traffic routing yet"
+        }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("ViRouteFS local VPN preview")
-            .setContentText("No traffic routing or packet capture yet")
+            .setContentText(text)
             .setStyle(
                 NotificationCompat.BigTextStyle().bigText(
-                    "ViRouteFS local VPN preview is active. No traffic routing, packet capture, TUN interface, or hidden interception is enabled yet.",
+                    "$text. No DNS servers, packet capture, packet forwarding, proxying, or VPN engines are enabled.",
                 ),
             )
             .setOngoing(true)
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
+    }
+
+    private fun updateNotification(status: VpnServiceStatus) {
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.notify(NOTIFICATION_ID, buildNotification(status))
     }
 
     private fun createNotificationChannel() {
@@ -118,5 +191,10 @@ class ViRouteVpnService : VpnService() {
 
         private const val CHANNEL_ID = "viroutefs_vpn_preview"
         private const val NOTIFICATION_ID = 500
+        private const val SAFE_TUN_PREVIEW_ENABLED = true
+        private const val TUN_SESSION_NAME = "ViRouteFS TUN preview"
+        private const val TUN_IPV4_ADDRESS = "10.250.0.2"
+        private const val TUN_IPV4_PREFIX_LENGTH = 32
+        private const val TUN_MTU = 1500
     }
 }

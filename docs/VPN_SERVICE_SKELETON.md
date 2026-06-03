@@ -1,6 +1,6 @@
-# ViRouteFS VPN service skeleton — 0.5.1-alpha
+# ViRouteFS route-less TUN skeleton — 0.6.0-alpha
 
-ViRouteFS `0.5.1-alpha` stabilizes the safe Android `VpnService` foundation before any real routing engines are connected.
+ViRouteFS `0.6.0-alpha` adds the first safe Android `VpnService` TUN preview. The goal is only to prove that Android can establish and close a VPN interface from the app without routing user traffic yet.
 
 ## What is included
 
@@ -8,8 +8,25 @@ ViRouteFS `0.5.1-alpha` stabilizes the safe Android `VpnService` foundation befo
 - Manifest registration with `android.permission.BIND_VPN_SERVICE` and the `android.net.VpnService` intent action.
 - Android VPN permission flow from the VPN screen via `VpnService.prepare(context)`.
 - Android 13+ `POST_NOTIFICATIONS` handling before the foreground VPN preview service is started.
-- A foreground notification and Android O+ notification channel for the local VPN service preview.
-- UI states for off, VPN permission required, notification permission required, starting, active, stopped, and error.
+- A foreground notification and Android O+ notification channel for the local VPN preview.
+- A route-less TUN preview session named `ViRouteFS TUN preview`.
+- One private IPv4 address on the preview interface: `10.250.0.2/32`.
+- A safe MTU value of `1500`.
+- UI states for `Off`, `PermissionRequired`, `NotificationPermissionRequired`, `Starting`, `ServiceActiveNoTun`, `TunPreviewActive`, `Stopped`, and `Error`.
+
+## Route-less TUN behavior
+
+The 0.6.0-alpha TUN preview intentionally creates only the minimum interface needed to validate the `VpnService.Builder.establish()` lifecycle:
+
+- It does **not** add routes.
+- It does **not** add `0.0.0.0/0`.
+- It does **not** add an IPv6 default route.
+- It does **not** add DNS servers.
+- It does **not** read packets from the TUN descriptor.
+- It does **not** inspect, parse, log, capture, forward, or proxy packets.
+- It does **not** start Xray, OpenVPN, WireGuard, Hysteria2, SOCKS5, or any other VPN/proxy engine.
+
+Because no traffic routes are installed, normal device internet connectivity should remain unchanged while the preview is active.
 
 ## VPN permission behavior
 
@@ -33,30 +50,36 @@ On Android 13 and newer, ViRouteFS checks `POST_NOTIFICATIONS` before starting t
 
 The local VPN preview service is defensive and idempotent:
 
-- Starting when already active keeps the state active and does not create packet routing.
+- Starting when the route-less TUN is already active keeps the state active and does not create duplicate TUN handles.
 - Stopping when already stopped keeps the state stopped and does not crash.
-- Service state is published to the UI as `Off`, `Permission required`, `Notification permission required`, `Starting`, `Active`, `Stopped`, or `Error`.
-- Foreground notification setup is wrapped defensively; if service startup fails, the UI receives an error state.
+- Stop closes the stored `ParcelFileDescriptor` when present.
+- Service destroy and VPN revoke also close the descriptor.
+- If `Builder.establish()` returns `null`, the UI receives `Error` with a clear message.
+- If `Builder.establish()` throws, the exception is caught, the UI receives `Error`, and the app does not crash.
 
 The foreground notification is intentionally clear:
 
 - Title: `ViRouteFS local VPN preview`
-- Text: `No traffic routing or packet capture yet`
+- Text when TUN is active: `TUN preview active — no traffic routes installed`
+- Text when only the foreground service is active: `Local VPN preview — no traffic routing yet`
 
 ## Safety limits
 
-This milestone intentionally does **not** create a TUN interface and does **not** call `Builder.establish()`.
-
 There is no packet capture, packet inspection, routing, Xray, OpenVPN, WireGuard, Hysteria2, SOCKS5, telemetry, analytics, tracking, ads, cloud upload, or hidden interception in this release.
 
-The service is only a permission and foreground-service lifecycle preview, so enabling it should not redirect all device traffic or break normal internet connectivity.
+Logs and future PCAP exports remain local-first and are not uploaded automatically.
+
+## Next milestone
+
+The next VPN milestone is controlled Direct/Block route experiments. Those experiments should stay narrow, explicit, and reversible; they should not introduce full-device default routing by default.
 
 ## Manual test notes
 
 - Installing the debug APK should work.
 - Pressing the VPN master switch should show the Android VPN permission dialog if permission has not already been granted.
 - On Android 13+, the app should request notification permission before starting the foreground preview service when that permission is required.
-- After permissions are granted, the local foreground service should start and show the preview notification.
-- The service should not route or capture traffic and should not create a TUN interface.
-- Turning the switch off should stop the local service.
+- After permissions are granted, the VPN preview should start.
+- The TUN preview state should become active.
+- Browser and normal internet access should still work because no routes are installed.
+- Turning the switch off should close the TUN descriptor and stop the service cleanly.
 - Repeating start or stop actions should be safe.
