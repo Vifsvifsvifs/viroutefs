@@ -14,21 +14,30 @@ Focus: prove the Android VPN permission and TUN lifecycle without routing normal
 - No DNS injection into the VPN builder.
 - No forwarding, proxying, packet payload logging, or real tunnel engine.
 
-## 0.7.x: controlled route experiments
+## 0.6.7-alpha engine candidates and license planning
+
+- Engine candidates and third-party license planning are documented before any runtime integration.
+- Profile type documentation defines built-in, early outbound, and future VPN/tunnel/local DPI bypass profile families.
+- ByeDPI and OpenVPN3 are added to the roadmap as planned candidates. ByeDPI is planned as a local DPI bypass profile candidate; OpenVPN support should prefer the OpenVPN3 Core path.
+- No runtime engine integration, dependency additions, native binaries, default route, VPN builder DNS servers, packet payload logging, forwarding/proxying, telemetry, analytics, tracking, ads, or cloud upload are added in this milestone.
+
+## 0.7.0-alpha first outbound experiment
 
 Focus: start carefully testing route decisions while keeping full runtime enforcement disabled until packet handling is safe.
 
+- First real outbound experiment, likely SOCKS5.
+- Route target can use first real outbound.
+- Runtime must still preserve no-payload-logging and fail-closed policy.
 - Controlled System/Block route experiments.
 - Route explanations for why a destination would use System, be blocked, or be reserved for a future tunnel.
 - Safer UX around warnings, limitations, and diagnostics.
 - No runtime full-device enforcement until safe packet handling exists.
 - No hidden interception or payload logging.
 
-## 0.8.x: first external outbound experiment
+## 0.8.x: expanded outbound experiments
 
-Focus: first explicitly enabled outbound experiment after safe route handling is designed.
+Focus: expand explicitly enabled outbound experiments after safe route handling is designed.
 
-- First external outbound experiment, likely SOCKS5.
 - Route decision explanation before and during a test.
 - Clear user controls for enabling, testing, and disabling experimental outbound handling.
 - Diagnostics that separate policy decisions from network failures.
@@ -43,6 +52,13 @@ Focus: prepare user-friendly import flows while staying honest about implementat
 - Clear labels for implemented behavior versus planned behavior.
 - No claim that a tunnel engine works until it actually routes traffic safely.
 - Privacy review for export/reporting flows.
+
+## Later engine research
+
+- ByeDPI local profile research.
+- OpenVPN3 Core research.
+- WireGuard userspace research.
+- Xray/Hysteria2 import and engine research.
 
 ## 1.0: stable local-first routing profiles
 
