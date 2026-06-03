@@ -46,3 +46,11 @@ ViRouteFS must not include offensive or hidden surveillance behavior, including:
 ## Routing isolation boundary
 
 When network control is off, Android works normally and ViRouteFS does not control traffic. When network control is on in the product model, all traffic enters ViRouteFS: unmatched apps use the built-in System / Система route, matched app/domain/IP rules use only the selected profile, and unavailable selected profiles fail closed / Block. System is an internal default route, not bypass. Full runtime enforcement is a future routing-engine task and must be implemented without hidden interception, payload logging, telemetry, ads, tracking, or cloud upload. See docs/ROUTING_POLICY.md.
+
+
+## Manual update checks
+
+- ViRouteFS has no background update checks.
+- ViRouteFS has no telemetry, analytics, tracking SDKs, ads, or cloud upload.
+- The manual update checker contacts the public GitHub Releases API only after the user taps **Check for updates** in Settings.
+- The update checker sends no device identifiers and does not auto-download or auto-install APK files.
