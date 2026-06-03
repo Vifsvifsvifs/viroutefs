@@ -468,10 +468,10 @@ private fun SettingsScreen(padding: PaddingValues, text: UiText, settings: AppSe
         item { Header(text.settings, text.settingsSubtitle) }
         item {
             CardBlock {
-                Text(text.language, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Text(text.languageLabel, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 ChipRow {
-                    AppLanguage.entries.forEach { language ->
-                        FilterChip(selected = settings.language == language, onClick = { onSettings(settings.copy(language = language)) }, label = { Text(language.nativeName) })
+                    AppLanguage.entries.forEach { languageOption ->
+                        FilterChip(selected = settings.language == languageOption, onClick = { onSettings(settings.copy(language = languageOption)) }, label = { Text(languageOption.nativeName) })
                     }
                 }
             }
@@ -666,7 +666,7 @@ private class UiText(private val language: AppLanguage) {
     val routeDiagnostics = t("Маршрут", "Route", "路由")
     val mtuShort = t("Будущая проверка MTU.", "Future MTU check.", "未来的 MTU 检查。")
     val mtuDetails = t("Пока без активных сетевых действий.", "No active network action yet.", "目前不执行主动网络操作。")
-    val language = t("Язык", "Language", "语言")
+    val languageLabel = t("Язык", "Language", "语言")
     val theme = t("Тема", "Theme", "主题")
     val amoledNote = t("AMOLED использует настоящий чёрный фон, где это практично.", "AMOLED uses true black where practical.", "AMOLED 在适合处使用纯黑背景。")
     val supportProject = t("Поддержать проект", "Support project", "支持项目")
