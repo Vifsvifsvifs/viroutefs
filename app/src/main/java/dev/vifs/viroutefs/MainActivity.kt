@@ -1,10 +1,13 @@
 package dev.vifs.viroutefs
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -77,6 +80,9 @@ import dev.vifs.viroutefs.ui.DnsScreen
 import dev.vifs.viroutefs.ui.FlowScannerScreen
 import dev.vifs.viroutefs.ui.VpnScreen
 import dev.vifs.viroutefs.ui.theme.ViRouteFsTheme
+import dev.vifs.viroutefs.vpn.VpnServiceController
+import dev.vifs.viroutefs.vpn.VpnServiceStatus
+import dev.vifs.viroutefs.vpn.VpnServiceUiState
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -120,16 +126,61 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
     val scope = rememberCoroutineScope()
     val text = remember(settings.language) { UiText(settings.language) }
     val repository = remember(context) { RoutingConfigRepository(context.applicationContext) }
+    val vpnController = remember(context) { VpnServiceController(context.applicationContext) }
     var selectedScreen by rememberSaveable { mutableStateOf(AppScreen.Dashboard) }
     var config by remember { mutableStateOf(RoutingConfigDefaults.defaultConfig()) }
     var message by remember { mutableStateOf<String?>(null) }
     var loaded by remember { mutableStateOf(false) }
+    var vpnState by remember { mutableStateOf(vpnController.currentState()) }
 
     LaunchedEffect(Unit) {
         val result = repository.load()
         config = result.config
         message = result.errorMessage
         loaded = true
+    }
+
+    val vpnPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            vpnState = VpnServiceUiState(VpnServiceStatus.Starting)
+            runCatching { vpnController.startLocalService() }
+                .onFailure { error ->
+                    vpnState = VpnServiceUiState(VpnServiceStatus.Error, error.localizedMessage ?: text.vpnStartFailed)
+                }
+        } else {
+            vpnState = VpnServiceUiState(VpnServiceStatus.Error, text.vpnPermissionDenied)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        vpnState = vpnController.currentState()
+    }
+
+    androidx.compose.runtime.DisposableEffect(vpnController) {
+        val receiver = vpnController.registerStateReceiver { state -> vpnState = state }
+        onDispose { vpnController.unregisterStateReceiver(receiver) }
+    }
+
+    fun setVpnEnabled(enabled: Boolean) {
+        if (enabled) {
+            val permissionIntent = vpnController.prepareIntent()
+            if (permissionIntent != null) {
+                vpnState = VpnServiceUiState(VpnServiceStatus.PermissionRequired)
+                vpnPermissionLauncher.launch(permissionIntent)
+            } else {
+                vpnState = VpnServiceUiState(VpnServiceStatus.Starting)
+                runCatching { vpnController.startLocalService() }
+                    .onFailure { error ->
+                        vpnState = VpnServiceUiState(VpnServiceStatus.Error, error.localizedMessage ?: text.vpnStartFailed)
+                    }
+            }
+        } else {
+            runCatching { vpnController.stopLocalService() }
+                .onSuccess { vpnState = VpnServiceUiState(VpnServiceStatus.Stopped) }
+                .onFailure { error ->
+                    vpnState = VpnServiceUiState(VpnServiceStatus.Error, error.localizedMessage ?: text.vpnStopFailed)
+                }
+        }
     }
 
     fun updateConfig(newConfig: RoutingConfig, note: String? = null) {
@@ -168,7 +219,7 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
     ) { padding ->
         when (selectedScreen) {
             AppScreen.Dashboard -> DashboardScreen(padding, text, loaded, message)
-            AppScreen.Vpn -> VpnScreen(padding, text, config, ::updateConfig)
+            AppScreen.Vpn -> VpnScreen(padding, text, config, vpnState, ::setVpnEnabled, ::updateConfig)
             AppScreen.Routes -> RoutesScreen(padding, text, config, ::updateConfig)
             AppScreen.Dns -> DnsScreen(padding, text, config, ::updateConfig)
             AppScreen.Fs -> FlowScannerScreen(padding, text)
@@ -517,6 +568,19 @@ internal class UiText(private val language: AppLanguage) {
     val details = t("Подробнее", "Details", "详情")
     val less = t("Скрыть", "Less", "收起")
     val vpnDemoDetails = t("Переключатель показывает состояние UI. VPN-движки в этой версии не добавлены.", "The switch controls UI state only. VPN engines are not added in this release.", "此开关仅控制界面状态。本版本未添加 VPN 引擎。")
+    val vpnLocalPreviewTitle = t("Превью локального VPN-сервиса", "Local VPN service preview", "本地 VPN 服务预览")
+    val vpnNoTrafficRoutingYet = t("Маршрутизации трафика пока нет", "No traffic routing yet", "尚未路由流量")
+    val vpnNoHiddenInterception = t("Нет скрытого перехвата", "No hidden interception", "没有隐藏拦截")
+    val vpnPacketProcessingLater = t("Обработка пакетов будет добавлена позже.", "Packet processing will be added later.", "数据包处理稍后添加。")
+    val vpnLifecycleOnlyDetails = t("Это только разрешение Android VPN и жизненный цикл локального foreground-сервиса. TUN-интерфейс не создаётся, пакетный захват не запускается, интернет устройства не перенаправляется.", "This is only Android VPN permission plus a local foreground-service lifecycle. No TUN interface is created, no packet capture starts, and device internet is not redirected.", "这只是 Android VPN 权限和本地前台服务生命周期。不会创建 TUN 接口，不会开始抓包，也不会重定向设备互联网。")
+    val vpnPermissionRequired = t("Требуется разрешение", "Permission required", "需要权限")
+    val vpnStarting = t("Запуск…", "Starting…", "正在启动…")
+    val vpnLocalServiceActive = t("Локальный VPN-сервис активен", "Local VPN service active", "本地 VPN 服务已活动")
+    val vpnStopped = t("Остановлен", "Stopped", "已停止")
+    val vpnError = t("Ошибка", "Error", "错误")
+    val vpnPermissionDenied = t("Разрешение Android VPN не выдано.", "Android VPN permission was not granted.", "未授予 Android VPN 权限。")
+    val vpnStartFailed = t("Не удалось запустить локальный VPN-сервис.", "Failed to start the local VPN service.", "无法启动本地 VPN 服务。")
+    val vpnStopFailed = t("Не удалось остановить локальный VPN-сервис.", "Failed to stop the local VPN service.", "无法停止本地 VPN 服务。")
     val hide = t("Скрыть", "Hide", "隐藏")
     val addProfile = t("+ Профиль", "+ Profile", "+ 配置")
     val qr = t("QR", "QR", "二维码")

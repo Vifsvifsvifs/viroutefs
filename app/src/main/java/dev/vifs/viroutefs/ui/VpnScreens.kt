@@ -39,15 +39,18 @@ import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
+import dev.vifs.viroutefs.vpn.VpnServiceStatus
+import dev.vifs.viroutefs.vpn.VpnServiceUiState
 
 @Composable
 internal fun VpnScreen(
     padding: PaddingValues,
     text: UiText,
     config: RoutingConfig,
+    vpnState: VpnServiceUiState,
+    onVpnSwitch: (Boolean) -> Unit,
     onConfig: (RoutingConfig, String?) -> Unit,
 ) {
-    var vpnEnabled by rememberSaveable { mutableStateOf(false) }
     var adding by rememberSaveable { mutableStateOf(false) }
     var selectedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedProfile = selectedProfileId?.let { id -> config.profiles.firstOrNull { it.id == id } }
@@ -91,11 +94,20 @@ internal fun VpnScreen(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text(text.masterSwitch, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                        StatusChip(if (vpnEnabled) text.on else text.off)
+                        Text(text.vpnLocalPreviewTitle, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                        StatusChip(vpnState.label(text))
+                        Text(text.vpnNoTrafficRoutingYet, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Switch(checked = vpnEnabled, onCheckedChange = { vpnEnabled = it })
+                    Switch(checked = vpnState.switchChecked, onCheckedChange = onVpnSwitch)
                 }
+            }
+        }
+        item {
+            CardBlock {
+                Text(text.vpnNoHiddenInterception, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Text(text.vpnPacketProcessingLater, style = MaterialTheme.typography.bodySmall)
+                Text(text.vpnLifecycleOnlyDetails, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                vpnState.detail?.let { WarningText(it) }
             }
         }
         item {
@@ -288,4 +300,17 @@ private fun TunnelTypeDropdown(text: UiText, value: TunnelType, onSelect: (Tunne
             }
         }
     }
+}
+
+
+private val VpnServiceUiState.switchChecked: Boolean
+    get() = status == VpnServiceStatus.Starting || status == VpnServiceStatus.Active
+
+private fun VpnServiceUiState.label(text: UiText): String = when (status) {
+    VpnServiceStatus.Off -> text.off
+    VpnServiceStatus.PermissionRequired -> text.vpnPermissionRequired
+    VpnServiceStatus.Starting -> text.vpnStarting
+    VpnServiceStatus.Active -> text.vpnLocalServiceActive
+    VpnServiceStatus.Stopped -> text.vpnStopped
+    VpnServiceStatus.Error -> text.vpnError
 }

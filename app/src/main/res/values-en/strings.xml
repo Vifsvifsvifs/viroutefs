@@ -32,8 +32,8 @@
     <string name="dashboard_privacy_action">Review Settings before enabling future capture or export features.</string>
 
     <string name="vpn_header_subtitle">Placeholder controls for a future single-VpnService router.</string>
-    <string name="vpn_service_title">ViRouteFsVpnService</string>
-    <string name="vpn_service_simple">The app can request Android VPN permission in a later milestone.</string>
+    <string name="vpn_service_title">ViRouteVpnService</string>
+    <string name="vpn_service_simple">The app requests Android VPN permission before starting the local service preview.</string>
     <string name="vpn_service_details">The service is declared with android.permission.BIND_VPN_SERVICE and currently performs no routing.</string>
     <string name="vpn_service_action">Do not rely on this build for traffic tunneling yet.</string>
     <string name="vpn_future_rules_title">Future route rules</string>
@@ -168,7 +168,7 @@
     <string name="tools_result_not_run">This check has not run yet. Fill in the fields and press the check button.</string>
     <string name="settings_version_title">App version</string>
     <string name="settings_version_simple">ViRouteFS version %1$s is installed.</string>
-    <string name="settings_version_details">versionCode: %1$d. Milestone: 0.4-alpha — editable local route and DNS policy configuration.</string>
+    <string name="settings_version_details">versionCode: %1$d. Milestone: 0.5.0-alpha — safe Android VpnService skeleton without packet routing or capture.</string>
     <string name="settings_version_action">Update the app only from a trusted source and review the changelog before installing.</string>
 
 </resources>
