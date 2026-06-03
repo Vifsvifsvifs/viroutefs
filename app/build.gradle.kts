@@ -12,8 +12,8 @@ android {
         applicationId = "dev.vifs.viroutefs"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0-alpha"
+        versionCode = 5
+        versionName = "0.4.1-alpha"
     }
 
     buildTypes {
@@ -25,6 +25,7 @@ android {
             )
         }
     }
+
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -38,6 +39,14 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.outputs.forEach { output ->
+            output.outputFileName.set("ViRouteFS-debug-0.4.1-alpha.apk")
+        }
     }
 }
 

@@ -36,7 +36,7 @@ The user should be able to define rules like:
 
 ### Flow Scanner
 
-Human-readable Wireshark-like event viewer.
+Human-readable Flow Scanner event viewer for normal users.
 
 The app should explain traffic in simple terms.
 
