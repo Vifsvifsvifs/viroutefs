@@ -30,10 +30,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -69,18 +66,16 @@ import dev.vifs.viroutefs.diagnostics.TcpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TlsDiagnostic
 import dev.vifs.viroutefs.routing.CURRENT_ROUTING_CONFIG_VERSION
 import dev.vifs.viroutefs.routing.DnsPolicy
-import dev.vifs.viroutefs.routing.MOCK_PROFILE_LIMITATION
 import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.routing.RouteRule
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
-import dev.vifs.viroutefs.routing.TunnelProfile
-import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.settings.AppLanguage
 import dev.vifs.viroutefs.settings.AppSettings
 import dev.vifs.viroutefs.settings.AppSettingsRepository
 import dev.vifs.viroutefs.settings.AppThemeMode
+import dev.vifs.viroutefs.ui.VpnScreen
 import dev.vifs.viroutefs.ui.theme.ViRouteFsTheme
 import kotlinx.coroutines.launch
 
@@ -105,7 +100,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class AppScreen(val icon: ImageVector) {
+internal enum class AppScreen(val icon: ImageVector) {
     Dashboard(Icons.Outlined.Home),
     Vpn(Icons.Outlined.Shield),
     Routes(Icons.Outlined.AltRoute),
@@ -190,108 +185,6 @@ private fun DashboardScreen(padding: PaddingValues, text: UiText, loaded: Boolea
     item { CompactCard(text, text.version, "ViRouteFS ${BuildConfig.VERSION_NAME}", "versionCode ${BuildConfig.VERSION_CODE}") }
     item { CompactCard(text, text.privacy, text.privacyShort, text.privacyDetails) }
     item { CompactCard(text, text.configStatus, if (loaded) text.configLoaded else text.loading, message ?: text.ready) }
-}
-
-@Composable
-private fun VpnScreen(padding: PaddingValues, text: UiText, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
-    var vpnEnabled by rememberSaveable { mutableStateOf(false) }
-    var showAdd by rememberSaveable { mutableStateOf(false) }
-    var name by rememberSaveable { mutableStateOf("") }
-    var desc by rememberSaveable { mutableStateOf("") }
-    var type by rememberSaveable { mutableStateOf(TunnelType.WireGuard) }
-
-    ScreenList(padding) {
-        item { Header(text.vpn, text.vpnSubtitle) }
-        item {
-            CardBlock {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.weight(1f)) {
-                        Text(text.masterSwitch, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                        StatusChip(if (vpnEnabled) text.on else text.off)
-                    }
-                    Switch(checked = vpnEnabled, onCheckedChange = { vpnEnabled = it })
-                }
-                Details(text.details, text.vpnDemoDetails)
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = { showAdd = !showAdd }) { Text(if (showAdd) text.hide else text.addProfile) }
-                AssistChip(onClick = {}, label = { Text(text.profileCount(config.profiles.size)) })
-            }
-        }
-        if (showAdd) {
-            item {
-                CardBlock {
-                    Text(text.addProfile, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf(text.qr, text.clipboard, text.file, text.manual).forEach { AssistChip(onClick = {}, label = { Text(it) }) }
-                    }
-                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(text.name) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                    TunnelTypeDropdown(text, type, onSelect = { type = it })
-                    OutlinedTextField(value = desc, onValueChange = { desc = it }, label = { Text(text.description) }, modifier = Modifier.fillMaxWidth())
-                    Button(onClick = {
-                        val id = "profile_${System.currentTimeMillis()}"
-                        val dnsId = when (type) {
-                            TunnelType.Direct -> RoutingConfigDefaults.DIRECT_DNS_ID
-                            TunnelType.Block -> RoutingConfigDefaults.SYSTEM_DNS_ID
-                            else -> RoutingConfigDefaults.TUNNEL_DNS_ID
-                        }
-                        val profile = TunnelProfile(
-                            id = id,
-                            name = name.ifBlank { type.label },
-                            type = type,
-                            description = desc.ifBlank { text.mockProfileDescription },
-                            mockOnly = type.isMockOnly,
-                            platformNotes = MOCK_PROFILE_LIMITATION.takeIf { type.isMockOnly },
-                            dnsPolicyId = dnsId,
-                        )
-                        onConfig(config.copy(profiles = config.profiles + profile), text.profileAdded)
-                        name = ""
-                        desc = ""
-                        showAdd = false
-                    }) { Text(text.create) }
-                }
-            }
-        }
-        items(config.profiles, key = { it.id }) { profile -> ProfileCard(text, profile, config, onConfig) }
-    }
-}
-
-@Composable
-private fun ProfileCard(text: UiText, profile: TunnelProfile, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
-    var expanded by rememberSaveable(profile.id) { mutableStateOf(false) }
-    var edit by rememberSaveable(profile.id) { mutableStateOf(false) }
-    var name by rememberSaveable(profile.id) { mutableStateOf(profile.name) }
-    var desc by rememberSaveable(profile.id) { mutableStateOf(profile.description) }
-    val used = config.rules.any { it.targetProfileId == profile.id }
-    val dns = config.dnsPolicies.firstOrNull { it.id == profile.dnsPolicyId }?.name ?: text.noDns
-    CardBlock {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(profile.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                Text("${profile.type.label} • DNS: $dns", style = MaterialTheme.typography.labelSmall)
-            }
-            StatusChip(if (profile.enabled) text.on else text.off)
-            Switch(profile.enabled, onCheckedChange = { onConfig(config.copy(profiles = config.profiles.map { if (it.id == profile.id) it.copy(enabled = !it.enabled) else it }), null) })
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (config.defaultProfileId == profile.id) AssistChip(onClick = {}, label = { Text(text.defaultProfile) }) else OutlinedButton(onClick = { onConfig(config.copy(defaultProfileId = profile.id), text.defaultChanged) }) { Text(text.makeDefault) }
-            OutlinedButton(onClick = { expanded = !expanded }) { Text(if (expanded) text.less else text.details) }
-            OutlinedButton(enabled = !used && profile.type !in listOf(TunnelType.Direct, TunnelType.Block), onClick = { onConfig(config.copy(profiles = config.profiles.filterNot { it.id == profile.id }), text.profileDeleted) }) { Text(text.delete) }
-        }
-        if (expanded) {
-            Text(profile.description, style = MaterialTheme.typography.bodySmall)
-            if (profile.mockOnly) WarningText(text.mockOnly)
-            profile.warningText?.let { WarningText(it) }
-            TextButton(onClick = { edit = !edit }) { Text(if (edit) text.cancel else text.edit) }
-        }
-        if (expanded && edit) {
-            OutlinedTextField(name, { name = it }, label = { Text(text.name) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-            OutlinedTextField(desc, { desc = it }, label = { Text(text.description) }, modifier = Modifier.fillMaxWidth())
-            Button(onClick = { onConfig(config.copy(profiles = config.profiles.map { if (it.id == profile.id) it.copy(name = name, description = desc) else it }), text.profileUpdated); edit = false }) { Text(text.save) }
-        }
-    }
 }
 
 @Composable
@@ -606,7 +499,7 @@ private fun SettingsScreen(padding: PaddingValues, text: UiText, settings: AppSe
 private fun DiagnosticCard(text: UiText, title: String, result: DiagnosticResult) = CompactCard(text, title, result.simpleExplanation, result.technicalDetailsWithElapsed(), text.actionPrefix + result.recommendedAction)
 
 @Composable
-private fun Header(title: String, subtitle: String) = Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+internal fun Header(title: String, subtitle: String) = Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
     Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
     Text(subtitle, style = MaterialTheme.typography.bodySmall)
 }
@@ -619,7 +512,7 @@ private fun CompactCard(text: UiText, title: String, simple: String, details: St
 }
 
 @Composable
-private fun CardBlock(content: @Composable ColumnScope.() -> Unit) = Card(
+internal fun CardBlock(content: @Composable ColumnScope.() -> Unit) = Card(
     modifier = Modifier.fillMaxWidth(),
     shape = RoundedCornerShape(12.dp),
     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
@@ -628,7 +521,7 @@ private fun CardBlock(content: @Composable ColumnScope.() -> Unit) = Card(
 }
 
 @Composable
-private fun ScreenList(padding: PaddingValues, content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) = LazyColumn(
+internal fun ScreenList(padding: PaddingValues, content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) = LazyColumn(
     modifier = Modifier.fillMaxSize(),
     contentPadding = PaddingValues(start = 10.dp, top = padding.calculateTopPadding() + 8.dp, end = 10.dp, bottom = padding.calculateBottomPadding() + 8.dp),
     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -636,10 +529,10 @@ private fun ScreenList(padding: PaddingValues, content: androidx.compose.foundat
 )
 
 @Composable
-private fun StatusChip(label: String) = AssistChip(onClick = {}, label = { Text(label, style = MaterialTheme.typography.labelSmall) })
+internal fun StatusChip(label: String) = AssistChip(onClick = {}, label = { Text(label, style = MaterialTheme.typography.labelSmall) })
 
 @Composable
-private fun WarningText(value: String) = Text(value, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+internal fun WarningText(value: String) = Text(value, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
 
 @Composable
 private fun Details(label: String, text: String) {
@@ -654,20 +547,8 @@ private fun ChipRow(content: @Composable () -> Unit) = Row(horizontalArrangement
 @Composable
 private fun EventRow(text: String) = CardBlock { Text(text, style = MaterialTheme.typography.bodySmall) }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun TunnelTypeDropdown(text: UiText, value: TunnelType, onSelect: (TunnelType) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
-        OutlinedTextField(value = value.label, onValueChange = {}, readOnly = true, label = { Text(text.type) }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) }, modifier = Modifier.menuAnchor().fillMaxWidth())
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            TunnelType.entries.filterNot { it.name.endsWith("Mock") }.forEach { type -> DropdownMenuItem(text = { Text(type.label) }, onClick = { onSelect(type); expanded = false }) }
-        }
-    }
-}
-
 @Suppress("TooManyFunctions")
-private class UiText(private val language: AppLanguage) {
+internal class UiText(private val language: AppLanguage) {
     val dashboard = t("Главная", "Home", "主页")
     val vpn = "VPN"
     val routes = t("Маршруты", "Routes", "路由")
@@ -710,12 +591,17 @@ private class UiText(private val language: AppLanguage) {
     val mockProfileDescription = t("Профиль добавлен вручную. Движок пока не реализован.", "Profile added manually. The engine is not implemented yet.", "已手动添加配置。引擎尚未实现。")
     val profileAdded = t("Профиль добавлен локально.", "Profile added locally.", "配置已本地添加。")
     val create = t("Создать", "Create", "创建")
+    val profileDetails = t("Детали профиля", "Profile details", "配置详情")
+    val profileDetailsSubtitle = t("Настройте профиль без перегруза основного списка.", "Edit the profile without crowding the main list.", "编辑配置而不挤占主列表。")
+    val addProfileSubtitle = t("Импорт — заглушки, ручное создание сохраняется локально.", "Import options are placeholders; manual creation saves locally.", "导入选项为占位；手动创建会本地保存。")
+    val importOptions = t("Импорт", "Import", "导入")
     val noDns = t("DNS не выбран", "No DNS", "未选择 DNS")
     val defaultProfile = t("Основной", "Default", "默认")
     val defaultChanged = t("Основной профиль изменён.", "Default profile changed.", "默认配置已更改。")
     val makeDefault = t("Основной", "Default", "默认")
     val delete = t("Удалить", "Delete", "删除")
     val profileDeleted = t("Профиль удалён.", "Profile deleted.", "配置已删除。")
+    val protectedProfileMessage = t("Direct и Block — системные профили, их нельзя удалить.", "Direct and Block are system profiles and cannot be deleted.", "Direct 和 Block 是系统配置，无法删除。")
     val mockOnly = t("Демо: реальный тоннель не запускается.", "Demo: no real tunnel is started.", "演示：不会启动真实隧道。")
     val cancel = t("Отмена", "Cancel", "取消")
     val edit = t("Изменить", "Edit", "编辑")
@@ -785,6 +671,7 @@ private class UiText(private val language: AppLanguage) {
     }
 
     fun profileCount(value: Int): String = t("$value проф.", "$value profiles", "$value 个配置")
+    fun profileUsedMessage(routes: String): String = t("Профиль используется маршрутами: $routes. Сначала измените или удалите эти правила.", "Profile is used by routes: $routes. Change or delete those rules first.", "配置正被路由使用：$routes。请先更改或删除这些规则。")
     fun policyCount(value: Int): String = t("$value политик", "$value policies", "$value 个策略")
     fun overrideCount(value: Int): String = t("$value записей", "$value entries", "$value 条记录")
     fun fsEvent(kind: String, target: String, route: String, status: String): String = "$kind • $target • $route • $status"
