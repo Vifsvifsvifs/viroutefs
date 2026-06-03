@@ -74,6 +74,7 @@ import dev.vifs.viroutefs.settings.AppSettings
 import dev.vifs.viroutefs.settings.AppSettingsRepository
 import dev.vifs.viroutefs.settings.AppThemeMode
 import dev.vifs.viroutefs.ui.DnsScreen
+import dev.vifs.viroutefs.ui.FlowScannerScreen
 import dev.vifs.viroutefs.ui.VpnScreen
 import dev.vifs.viroutefs.ui.theme.ViRouteFsTheme
 import kotlinx.coroutines.launch
@@ -316,21 +317,6 @@ private fun RouteDetailsScreen(
 }
 
 @Composable
-private fun FlowScannerScreen(padding: PaddingValues, text: UiText) {
-    val events = listOf(
-        text.fsEvent("DNS", "example.com", "System DNS", text.localOnly),
-        text.fsEvent("TCP", "93.184.216.34:443", "Direct", text.simulated),
-        text.fsEvent("TLS", "SNI example.com", "Direct", text.certOk),
-        text.fsEvent("HTTP", "GET /", "Direct", text.waiting),
-    )
-    ScreenList(padding) {
-        item { Header(text.fs, text.fsSubtitle) }
-        items(events) { event -> EventRow(event) }
-        item { CompactCard(text, text.limitation, text.fsLimitShort, text.fsLimitDetails) }
-    }
-}
-
-@Composable
 private fun ToolsScreen(padding: PaddingValues, text: UiText, config: RoutingConfig) {
     val scope = rememberCoroutineScope()
     var host by rememberSaveable { mutableStateOf("example.com") }
@@ -488,7 +474,7 @@ internal fun StatusChip(label: String) = AssistChip(onClick = {}, label = { Text
 internal fun WarningText(value: String) = Text(value, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
 
 @Composable
-private fun Details(label: String, text: String) {
+internal fun Details(label: String, text: String) {
     var open by rememberSaveable(text) { mutableStateOf(false) }
     TextButton(onClick = { open = !open }, contentPadding = PaddingValues(0.dp)) { Text(if (open) "− $label" else "+ $label") }
     if (open) Text(text, style = MaterialTheme.typography.bodySmall)
@@ -497,8 +483,6 @@ private fun Details(label: String, text: String) {
 @Composable
 private fun ChipRow(content: @Composable () -> Unit) = Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) { content() }
 
-@Composable
-private fun EventRow(text: String) = CardBlock { Text(text, style = MaterialTheme.typography.bodySmall) }
 
 @Suppress("TooManyFunctions")
 internal class UiText(private val language: AppLanguage) {
@@ -602,8 +586,53 @@ internal class UiText(private val language: AppLanguage) {
     val certOk = t("сертификат OK", "certificate OK", "证书正常")
     val waiting = t("ожидание", "waiting", "等待")
     val limitation = t("Ограничение", "Limitation", "限制")
-    val fsLimitShort = t("FS сейчас показывает пример событий.", "FS currently shows sample events.", "FS 当前显示示例事件。")
-    val fsLimitDetails = t("Нет packet capture и скрытого перехвата. Реальный поток будет только из VpnService и локальных логов.", "No packet capture or hidden interception. Real flow will come only from VpnService and local logs.", "没有抓包或隐藏拦截。真实流量仅来自 VpnService 和本地日志。")
+    val fsLimitShort = t("Демо/превью будущих потоков. Захвата пакетов в этой версии нет.", "Demo/preview of future flows. There is no packet capture in this version.", "未来流量的演示/预览。本版本没有抓包。")
+    val fsLimitDetails = t("FS заработает только после явного включения пользователем локального VPN-режима в будущей версии. Сейчас нет скрытого перехвата, packet capture, реального VpnService, VPN-движков и загрузки логов в облако.", "FS will work only after the user explicitly enables local VPN mode in a future release. There is currently no hidden interception, packet capture, real VpnService, VPN engines, or cloud upload of logs.", "FS 只会在未来版本由用户明确启用本地 VPN 模式后工作。目前没有隐藏拦截、抓包、真实 VpnService、VPN 引擎或日志云上传。")
+    val flowScannerTitle = "Flow Scanner"
+    val flowScannerSubtitle = t("кто куда подключается и почему", "who connects where and why", "谁连接到哪里以及原因")
+    val flowAppFilter = t("Приложения", "Apps", "应用")
+    val flowAllAppsPlaceholder = t("Все приложения (заглушка)", "All apps (placeholder)", "所有应用（占位）")
+    val flowStartAnalysis = t("Начать анализ", "Start analysis", "开始分析")
+    val flowDemoMode = t("демо / локально", "demo / local", "演示 / 本地")
+    val flowPreviewOnly = t("Превью: без захвата пакетов", "Preview: no packet capture", "预览：无抓包")
+    val flowEventDetailsTitle = t("Событие потока", "Flow event", "流量事件")
+    val flowApp = t("Приложение", "App", "应用")
+    val flowDomain = t("Домен", "Domain", "域名")
+    val flowResolvedIp = t("IP", "IP", "IP")
+    val flowPortProtocol = t("Порт / протокол", "Port / protocol", "端口 / 协议")
+    val flowDnsPolicy = t("DNS-политика", "DNS policy", "DNS 策略")
+    val flowSelectedRoute = t("Маршрут / тоннель", "Route / tunnel", "路由 / 隧道")
+    val flowReason = t("Почему выбран маршрут", "Why this route was selected", "选择此路由的原因")
+    val flowRecommendation = t("Рекомендация", "Recommendation", "建议")
+    val flowAllowedStatus = t("разрешено", "allowed", "允许")
+    val flowMediaStatus = t("медиа", "media", "媒体")
+    val flowDirectStatus = t("прямо", "direct", "直连")
+    val flowWorkStatus = t("рабочий", "work", "工作")
+    val flowBlockedStatus = t("блок", "blocked", "阻止")
+    val flowDnsPolicySecure = t("Secure DNS", "Secure DNS", "安全 DNS")
+    val flowDnsPolicyMedia = t("Media DNS", "Media DNS", "媒体 DNS")
+    val flowDnsPolicyLocal = t("Локальная/системная", "Local/system", "本地/系统")
+    val flowDnsPolicyCorp = t("Корпоративная", "Corporate", "公司")
+    val flowDnsPolicyBlock = t("Не запрашивать", "Do not resolve", "不解析")
+    val browserApp = t("Браузер", "Browser", "浏览器")
+    val workApp = t("Рабочее приложение", "Work app", "工作应用")
+    val trackerApp = t("Пример трекера", "Tracker example", "跟踪器示例")
+    val telegramRouteReason = t("Правило домена telegram.org отправляет мессенджер в профиль Xray Germany.", "A telegram.org domain rule sends the messenger to the Xray Germany profile.", "telegram.org 域名规则将该应用发送到 Xray Germany 配置。")
+    val telegramRecommendation = t("Проверьте, что профиль выбран осознанно, затем включайте реальный режим только вручную.", "Confirm the profile is intentional, then enable any real mode only manually.", "确认配置选择正确；真实模式只能手动启用。")
+    val telegramTechnical = t("Демо-событие: будущий источник — локальный VpnService flow log после явного разрешения пользователя.", "Demo event: future source is the local VpnService flow log after explicit user consent.", "演示事件：未来来源是在用户明确同意后的本地 VpnService 流日志。")
+    val mediaRouteReason = t("Медиа-домены youtube.com и googlevideo.com соответствуют правилу Media tunnel.", "Media domains youtube.com and googlevideo.com match the Media tunnel rule.", "媒体域 youtube.com 和 googlevideo.com 匹配 Media tunnel 规则。")
+    val mediaRecommendation = t("Если видео работает медленно, позже проверьте профиль Media tunnel и MTU.", "If video is slow, later check the Media tunnel profile and MTU.", "如果视频较慢，稍后检查 Media tunnel 配置和 MTU。")
+    val mediaTechnical = t("Событие показывает целевой домен и предполагаемый протокол; реальный QUIC/TCP анализ не выполняется.", "The event shows target domains and expected protocol; real QUIC/TCP analysis is not performed.", "事件显示目标域和预期协议；未执行真实 QUIC/TCP 分析。")
+    val govRouteReason = t("Чувствительные локальные сервисы оставлены Direct, чтобы не отправлять их в сторонний тоннель.", "Sensitive local services stay Direct so they are not sent through a third-party tunnel.", "敏感本地服务保持 Direct，避免经过第三方隧道。")
+    val govRecommendation = t("Оставьте Direct для банков и госуслуг, если у вас нет отдельной доверенной политики.", "Keep Direct for banks and public services unless you have a separate trusted policy.", "除非有单独可信策略，否则银行和公共服务建议保持 Direct。")
+    val govTechnical = t("Демо не проверяет сертификат и не читает содержимое соединения.", "The demo does not validate certificates or read connection contents.", "演示不验证证书，也不读取连接内容。")
+    val workRouteReason = t("Внутренний домен gitlab.corp совпал с рабочим правилом и DNS-политикой.", "The internal gitlab.corp domain matched the work rule and DNS policy.", "内部域 gitlab.corp 匹配工作规则和 DNS 策略。")
+    val workRecommendation = t("Используйте рабочий VPN только для корпоративных доменов и приложений.", "Use the work VPN only for corporate domains and apps.", "仅对公司域名和应用使用工作 VPN。")
+    val workTechnical = t("IP показан как пример частного адреса; реальный корпоративный DNS ещё не подключён.", "The IP is a sample private address; real corporate DNS is not connected yet.", "IP 是示例私有地址；尚未接入真实公司 DNS。")
+    val trackerRouteReason = t("Домен совпал с демонстрационным правилом Block для нежелательных трекеров.", "The domain matched a demo Block rule for unwanted trackers.", "该域匹配不需要跟踪器的演示 Block 规则。")
+    val trackerWarning = t("Возможный трекер: соединение предлагается блокировать.", "Possible tracker: blocking is recommended.", "可能的跟踪器：建议阻止。")
+    val trackerRecommendation = t("Оставьте блокировку, если этот домен не нужен приложению для основной функции.", "Keep it blocked if the app does not need this domain for its core function.", "如果应用核心功能不需要该域，请保持阻止。")
+    val trackerTechnical = t("В демо нет DNS-запроса и сетевого блокирования; это только пример будущего решения политики.", "The demo does not perform DNS lookup or network blocking; it only previews a future policy decision.", "演示不执行 DNS 查询或网络阻止；仅预览未来策略决策。")
     val tcpTls = "TCP / TLS"
     val host = t("Хост", "Host", "主机")
     val port = t("Порт", "Port", "端口")
