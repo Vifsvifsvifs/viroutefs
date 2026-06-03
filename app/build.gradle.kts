@@ -39,6 +39,8 @@ android {
         compose = true
         buildConfig = true
     }
+
+    // Keep the default debug APK name (app-debug.apk); CI copies it to the release artifact name.
 }
 
 androidComponents {
