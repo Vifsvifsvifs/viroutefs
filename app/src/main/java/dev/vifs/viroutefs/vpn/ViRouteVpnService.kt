@@ -18,7 +18,7 @@ import java.io.FileInputStream
 import java.io.InterruptedIOException
 
 /**
- * Safe ViRouteFS TUN preview for 0.6.2-alpha.
+ * Safe ViRouteFS TUN preview for 0.6.3-alpha.
  *
  * The default mode creates a minimal route-less Android TUN interface. The
  * optional test-route preview adds only 203.0.113.0/24 (TEST-NET-3) so users

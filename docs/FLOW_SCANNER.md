@@ -8,7 +8,7 @@ The FS tab keeps the title **Flow Scanner** and the Russian subtitle:
 
 FS is a friendly network-event explanation module. It is not a raw packet table and it does not use third-party branding.
 
-## 0.6.2-alpha behavior
+## 0.6.3-alpha behavior
 
 The screen remains a demo/preview UI for future flow explanations, but it can also display live local counters from the opt-in TEST-NET TUN test route. It does **not** start full packet capture, full-device routing, DNS routing, forwarding/proxying, or real VPN engines.
 
@@ -27,7 +27,7 @@ Details screen behavior:
 - live TEST-NET details show route `203.0.113.0/24`, VPN mode `TUN test-route preview`, packets read, bytes read, last packet time, safety notes, and how to test;
 - keeps long technical data collapsed behind **Details / Подробнее**.
 
-Live local TEST-NET event in `0.6.2-alpha`:
+Live local TEST-NET event in `0.6.3-alpha`:
 
 - Source: `ViRouteFS TUN test route`;
 - Route: `203.0.113.0/24`;
@@ -47,4 +47,4 @@ Demo sample events:
 
 ## Privacy and safety boundary
 
-FS will work only after the user explicitly enables local VPN preview features. `0.6.2-alpha` has no hidden interception, full packet capture, default route, VPN DNS server injection, packet payload logging, packet payload inspection, domain extraction from packets, forwarding, proxying, telemetry, analytics, tracking SDKs, or cloud upload of logs/PCAP files. The live TEST-NET counters are runtime app-local state and are not persisted beyond existing service state behavior.
+FS will work only after the user explicitly enables local VPN preview features. `0.6.3-alpha` has no hidden interception, full packet capture, default route, VPN DNS server injection, packet payload logging, packet payload inspection, domain extraction from packets, forwarding, proxying, telemetry, analytics, tracking SDKs, or cloud upload of logs/PCAP files. The live TEST-NET counters are runtime app-local state and are not persisted beyond existing service state behavior.

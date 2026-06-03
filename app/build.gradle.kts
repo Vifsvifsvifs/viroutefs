@@ -12,8 +12,8 @@ android {
         applicationId = "dev.vifs.viroutefs"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.6.2-alpha"
+        versionCode = 15
+        versionName = "0.6.3-alpha"
     }
 
     buildTypes {
