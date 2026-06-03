@@ -2,7 +2,7 @@
 
 Flow Scanner (FS) is the future ViRouteFS view for explaining local flow visibility in human language.
 
-## 0.6.4-alpha behavior
+## 0.6.5-alpha behavior
 
 FS does **not** claim full traffic analysis yet.
 

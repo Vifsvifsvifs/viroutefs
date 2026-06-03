@@ -11,8 +11,8 @@ The user should be able to define rules like:
 - 10.0.0.0/8 -> OpenVPN Corp
 - 172.16.1.0/22 -> OpenVPN Site B
 - Telegram -> Xray
-- Banking apps -> Direct
-- Everything else -> Xray
+- Banking apps -> System
+- Everything else -> System by default, or explicit selected profile only when a rule matches
 
 ## Main modules
 
@@ -20,8 +20,8 @@ The user should be able to define rules like:
 
 - Android VpnService
 - Internal route engine
-- Direct outbound
-- Block outbound
+- System outbound (default Android/system path inside ViRouteFS)
+- Block outbound / fail closed
 - Xray outbound
 - OpenVPN outbound
 

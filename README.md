@@ -17,9 +17,9 @@ ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project 
 - No hidden interception of third-party traffic.
 - No offensive security features.
 
-## Current status: 0.6.4-alpha
+## Current status: 0.6.5-alpha
 
-Version `0.6.4-alpha` cleans up the user-facing navigation and network UX without changing runtime VPN/TUN routing behavior. Home content moved into Settings → Help, and the main VPN concept is now Networks / Сети.
+Version `0.6.5-alpha` refines the System route model, DNS default wording, and black/red app icon direction without changing runtime VPN/TUN routing behavior. Home content remains in Settings → Help, and the main VPN concept remains Networks / Сети.
 
 What exists now:
 
@@ -30,11 +30,12 @@ What exists now:
 - Flow Scanner can show local counters when developer diagnostics explicitly enable the TEST-NET preview.
 - The app has Compose screens for Networks, Routes, DNS, Flow Scanner, Tools, and Settings with Help.
 - Routing configuration, DNS policy metadata, diagnostics reports, and logs are local-first.
+- The built-in System / Система route is the safe internal default for apps without explicit rules in the ViRouteFS model; it is not bypass when network control is active.
 
 What is intentionally not implemented yet:
 
 - No real user traffic routing yet.
-- No full-device default route yet.
+- No runtime full-device default-route enforcement yet.
 - No DNS server is added to the VPN builder.
 - No packet payload logging.
 - No forwarding or proxying.
@@ -63,20 +64,20 @@ All diagnostics are manual and user-controlled:
 - No cloud upload of diagnostic results.
 - No port scanner, vulnerability scanner, brute force, exploit automation, or offensive network behavior.
 
-The DNS screen currently uses Android's system resolver. Per-route DNS policy is stored in the routing config, but it is still explanation and leak-risk metadata only. Real DNS routing will be added later.
+The DNS screen currently uses Android's system resolver. If no DNS is configured for a route/profile, the model says it uses Android system DNS through ViRouteFS policy. ViRouteFS must not silently replace missing DNS with public resolvers. Per-route DNS policy is stored in the routing config, but it is still explanation and leak-risk metadata only. Real DNS routing will be added later.
 
 See [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md), [docs/ROUTE_DIAGNOSTICS.md](docs/ROUTE_DIAGNOSTICS.md), [docs/ROUTING_CONFIG.md](docs/ROUTING_CONFIG.md), [docs/ROUTING_POLICY.md](docs/ROUTING_POLICY.md), [docs/DNS_POLICY.md](docs/DNS_POLICY.md), and [SECURITY_BOUNDARIES.md](SECURITY_BOUNDARIES.md) for detailed behavior and safety boundaries.
 
 ## Route simulator status
 
-The Route Simulator and Route Diagnostics route selection use the saved local routing configuration. They explain how future routing decisions should be presented to users, but they do not change device routing and do not start a real VPN tunnel. Route Diagnostics network checks run through the current Android connection only.
+The Route Simulator and Route Diagnostics route selection use the saved local routing configuration. They explain that network control ON means all traffic conceptually enters ViRouteFS, unmatched apps use System / Система, explicit rules are exclusive, and unavailable selected profiles fail closed. They do not change device routing and do not start a real VPN tunnel. Route Diagnostics network checks run through the current Android connection only.
 
 ## Roadmap
 
 The public roadmap is maintained in [`ROADMAP.md`](ROADMAP.md). In short:
 
-- `0.6.x`: navigation cleanup, Networks naming, safe developer-only TUN test route, Flow Scanner local counters, release polish.
-- `0.7.x`: controlled Direct/Block route experiments without a full-device default route.
+- `0.6.x`: navigation cleanup, Networks naming, System-route wording, aggressive black/red icon direction, safe developer-only TUN test route, Flow Scanner local counters, release polish.
+- `0.7.x`: controlled System/Block route experiments without runtime full-device enforcement.
 - `0.8.x`: first external outbound experiment, likely SOCKS5, with route decision explanation.
 - `0.9.x`: import preparation for WireGuard, Xray, and Hysteria2 configs.
 - `1.0`: stable local-first routing profiles, DNS policy, Flow Scanner explanations, and privacy-safe export/reporting.

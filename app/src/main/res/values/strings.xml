@@ -40,7 +40,7 @@
     <string name="vpn_future_rules_body">Здесь будут проектироваться маршруты по приложениям, CIDR, доменам и DNS после стабилизации каркаса.</string>
 
     <string name="dns_default_domain">example.com</string>
-    <string name="dns_default_server">1.1.1.1</string>
+    <string name="dns_default_server"></string>
     <string name="dns_default_record_type">A</string>
     <string name="dns_header_title">Проверка DNS</string>
     <string name="dns_header_subtitle">Подготовка безопасной DNS-диагностики без сетевых запросов на этом этапе.</string>
@@ -81,7 +81,7 @@
 
     <string name="logs_header_subtitle">Понятные примеры событий сетевых подключений. В этом каркасе ничего не захватывается.</string>
     <string name="logs_event_telegram">Telegram подключился к 149.154.167.91:443. Правило: Telegram → Xray Германия. Статус: пример успешного события. Задержка: 84 мс.</string>
-    <string name="logs_event_browser_dns">Браузер запросил A-запись example.com. DNS-сервер: 1.1.1.1. Статус: пример ответа из кеша.</string>
+    <string name="logs_event_browser_dns">Браузер запросил A-запись example.com. Источник DNS: системный DNS Android. Статус: пример ответа из кеша.</string>
     <string name="logs_event_banking">Для банковского приложения выбран прямой маршрут. Причина: правило для доверенного приложения. Статус: пример решения политики.</string>
     <string name="logs_event_mtu">Проба MTU для VPN-профиля предложила 1380 байт. Статус: пример рекомендации, измерение не выполнялось.</string>
     <string name="logs_event_wps">Аудит безопасности нашёл включённый WPS в сохранённом профиле Wi‑Fi. Значение: обнаружен риск, взлом не подтверждён.</string>
@@ -116,8 +116,8 @@
     <string name="routes_rule_target">Маршрут: %1$s</string>
     <string name="routes_rule_matchers">Совпадения: %1$s</string>
     <string name="routes_rule_priority">Тип: %1$s, приоритет: %2$d</string>
-    <string name="routes_tunnel_direct_name">Напрямую</string>
-    <string name="routes_tunnel_direct_description">Обычный выход без туннеля. В макете это только решение симулятора.</string>
+    <string name="routes_tunnel_direct_name">Система</string>
+    <string name="routes_tunnel_direct_description">Системный путь Android внутри ViRouteFS. Это не обход, когда контроль сети активен.</string>
     <string name="routes_tunnel_block_name">Заблокировать</string>
     <string name="routes_tunnel_block_description">Макет запрета маршрута для подозрительных или явно заблокированных примеров.</string>
     <string name="routes_tunnel_xray_germany_name">Xray Германия</string>
@@ -168,7 +168,7 @@
     <string name="tools_result_not_run">Проверка ещё не запускалась. Заполните поля и нажмите кнопку проверки.</string>
     <string name="settings_version_title">Версия приложения</string>
     <string name="settings_version_simple">Установлена версия ViRouteFS %1$s.</string>
-    <string name="settings_version_details">versionCode: %1$d. Веха: 0.6.3-alpha — route-less TUN-превью с opt-in маршрутом 203.0.113.0/24 без default route, DNS, payload-логов, пересылки или прокси.</string>
+    <string name="settings_version_details">versionCode: %1$d. Веха: 0.6.5-alpha — формулировки маршрута Система, безопасный route-less TUN-preview, без runtime default-route enforcement, DNS в VPN builder, payload-логов, пересылки или прокси.</string>
     <string name="settings_version_action">Обновляйте приложение только из доверенного источника и проверяйте список изменений перед установкой.</string>
 
 </resources>

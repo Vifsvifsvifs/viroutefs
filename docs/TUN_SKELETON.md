@@ -1,6 +1,6 @@
-# ViRouteFS safe TUN skeleton — 0.6.4-alpha
+# ViRouteFS safe TUN skeleton — 0.6.5-alpha
 
-ViRouteFS `0.6.4-alpha` keeps the route-less TUN preview as the default, keeps the opt-in TEST-NET route preview, and links its safe counters into Flow Scanner.
+ViRouteFS `0.6.5-alpha` keeps the route-less TUN preview as the default, keeps the opt-in TEST-NET route preview, and links its safe counters into Flow Scanner.
 
 ## Default route-less preview
 
@@ -17,13 +17,13 @@ Normal internet traffic should remain unchanged in the default mode because ther
 
 ## Opt-in test-route preview
 
-The normal Networks screen does not expose TEST-NET controls. The safe route remains available only under **Settings → Developer diagnostics** for explicit internal/developer testing. In `0.6.4-alpha`, Flow Scanner may show local counters only after that explicit developer diagnostic path is enabled.
+The normal Networks screen does not expose TEST-NET controls. The safe route remains available only under **Settings → Developer diagnostics** for explicit internal/developer testing. In `0.6.5-alpha`, Flow Scanner may show local counters only after that explicit developer diagnostic path is enabled.
 
 When enabled, ViRouteFS adds exactly one IPv4 route to the TUN builder:
 
 - `203.0.113.0/24`
 
-`203.0.113.0/24` is TEST-NET-3 documentation address space. This route is only for safe lifecycle testing. ViRouteFS does not add any other routes, does not add a default route, and does not add DNS servers.
+`203.0.113.0/24` is TEST-NET-3 documentation address space. This route is only for safe lifecycle testing. ViRouteFS does not add any other routes, does not add runtime default-route enforcement, and does not add DNS servers.
 
 ## Packet read/drop behavior
 
@@ -39,7 +39,7 @@ It does not log packet payload bytes, does not inspect payloads, does not parse 
 
 If the TUN read loop fails unexpectedly, the service publishes an `Error` state with a short safe message and stops the preview.
 
-## Flow Scanner visibility in 0.6.4-alpha
+## Flow Scanner visibility in 0.6.5-alpha
 
 Flow Scanner can show current local TEST-NET counters when developer diagnostics enabled the preview or when counters are non-zero:
 

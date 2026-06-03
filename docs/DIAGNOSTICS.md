@@ -14,7 +14,7 @@ Users should check only their own resources or networks where they have permissi
 
 The DNS screen performs a real lookup after the user presses **Проверить**.
 
-Supported record types are `A` and `AAAA`. The UI keeps domain, DNS server, and record type fields. Current limitation: ViRouteFS uses Android's system DNS resolver. The custom DNS server field and routing DNS policies are kept for the product flow, explanation, and leak-risk checks, but direct querying of selected DNS servers and per-route DNS enforcement will be connected later.
+Supported record types are `A` and `AAAA`. The UI keeps domain, DNS server, and record type fields. Current limitation: ViRouteFS uses Android's system DNS resolver. The custom DNS server field and routing DNS policies are kept for the product flow, explanation, and leak-risk checks, but missing DNS is shown as Android system DNS and is not silently replaced with public resolvers. Direct querying of selected DNS servers and per-route DNS enforcement will be connected later.
 
 ## TCP check
 

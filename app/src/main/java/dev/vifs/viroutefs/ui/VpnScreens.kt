@@ -53,7 +53,7 @@ internal fun VpnScreen(
 ) {
     var selectedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedProfile = selectedProfileId?.let { id -> config.profiles.firstOrNull { it.id == id } }
-    val visibleProfiles = config.profiles.filter { !it.mockOnly && it.enabled }
+    val visibleProfiles = config.profiles.filter { !it.mockOnly }
 
     if (selectedProfile != null) {
         NetworkProfileDetailsScreen(
