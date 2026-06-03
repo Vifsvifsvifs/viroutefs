@@ -18,7 +18,7 @@ import java.io.FileInputStream
 import java.io.InterruptedIOException
 
 /**
- * Safe ViRouteFS TUN preview for 0.6.1-alpha.
+ * Safe ViRouteFS TUN preview for 0.6.2-alpha.
  *
  * The default mode creates a minimal route-less Android TUN interface. The
  * optional test-route preview adds only 203.0.113.0/24 (TEST-NET-3) so users
@@ -87,7 +87,7 @@ class ViRouteVpnService : VpnService() {
     override fun onDestroy() {
         closeTunDescriptor()
         isRunning = false
-        if (lastState.status != VpnServiceStatus.Error) publishState(VpnServiceStatus.Stopped)
+        if (lastState.status != VpnServiceStatus.Error) publishStoppedState()
         super.onDestroy()
     }
 
@@ -154,7 +154,7 @@ class ViRouteVpnService : VpnService() {
         }.onFailure { error ->
             if (!packetLoopStopping && error !is InterruptedIOException) {
                 val detail = error.localizedMessage ?: "TUN read failed; packet preview stopped."
-                closeTunDescriptor(publishStopped = false)
+                closeTunDescriptor()
                 isRunning = false
                 publishState(VpnServiceStatus.Error, detail)
                 updateNotification(VpnServiceStatus.ServiceActiveNoTun)
@@ -166,11 +166,11 @@ class ViRouteVpnService : VpnService() {
     private fun stopPreview() {
         closeTunDescriptor()
         isRunning = false
-        publishState(VpnServiceStatus.Stopped)
+        publishStoppedState()
         stopSelf()
     }
 
-    private fun closeTunDescriptor(publishStopped: Boolean = true) {
+    private fun closeTunDescriptor() {
         packetLoopStopping = true
         tunDescriptor?.let { descriptor ->
             runCatching { descriptor.close() }
@@ -178,7 +178,6 @@ class ViRouteVpnService : VpnService() {
         tunDescriptor = null
         stopPacketLoop()
         testRoutePreviewActive = false
-        if (publishStopped) resetCounters()
     }
 
     private fun stopPacketLoop() {
@@ -204,6 +203,15 @@ class ViRouteVpnService : VpnService() {
         publishState(
             status = activeStatus(),
             tunTestRouteActive = testRoutePreviewActive,
+            packetsRead = packetsRead,
+            bytesRead = bytesRead,
+            lastPacketAt = lastPacketAt,
+        )
+    }
+
+    private fun publishStoppedState() {
+        publishState(
+            status = VpnServiceStatus.Stopped,
             packetsRead = packetsRead,
             bytesRead = bytesRead,
             lastPacketAt = lastPacketAt,

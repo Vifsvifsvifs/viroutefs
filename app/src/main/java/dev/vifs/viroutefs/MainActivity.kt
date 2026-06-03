@@ -273,7 +273,7 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
             AppScreen.Vpn -> VpnScreen(padding, text, config, vpnState, tunTestRoutePreviewEnabled, ::setVpnEnabled, ::setTunTestRoutePreviewEnabled, ::updateConfig)
             AppScreen.Routes -> RoutesScreen(padding, text, config, ::updateConfig)
             AppScreen.Dns -> DnsScreen(padding, text, config, ::updateConfig)
-            AppScreen.Fs -> FlowScannerScreen(padding, text)
+            AppScreen.Fs -> FlowScannerScreen(padding, text, vpnState)
             AppScreen.More -> MoreScreen(padding, text, onOpen = { selectedScreen = it })
             AppScreen.Tools -> ToolsScreen(padding, text, config)
             AppScreen.Settings -> SettingsScreen(padding, text, settings, onSettings)
@@ -623,7 +623,7 @@ internal class UiText(private val language: AppLanguage) {
     val vpnNoTrafficRoutingYet = t("Маршруты трафика не установлены", "No traffic routes installed", "未安装流量路由")
     val vpnNoHiddenInterception = t("Нет скрытого перехвата", "No hidden interception", "没有隐藏拦截")
     val vpnPacketProcessingLater = t("Интернет должен остаться без изменений.", "Internet should remain unchanged.", "互联网应保持不变。")
-    val vpnLifecycleOnlyDetails = t("0.6.1-alpha по умолчанию создаёт минимальный route-less TUN с адресом 10.250.0.2/32 только для проверки VpnService. В режиме тестового маршрута явно добавляется только 203.0.113.0/24 (TEST-NET-3); маршрута по умолчанию, DNS-серверов, логирования payload, пересылки, прокси и VPN-движков нет.", "0.6.1-alpha creates a minimal route-less TUN with address 10.250.0.2/32 by default only to verify VpnService. Test-route mode explicitly adds only 203.0.113.0/24 (TEST-NET-3); there is no default route, DNS servers, payload logging, forwarding, proxying, or VPN engines.", "0.6.1-alpha 默认仅创建地址为 10.250.0.2/32 的最小无路由 TUN 来验证 VpnService。测试路由模式仅显式添加 203.0.113.0/24 (TEST-NET-3)；没有默认路由、DNS 服务器、payload 日志、转发、代理或 VPN 引擎。")
+    val vpnLifecycleOnlyDetails = t("0.6.2-alpha по умолчанию создаёт минимальный route-less TUN с адресом 10.250.0.2/32 только для проверки VpnService. В режиме тестового маршрута явно добавляется только 203.0.113.0/24 (TEST-NET-3); маршрута по умолчанию, DNS-серверов, логирования payload, пересылки, прокси и VPN-движков нет.", "0.6.2-alpha creates a minimal route-less TUN with address 10.250.0.2/32 by default only to verify VpnService. Test-route mode explicitly adds only 203.0.113.0/24 (TEST-NET-3); there is no default route, DNS servers, payload logging, forwarding, proxying, or VPN engines.", "0.6.2-alpha 默认仅创建地址为 10.250.0.2/32 的最小无路由 TUN 来验证 VpnService。测试路由模式仅显式添加 203.0.113.0/24 (TEST-NET-3)；没有默认路由、DNS 服务器、payload 日志、转发、代理或 VPN 引擎。")
     val vpnTestRoutePreview = t("Тестовый маршрут", "Test route preview", "测试路由预览")
     val vpnTestRoute = t("Тестовый маршрут: 203.0.113.0/24", "Test route: 203.0.113.0/24", "测试路由：203.0.113.0/24")
     val vpnPacketsRead = t("Прочитано пакетов", "Packets read", "已读取数据包")
@@ -712,15 +712,45 @@ internal class UiText(private val language: AppLanguage) {
     val certOk = t("сертификат OK", "certificate OK", "证书正常")
     val waiting = t("ожидание", "waiting", "等待")
     val limitation = t("Ограничение", "Limitation", "限制")
-    val fsLimitShort = t("Демо/превью будущих потоков. Захвата пакетов в этой версии нет.", "Demo/preview of future flows. There is no packet capture in this version.", "未来流量的演示/预览。本版本没有抓包。")
-    val fsLimitDetails = t("FS заработает только после явного включения пользователем будущей обработки трафика. Сейчас нет скрытого перехвата, packet capture, чтения TUN-пакетов, VPN-движков и загрузки логов в облако.", "FS will work only after the user explicitly enables future traffic processing. There is currently no hidden interception, packet capture, TUN packet reading, VPN engines, or cloud upload of logs.", "FS 只会在用户未来明确启用流量处理后工作。目前没有隐藏拦截、抓包、TUN 数据包读取、VPN 引擎或日志云上传。")
+    val fsLimitShort = t("Демо будущих потоков плюс live-счётчики TEST-NET при явном включении.", "Demo future flows plus live TEST-NET counters when explicitly enabled.", "未来流量演示；明确启用时显示实时 TEST-NET 计数。")
+    val fsLimitDetails = t("FS 0.6.2 показывает только демо-события и локальные счётчики безопасного TUN test-route 203.0.113.0/24. Это не полный packet capture: нет default route, DNS в VPN, payload logging, извлечения доменов, forwarding/proxying или облачной загрузки.", "FS 0.6.2 shows only demo events and local counters for the safe TUN test route 203.0.113.0/24. This is not full packet capture: there is no default route, VPN DNS, payload logging, domain extraction, forwarding/proxying, or cloud upload.", "FS 0.6.2 仅显示演示事件和安全 TUN 测试路由 203.0.113.0/24 的本地计数。这不是完整抓包：没有默认路由、VPN DNS、负载日志、域名提取、转发/代理或云上传。")
     val flowScannerTitle = "Flow Scanner"
     val flowScannerSubtitle = t("кто куда подключается и почему", "who connects where and why", "谁连接到哪里以及原因")
     val flowAppFilter = t("Приложения", "Apps", "应用")
     val flowAllAppsPlaceholder = t("Все приложения (заглушка)", "All apps (placeholder)", "所有应用（占位）")
     val flowStartAnalysis = t("Начать анализ", "Start analysis", "开始分析")
     val flowDemoMode = t("демо / локально", "demo / local", "演示 / 本地")
-    val flowPreviewOnly = t("Превью: без захвата пакетов", "Preview: no packet capture", "预览：无抓包")
+    val flowPreviewOnly = t("Демо + live TEST-NET counters; не анализ реального трафика приложений", "Demo + live TEST-NET counters; not real app traffic analysis", "演示 + 实时 TEST-NET 计数；不是实际应用流量分析")
+    val flowLiveTestRoute = t("Live test route", "Live test route", "实时测试路由")
+    val flowLiveLocalTestData = t("live local test data", "live local test data", "实时本地测试数据")
+    val flowDemoPreview = t("demo / preview", "demo / preview", "演示 / 预览")
+    val flowSource = t("Источник", "Source", "来源")
+    val flowRoute = t("Маршрут", "Route", "路由")
+    val flowPacketsRead = t("Пакеты прочитаны", "Packets read", "已读数据包")
+    val flowBytesRead = t("Байты прочитаны", "Bytes read", "已读字节")
+    val flowLastPacket = t("Последний пакет", "Last packet", "最后数据包")
+    val flowStatus = t("Статус", "Status", "状态")
+    val flowActive = t("активен", "active", "活跃")
+    val flowInactive = t("неактивен", "inactive", "不活跃")
+    val flowNever = t("никогда", "never", "从未")
+    val flowVpnMode = t("VPN mode", "VPN mode", "VPN 模式")
+    val flowSafety = t("Безопасность", "Safety", "安全")
+    val flowHowToTest = t("Как проверить", "How to test", "如何测试")
+    val flowTunSafetyDetails = t(
+        """No default route
+No DNS
+No payload logging
+Packets are dropped after counting""",
+        """No default route
+No DNS
+No payload logging
+Packets are dropped after counting""",
+        """无默认路由
+无 DNS
+无负载日志
+数据包计数后丢弃""",
+    )
+    val flowTunHowToTest = t("Откройте http://203.0.113.1 или попробуйте подключиться к 203.0.113.1", "Open http://203.0.113.1 or try connecting to 203.0.113.1", "打开 http://203.0.113.1 或尝试连接 203.0.113.1")
     val flowEventDetailsTitle = t("Событие потока", "Flow event", "流量事件")
     val flowApp = t("Приложение", "App", "应用")
     val flowDomain = t("Домен", "Domain", "域名")

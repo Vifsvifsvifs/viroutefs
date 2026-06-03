@@ -1,6 +1,6 @@
-# ViRouteFS safe TUN skeleton — 0.6.1-alpha
+# ViRouteFS safe TUN skeleton — 0.6.2-alpha
 
-ViRouteFS `0.6.1-alpha` keeps the route-less TUN preview as the default and adds an opt-in TEST-NET route preview for validating the TUN read/drop lifecycle.
+ViRouteFS `0.6.2-alpha` keeps the route-less TUN preview as the default, keeps the opt-in TEST-NET route preview, and links its safe counters into Flow Scanner.
 
 ## Default route-less preview
 
@@ -17,7 +17,7 @@ Normal internet traffic should remain unchanged in the default mode because ther
 
 ## Opt-in test-route preview
 
-The VPN screen exposes **Test route preview** behind the compact Details / Advanced area. The user must explicitly enable it.
+The VPN screen exposes **Test route preview** behind the compact Details / Advanced area. The user must explicitly enable it. In `0.6.2-alpha`, Flow Scanner becomes the main place to observe this live local TEST-NET counter activity.
 
 When enabled, ViRouteFS adds exactly one IPv4 route to the TUN builder:
 
@@ -35,9 +35,21 @@ The loop keeps only safe counters:
 - `bytesRead`
 - `lastPacketAt`
 
-It does not log packet payload bytes, does not log destinations, does not forward packets, does not proxy packets, and does not capture traffic to a file.
+It does not log packet payload bytes, does not inspect payloads, does not parse or extract domains from packets, does not log destinations, does not forward packets, does not proxy packets, and does not capture traffic to a file.
 
 If the TUN read loop fails unexpectedly, the service publishes an `Error` state with a short safe message and stops the preview.
+
+## Flow Scanner visibility in 0.6.2-alpha
+
+Flow Scanner can now show the current local TEST-NET test-route counters when the preview is active or when counters are non-zero:
+
+- Source: `ViRouteFS TUN test route`.
+- Route: `203.0.113.0/24`.
+- Packets and bytes read.
+- Last packet time or `never`.
+- Active/inactive status.
+
+This is still not full packet capture or real app traffic analysis. The preview does not add a full-device default route, IPv6 default route, DNS servers, forwarding, proxying, payload logging, payload inspection, or domain extraction. Packets routed into the TEST-NET preview are dropped after counting. Counters are app-local runtime state and are not uploaded.
 
 ## Lifecycle guarantees
 
@@ -45,7 +57,7 @@ If the TUN read loop fails unexpectedly, the service publishes an `Error` state 
 - Switching test-route preview on or off while the preview is active restarts the preview with the requested route mode.
 - There is no duplicate packet loop.
 - Stopping, service destruction, or VPN revoke closes the TUN descriptor and stops the packet loop.
-- Counters reset when the TUN preview is closed or recreated.
+- Counters reset when the TUN preview is recreated. After stopping, the last runtime counters can remain visible locally in Flow Scanner as inactive test data until the service is started again or the app process is recreated.
 
 ## Manual test notes
 
