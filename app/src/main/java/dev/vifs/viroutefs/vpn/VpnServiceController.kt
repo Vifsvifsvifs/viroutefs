@@ -17,7 +17,8 @@ internal enum class VpnServiceStatus {
     PermissionRequired,
     NotificationPermissionRequired,
     Starting,
-    Active,
+    ServiceActiveNoTun,
+    TunPreviewActive,
     Stopped,
     Error,
 }
@@ -40,15 +41,12 @@ internal class VpnServiceController(context: Context) {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    fun currentState(): VpnServiceUiState = if (ViRouteVpnService.isRunning) {
-        VpnServiceUiState(VpnServiceStatus.Active)
-    } else {
-        ViRouteVpnService.lastState
-    }
+    fun currentState(): VpnServiceUiState = ViRouteVpnService.lastState
 
     fun startLocalService() {
         if (ViRouteVpnService.isRunning) {
-            publishState(VpnServiceStatus.Active)
+            val state = ViRouteVpnService.lastState
+            publishState(state.status, state.detail)
             return
         }
         publishState(VpnServiceStatus.Starting)
