@@ -10,6 +10,7 @@ import java.util.UUID
 
 const val VLESS_RUNTIME_LIMITATION = "VLESS runtime forwarding is not implemented yet."
 const val VLESS_ROUTE_PREVIEW_ONLY = "This profile can be used for route decision preview only."
+const val VLESS_NO_HANDSHAKE_NOTICE = "Manual TCP reachability does not perform a VLESS handshake and does not send credentials or UUID."
 
 private val supportedTransportTypes = setOf("tcp", "ws", "grpc")
 private val supportedSecurityValues = VlessSecurityMode.entries.map { it.wireName }.toSet()
@@ -99,6 +100,18 @@ sealed interface VlessProfileStatus {
 
     data object ConfigReady : VlessProfileStatus {
         override val safeLabel: String = "Config ready"
+    }
+
+    data object Testing : VlessProfileStatus {
+        override val safeLabel: String = "Testing TCP"
+    }
+
+    data object TcpReachable : VlessProfileStatus {
+        override val safeLabel: String = "TCP reachable"
+    }
+
+    data object LastTestFailed : VlessProfileStatus {
+        override val safeLabel: String = "Last test failed"
     }
 }
 
@@ -194,8 +207,7 @@ fun exportVlessUri(profile: VlessProfileConfig): String {
 
 fun validateVlessProfile(candidate: VlessProfileConfig): List<String> = buildList {
     if (candidate.name.trim().isBlank()) add("VLESS profile name must not be blank.")
-    if (candidate.host.trim().isBlank()) add("VLESS host must not be blank.")
-    if (candidate.port !in 1..65535) add("VLESS port must be in range 1..65535.")
+    addAll(validateVlessTcpReachabilityTarget(candidate.host, candidate.port))
     if (!candidate.uuid.isValidUuid()) add("VLESS UUID must be a valid UUID.")
     candidate.transportType?.trimToNull()?.let {
         if (it.lowercase() !in supportedTransportTypes) add("VLESS transport type must be tcp, ws, or grpc when provided.")
