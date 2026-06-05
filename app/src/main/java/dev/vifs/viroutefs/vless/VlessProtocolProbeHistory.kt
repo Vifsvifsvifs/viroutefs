@@ -1,0 +1,122 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+package dev.vifs.viroutefs.vless
+
+import android.content.Context
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+
+private const val VLESS_PROTOCOL_PROBE_HISTORY_LIMIT_PER_PROFILE = 20
+
+data class VlessProtocolProbeHistoryItem(
+    val profileId: String,
+    val profileNameSnapshot: String,
+    val serverHost: String,
+    val serverPort: Int,
+    val targetHost: String,
+    val targetPort: Int,
+    val timestamp: Long,
+    val state: VlessProtocolProbeState,
+    val message: String,
+    val elapsedMs: Long? = null,
+)
+
+class VlessProtocolProbeHistoryStore(
+    private val historyFile: File,
+) {
+    constructor(context: Context) : this(File(context.noBackupFilesDir, FILENAME))
+
+    suspend fun recentForProfile(profileId: String): List<VlessProtocolProbeHistoryItem> = withContext(Dispatchers.IO) {
+        loadAll().filter { it.profileId == profileId }.sortedByDescending { it.timestamp }.take(LIMIT_PER_PROFILE)
+    }
+
+    suspend fun add(item: VlessProtocolProbeHistoryItem) = withContext(Dispatchers.IO) {
+        val sanitized = item.copy(
+            profileNameSnapshot = item.profileNameSnapshot.sanitizeVlessReachabilityMessage(),
+            serverHost = item.serverHost.trim().sanitizeVlessReachabilityMessage(),
+            targetHost = item.targetHost.trim().sanitizeVlessReachabilityMessage(),
+            message = item.message.sanitizeVlessReachabilityMessage(),
+        )
+        val next = (loadAll() + sanitized)
+            .groupBy { it.profileId }
+            .flatMap { (_, items) -> items.sortedByDescending { it.timestamp }.take(LIMIT_PER_PROFILE) }
+            .sortedByDescending { it.timestamp }
+        saveAll(next)
+    }
+
+    fun loadAll(): List<VlessProtocolProbeHistoryItem> {
+        if (!historyFile.exists()) return emptyList()
+        return runCatching {
+            val array = JSONArray(historyFile.readText())
+            List(array.length()) { index -> array.getJSONObject(index).toHistoryItem() }.filterNotNull()
+        }.getOrDefault(emptyList())
+    }
+
+    fun encode(items: List<VlessProtocolProbeHistoryItem>): String = JSONArray(items.map { it.toJson() }).toString(2)
+
+    private fun saveAll(items: List<VlessProtocolProbeHistoryItem>) {
+        historyFile.parentFile?.mkdirs()
+        historyFile.writeText(encode(items))
+    }
+
+    private fun VlessProtocolProbeHistoryItem.toJson(): JSONObject = JSONObject().apply {
+        put("profileId", profileId)
+        put("profileNameSnapshot", profileNameSnapshot.sanitizeVlessReachabilityMessage())
+        put("serverHost", serverHost.sanitizeVlessReachabilityMessage())
+        put("serverPort", serverPort)
+        put("targetHost", targetHost.sanitizeVlessReachabilityMessage())
+        put("targetPort", targetPort)
+        put("timestamp", timestamp)
+        put("state", state.wireName())
+        put("message", message.sanitizeVlessReachabilityMessage())
+        elapsedMs?.let { put("elapsedMs", it) }
+    }
+
+    private fun JSONObject.toHistoryItem(): VlessProtocolProbeHistoryItem? = runCatching {
+        VlessProtocolProbeHistoryItem(
+            profileId = getString("profileId"),
+            profileNameSnapshot = optString("profileNameSnapshot").sanitizeVlessReachabilityMessage(),
+            serverHost = optString("serverHost").sanitizeVlessReachabilityMessage(),
+            serverPort = optInt("serverPort"),
+            targetHost = optString("targetHost").sanitizeVlessReachabilityMessage(),
+            targetPort = optInt("targetPort"),
+            timestamp = optLong("timestamp"),
+            state = optString("state").toVlessProtocolProbeState(),
+            message = optString("message").sanitizeVlessReachabilityMessage(),
+            elapsedMs = if (has("elapsedMs")) optLong("elapsedMs") else null,
+        )
+    }.getOrNull()
+
+    companion object {
+        const val FILENAME = "vless_protocol_probe_history.json"
+        const val LIMIT_PER_PROFILE = VLESS_PROTOCOL_PROBE_HISTORY_LIMIT_PER_PROFILE
+    }
+}
+
+fun VlessProtocolProbeState.wireName(): String = when (this) {
+    VlessProtocolProbeState.TcpConnected -> "tcp_connected"
+    VlessProtocolProbeState.VlessRequestSent -> "vless_request_sent"
+    VlessProtocolProbeState.ServerKeptConnectionBriefly -> "server_kept_connection_briefly"
+    VlessProtocolProbeState.ServerClosedConnection -> "server_closed_connection"
+    VlessProtocolProbeState.Timeout -> "timeout"
+    VlessProtocolProbeState.Refused -> "refused"
+    VlessProtocolProbeState.HostDnsError -> "host_dns_error"
+    VlessProtocolProbeState.ValidationError -> "validation_error"
+    VlessProtocolProbeState.UnsupportedSecurityMode -> "unsupported_security_mode"
+}
+
+fun String.toVlessProtocolProbeState(): VlessProtocolProbeState = when (lowercase()) {
+    "tcp_connected" -> VlessProtocolProbeState.TcpConnected
+    "vless_request_sent" -> VlessProtocolProbeState.VlessRequestSent
+    "server_kept_connection_briefly" -> VlessProtocolProbeState.ServerKeptConnectionBriefly
+    "server_closed_connection" -> VlessProtocolProbeState.ServerClosedConnection
+    "timeout" -> VlessProtocolProbeState.Timeout
+    "refused" -> VlessProtocolProbeState.Refused
+    "host_dns_error" -> VlessProtocolProbeState.HostDnsError
+    "validation_error" -> VlessProtocolProbeState.ValidationError
+    "unsupported_security_mode" -> VlessProtocolProbeState.UnsupportedSecurityMode
+    else -> VlessProtocolProbeState.HostDnsError
+}
