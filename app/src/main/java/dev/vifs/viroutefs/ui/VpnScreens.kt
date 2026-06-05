@@ -534,7 +534,7 @@ private fun VlessProfileEditorScreen(
                 }) { Text("Preview parsed config") }
                 importPreview?.let { preview ->
                     Text("Preview with masked UUID", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
-                    Details(preview)
+                    Details("Preview with masked UUID", preview)
                 }
             }
         }
@@ -566,9 +566,9 @@ private fun VlessProfileEditorScreen(
                         exportUri = exportVlessUri(candidate)
                     }
                 }) { Text("Export VLESS URI") }
-                exportUri?.let { uri ->
+                exportUri?.let { uri: String ->
                     WarningText("Exported VLESS URIs contain connection identifiers, including the UUID. Share only with people you trust.")
-                    Details(uri)
+                    Details("Exported VLESS URI", uri)
                 }
                 Button(onClick = {
                     val candidate = draft()
