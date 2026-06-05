@@ -809,6 +809,7 @@ private fun SettingsScreen(
     val scope = rememberCoroutineScope()
     var updateResult by remember { mutableStateOf<UpdateCheckResult?>(null) }
     var updateDownloadState by remember { mutableStateOf<UpdateDownloadState>(UpdateDownloadState.Idle) }
+    var releaseHistory by remember { mutableStateOf<List<ReleaseInfo>>(emptyList()) }
     var updateChecking by remember { mutableStateOf(false) }
     val apkDownloader = remember(context) { UpdateApkDownloader(context.applicationContext) }
     var supportExpanded by rememberSaveable { mutableStateOf(false) }
@@ -874,6 +875,7 @@ private fun SettingsScreen(
                 result = updateResult,
                 checking = updateChecking,
                 downloadState = updateDownloadState,
+                releaseHistory = releaseHistory,
                 canRequestPackageInstalls = apkDownloader.canRequestPackageInstalls(),
                 onCheck = {
                     updateResult = null
@@ -881,13 +883,18 @@ private fun SettingsScreen(
                     updateChecking = true
                     scope.launch {
                         try {
-                            updateResult = UpdateChecker().check(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
-                            updateDownloadState = when (val checked = updateResult) {
+                            val checked = UpdateChecker().check(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
+                            updateResult = checked
+                            releaseHistory = when (checked) {
+                                is UpdateCheckResult.NewerRelease -> checked.releases
+                                is UpdateCheckResult.UpToDate -> checked.releases
+                                else -> emptyList()
+                            }
+                            updateDownloadState = when (checked) {
                                 is UpdateCheckResult.NewerRelease -> UpdateDownloadState.UpdateAvailable(checked.release)
                                 is UpdateCheckResult.UpToDate -> UpdateDownloadState.UpToDate
                                 UpdateCheckResult.NoReleaseFound -> UpdateDownloadState.NoRelease
                                 is UpdateCheckResult.Error -> UpdateDownloadState.Idle
-                                null -> UpdateDownloadState.Idle
                             }
                         } finally {
                             updateChecking = false
@@ -904,11 +911,11 @@ private fun SettingsScreen(
                 },
                 onInstallApk = { file ->
                     runCatching { context.startActivity(apkDownloader.installIntent(file)) }
-                        .onFailure { updateDownloadState = UpdateDownloadState.DownloadFailed((updateResult as? UpdateCheckResult.NewerRelease)?.release, it.message ?: it::class.java.simpleName) }
+                        .onFailure { updateDownloadState = UpdateDownloadState.DownloadFailed((updateDownloadState as? UpdateDownloadState.ReadyToInstall)?.release, it.message ?: it::class.java.simpleName) }
                 },
                 onDeleteApk = { file ->
                     apkDownloader.delete(file)
-                    updateDownloadState = (updateResult as? UpdateCheckResult.NewerRelease)?.release?.let(UpdateDownloadState::UpdateAvailable) ?: UpdateDownloadState.Idle
+                    updateDownloadState = UpdateDownloadState.Idle
                 },
                 onOpenInstallPermissionSettings = {
                     context.startActivity(apkDownloader.unknownAppSourcesIntent())
@@ -966,6 +973,7 @@ private fun UpdateSettingsCard(
     result: UpdateCheckResult?,
     checking: Boolean,
     downloadState: UpdateDownloadState,
+    releaseHistory: List<ReleaseInfo>,
     canRequestPackageInstalls: Boolean,
     onCheck: () -> Unit,
     onDownloadApk: (ReleaseInfo) -> Unit,
@@ -973,8 +981,10 @@ private fun UpdateSettingsCard(
     onDeleteApk: (File) -> Unit,
     onOpenInstallPermissionSettings: () -> Unit,
     onOpenReleases: () -> Unit,
-) = CardBlock {
-    Text(text.updates, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+) {
+    val context = LocalContext.current
+    CardBlock {
+        Text(text.updates, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
     Text(text.currentVersion(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE), style = MaterialTheme.typography.bodySmall)
     Text(text.updateChannelAlpha, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -982,6 +992,10 @@ private fun UpdateSettingsCard(
         OutlinedButton(onClick = onOpenReleases) { Text(text.openGithubReleases) }
     }
     UpdateResultView(text, result, checking, downloadState, canRequestPackageInstalls, onDownloadApk, onInstallApk, onDeleteApk, onOpenInstallPermissionSettings)
+        ReleaseHistoryView(text, releaseHistory, downloadState, onDownloadApk, onInstallApk, onDeleteApk, onOpenRelease = { release ->
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.htmlUrl)))
+        })
+    }
 }
 
 @Composable
@@ -1000,9 +1014,14 @@ private fun UpdateResultView(
         checking -> Text(text.updateChecking, style = MaterialTheme.typography.bodySmall)
         result == null -> Text(text.updateManualOnly, style = MaterialTheme.typography.bodySmall)
         result is UpdateCheckResult.Error -> WarningText(text.updateError(result.message))
-        result is UpdateCheckResult.NewerRelease -> ReleaseResult(text, result.release, text.updateAvailable(result.release.displayVersion), downloadState, canRequestPackageInstalls, onDownloadApk, onInstallApk, onDeleteApk, onOpenInstallPermissionSettings)
+        result is UpdateCheckResult.NewerRelease -> ReleaseResult(text, result.release, text.updateAvailable(result.release.displayVersion), downloadStateForRelease(downloadState, result.release), canRequestPackageInstalls, onDownloadApk, onInstallApk, onDeleteApk, onOpenInstallPermissionSettings)
         result == UpdateCheckResult.NoReleaseFound -> Text(text.noReleaseFound, style = MaterialTheme.typography.bodySmall)
-        result is UpdateCheckResult.UpToDate -> Text(text.upToDate, style = MaterialTheme.typography.bodySmall)
+        result is UpdateCheckResult.UpToDate -> {
+            Text(text.upToDate, style = MaterialTheme.typography.bodySmall)
+            result.latest?.let { latest ->
+                ReleaseResult(text, latest, text.latestRelease, downloadStateForRelease(downloadState, latest), canRequestPackageInstalls, onDownloadApk, onInstallApk, onDeleteApk, onOpenInstallPermissionSettings)
+            }
+        }
     }
 }
 
@@ -1024,6 +1043,7 @@ private fun ReleaseResult(
     Text(text.releaseVersionName(release.versionName), style = MaterialTheme.typography.bodySmall)
     release.versionCode?.let { Text("versionCode $it", style = MaterialTheme.typography.bodySmall) }
     release.publishedAt?.let { Text(text.publishedAt(it), style = MaterialTheme.typography.bodySmall) }
+    if (release.prerelease) Text(text.prerelease, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     val apkAsset = release.apkAsset
     if (apkAsset != null) {
         Text(text.apkAssetName(apkAsset.name), style = MaterialTheme.typography.bodySmall)
@@ -1054,6 +1074,60 @@ private fun ReleaseResult(
         }
         OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(release.htmlUrl))) }) {
             Text(text.openReleasePage)
+        }
+    }
+}
+
+private fun downloadStateForRelease(state: UpdateDownloadState, release: ReleaseInfo): UpdateDownloadState = when (state) {
+    is UpdateDownloadState.UpdateAvailable -> if (state.release.sameReleaseAs(release)) state else UpdateDownloadState.Idle
+    is UpdateDownloadState.Downloading -> if (state.release.sameReleaseAs(release)) state else UpdateDownloadState.Idle
+    is UpdateDownloadState.ReadyToInstall -> if (state.release.sameReleaseAs(release)) state else UpdateDownloadState.Idle
+    is UpdateDownloadState.DownloadFailed -> if (state.release?.sameReleaseAs(release) != false) state else UpdateDownloadState.Idle
+    else -> state
+}
+
+private fun ReleaseInfo.sameReleaseAs(other: ReleaseInfo): Boolean = htmlUrl == other.htmlUrl || displayVersion == other.displayVersion
+
+@Composable
+private fun ReleaseHistoryView(
+    text: UiText,
+    releases: List<ReleaseInfo>,
+    downloadState: UpdateDownloadState,
+    onDownloadApk: (ReleaseInfo) -> Unit,
+    onInstallApk: (File) -> Unit,
+    onDeleteApk: (File) -> Unit,
+    onOpenRelease: (ReleaseInfo) -> Unit,
+) {
+    Text(text.recentReleases, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+    if (releases.isEmpty()) {
+        Text(text.releaseHistoryManualOnly, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return
+    }
+    releases.take(8).forEach { release ->
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth()) {
+            Text(release.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Text(release.displayVersion, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                release.publishedAt?.let { Text(text.publishedAt(it), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                if (release.prerelease) Text(text.prerelease, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            release.notes?.let { Text(it, maxLines = 3, style = MaterialTheme.typography.bodySmall) }
+            val releaseDownloadState = downloadStateForRelease(downloadState, release)
+            when (releaseDownloadState) {
+                is UpdateDownloadState.Downloading -> Text(text.downloadProgress(releaseDownloadState.progress.bytesDownloaded, releaseDownloadState.progress.totalBytes, releaseDownloadState.progress.percent), style = MaterialTheme.typography.bodySmall)
+                is UpdateDownloadState.ReadyToInstall -> Text(text.apkDownloaded(formatBytes(releaseDownloadState.file.length())), style = MaterialTheme.typography.bodySmall)
+                is UpdateDownloadState.DownloadFailed -> WarningText(text.downloadFailed(releaseDownloadState.message))
+                else -> Unit
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { onOpenRelease(release) }) { Text(text.openReleasePage) }
+                if (releaseDownloadState is UpdateDownloadState.ReadyToInstall) {
+                    TextButton(onClick = { onInstallApk(releaseDownloadState.file) }) { Text(text.installUpdate) }
+                    TextButton(onClick = { onDeleteApk(releaseDownloadState.file) }) { Text(text.deleteDownloadedApk) }
+                } else if (release.apkAsset != null && releaseDownloadState !is UpdateDownloadState.Downloading) {
+                    TextButton(onClick = { onDownloadApk(release) }) { Text(text.downloadApk) }
+                }
+            }
         }
     }
 }
@@ -1392,6 +1466,10 @@ Packets are dropped after counting""",
     val checkForUpdates = t("Проверить обновления", "Check for updates", "检查更新")
     val openGithubReleases = t("Открыть релизы GitHub", "Open GitHub releases", "打开 GitHub 发布页")
     val openReleasePage = t("Открыть страницу релиза", "Open release page", "打开发布页面")
+    val latestRelease = t("Последний релиз", "Latest release", "最新发布")
+    val recentReleases = t("Недавние релизы", "Recent releases", "近期发布")
+    val releaseHistoryManualOnly = t("История появится после ручной проверки обновлений.", "Release history appears after a manual update check.", "手动检查更新后会显示发布历史。")
+    val prerelease = t("Предрелиз", "Prerelease", "预发布")
     val updateManualOnly = t("Проверка выполняется только вручную после нажатия кнопки. Автоматических фоновых проверок нет.", "Update checking runs only when you press the button. There are no automatic background checks.", "只会在按下按钮后手动检查更新，没有自动后台检查。")
     val updateChecking = t("Проверяем GitHub Releases…", "Checking GitHub Releases…", "正在检查 GitHub Releases…")
     val upToDate = t("Установлена актуальная версия для этого канала.", "You are up to date for this channel.", "当前频道已是最新版本。")

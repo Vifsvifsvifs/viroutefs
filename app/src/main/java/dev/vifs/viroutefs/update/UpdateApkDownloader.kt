@@ -77,9 +77,10 @@ internal class UpdateApkDownloader(private val context: Context) {
                         }
                     }
                 }
-                validateDownloadedApk(temp, asset, downloaded)
+                validateDownloadedTempFile(temp, asset, downloaded)
                 if (target.exists()) target.delete()
                 if (!temp.renameTo(target)) throw IllegalStateException("Could not move downloaded APK into cache.")
+                validateInstallableFile(target)
                 UpdateDownloadState.ReadyToInstall(release, target)
             }
         }.getOrElse { error ->
@@ -107,9 +108,9 @@ internal class UpdateApkDownloader(private val context: Context) {
     fun canRequestPackageInstalls(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.O || context.packageManager.canRequestPackageInstalls()
 }
 
-internal fun validateDownloadedApk(file: File, asset: ReleaseAsset, downloadedBytes: Long) {
-    validateInstallableFile(file)
-    if (downloadedBytes <= 0L) throw IllegalStateException("Downloaded APK is empty.")
+internal fun validateDownloadedTempFile(file: File, asset: ReleaseAsset, downloadedBytes: Long) {
+    if (!file.exists()) throw IllegalStateException("Downloaded APK file does not exist.")
+    if (file.length() <= 0L || downloadedBytes <= 0L) throw IllegalStateException("Downloaded APK is empty.")
     val expectedSize = asset.sizeBytes
     if (expectedSize != null && expectedSize > 0 && downloadedBytes != expectedSize) {
         throw IllegalStateException("Downloaded APK size mismatch: $downloadedBytes of $expectedSize bytes.")

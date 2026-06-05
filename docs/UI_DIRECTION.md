@@ -33,9 +33,9 @@ Final app icon direction for this alpha:
 
 - Minimalist black/red stylized `V`.
 - Very dark background with a central red angular `V`.
-- Subtle LAN/network motif integrated into the `V` with two or three small node dots and a thin connecting line.
+- White branching/network-like lines around or behind the `V`, using a small number of node dots and thin connecting lines.
 - Sharp, clean, technical, and readable at small launcher sizes.
 - Not childish, horror/aggressive, a cartoon face, or a generic VPN shield.
-- Keep enough adaptive-icon padding so round, themed/monochrome, and legacy fallbacks stay visually consistent.
+- Keep enough adaptive-icon padding so round, themed/monochrome, and legacy fallbacks stay visually consistent. Launcher resources use unique `ic_viroutefs_launcher*` names so updated installs cannot fall back to stale cached `ic_launcher` assets.
 
 Do not add low-quality generated raster artwork or external binary design files. Prefer adaptive icon XML/vector assets.

@@ -17,9 +17,9 @@ ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project 
 - No hidden interception of third-party traffic.
 - No offensive security features.
 
-## Current status: 0.6.11-alpha
+## Current status: 0.6.13-alpha
 
-Version `0.6.11-alpha` polishes the alpha UI by aligning all launcher icon fallbacks to the same minimalist red `V` with a LAN motif and by keeping Settings → Help collapsed by default. The manual Settings update flow still lets a user check GitHub Releases, manually download an APK asset such as `ViRouteFS-0.6.11-alpha.apk`, and open Android's system package installer. The user must confirm installation in Android system UI. There are still no background update checks, no auto-downloads, no silent installs, and no runtime VPN/TUN routing behavior changes.
+Version `0.6.13-alpha` polishes the launcher icon, repairs manual APK download validation, and adds a compact release history in Settings → Updates. The manual Settings update flow still lets a user check GitHub Releases, manually download an APK asset such as `ViRouteFS-0.6.13-alpha.apk`, and open Android's system package installer. The user must confirm installation in Android system UI. There are still no background update checks, no auto-downloads, no silent installs, and no runtime VPN/TUN routing behavior changes.
 
 What exists now:
 
@@ -30,9 +30,9 @@ What exists now:
 - Flow Scanner can show local counters when developer diagnostics explicitly enable the TEST-NET preview.
 - The app has Compose screens for Networks, Routes, DNS, Flow Scanner, Tools, and Settings with Help collapsed by default.
 - GitHub Actions builds APK artifacts with dynamic version-based names.
-- Published releases contain friendly APK assets, such as `ViRouteFS-0.6.11-alpha.apk`, attached to GitHub Releases.
+- Published releases contain friendly APK assets, such as `ViRouteFS-0.6.13-alpha.apk`, attached to GitHub Releases.
 - Stable update-over-install for alpha APKs requires the alpha signing secrets documented in [`docs/ALPHA_SIGNING.md`](docs/ALPHA_SIGNING.md).
-- Settings includes a manual update checker that contacts GitHub Releases only after the user taps **Check for updates**. When a newer release has an APK asset, the user can tap **Download APK** and then **Install update** to open Android's system package installer.
+- Settings includes a manual update checker that contacts GitHub Releases only after the user taps **Check for updates**. Settings → Updates shows the current version, newest available release, and a compact recent release history with notes previews and links. When a release has an APK asset, the user can tap **Download APK** and then **Install update** to open Android's system package installer.
 - Routing configuration, DNS policy metadata, diagnostics reports, and logs are local-first.
 - The built-in System / Система route is the safe internal default for apps without explicit rules in the ViRouteFS model; it is not bypass when network control is active.
 
@@ -49,7 +49,7 @@ What is intentionally not implemented yet:
 
 ## Releases
 
-Stable APK downloads should come from [GitHub Releases](https://github.com/Vifsvifsvifs/viroutefs/releases). GitHub Releases are the official alpha APK channel and include friendly APK assets such as `ViRouteFS-0.6.11-alpha.apk` plus release notes.
+Stable APK downloads should come from [GitHub Releases](https://github.com/Vifsvifsvifs/viroutefs/releases). GitHub Releases are the official alpha APK channel and include friendly APK assets such as `ViRouteFS-0.6.13-alpha.apk` plus release notes. The app icon direction is a minimalist dark launcher tile with a central red `V` and white network branches, maintained as XML/vector resources for adaptive, monochrome, and legacy consistency.
 
 GitHub Actions artifacts are mainly CI artifacts for maintainers and testers. They are useful for validating pull requests and pushes, but Releases should be preferred for normal alpha APK downloads because they are published intentionally with a changelog and attached APK asset.
 
@@ -59,7 +59,7 @@ APK artifacts are built by GitHub Actions. To make alpha artifacts updateable ov
 
 Because ViRouteFS now uses stable alpha signing for published alpha APKs, future stable alpha updates should install over previous alpha builds signed with the same key. Users who installed an older randomly-signed debug APK may need one uninstall before moving to the stable alpha-signed release channel.
 
-The in-app update checker is manual-only: it uses the public GitHub Releases API only when the user taps **Check for updates** in Settings. It compares published release versions with the local `BuildConfig.VERSION_NAME` and `BuildConfig.VERSION_CODE`. It does not run on app startup, does not run in the background, and does not send device identifiers. APK download starts only after the user taps **Download APK**. After the APK is downloaded into app-specific cache, **Install update** opens Android's system package installer; ViRouteFS does not silently install APKs. Android/Google Play Protect may still show warnings for APKs installed outside Google Play. The app cannot suppress system install warnings, and users must confirm installation in Android system UI.
+The in-app update checker is manual-only: it uses the public GitHub Releases API only when the user taps **Check for updates** in Settings. It compares published release versions with the local `BuildConfig.VERSION_NAME` and `BuildConfig.VERSION_CODE`, and then shows recent GitHub Releases in Settings → Updates. It does not run on app startup, does not run in the background, and does not send device identifiers. APK download starts only after the user taps **Download APK**. Downloads are written to a temporary cache file, checked for existence and size, moved to a final `.apk` filename, and then opened through Android's system installer via FileProvider. ViRouteFS does not silently install APKs. Android may show an unverified app warning because this APK is installed outside Google Play. This is a system warning for sideloaded APKs. The app cannot suppress system install warnings, and users must confirm installation in Android system UI.
 
 See [`docs/TUN_SKELETON.md`](docs/TUN_SKELETON.md) for the safe Android TUN preview, [`docs/FLOW_SCANNER.md`](docs/FLOW_SCANNER.md) for Flow Scanner behavior, [`docs/ROUTING_POLICY.md`](docs/ROUTING_POLICY.md) for strict route isolation, and [`docs/UI_DIRECTION.md`](docs/UI_DIRECTION.md) for navigation/icon direction.
 

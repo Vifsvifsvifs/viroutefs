@@ -46,12 +46,13 @@ internal data class ReleaseInfo(
     val publishedAt: String?,
     val notes: String?,
     val htmlUrl: String,
+    val prerelease: Boolean,
     val apkAsset: ReleaseAsset?,
 )
 
 internal sealed interface UpdateCheckResult {
-    data class NewerRelease(val release: ReleaseInfo) : UpdateCheckResult
-    data class UpToDate(val latest: ReleaseInfo?) : UpdateCheckResult
+    data class NewerRelease(val release: ReleaseInfo, val releases: List<ReleaseInfo>) : UpdateCheckResult
+    data class UpToDate(val latest: ReleaseInfo?, val releases: List<ReleaseInfo>) : UpdateCheckResult
     data object NoReleaseFound : UpdateCheckResult
     data class Error(val message: String) : UpdateCheckResult
 }
@@ -68,14 +69,16 @@ internal class UpdateChecker(
                 ?: return@withContext UpdateCheckResult.NoReleaseFound
 
             if (isNewerRelease(latest, currentVersion, currentVersionCode)) {
-                UpdateCheckResult.NewerRelease(latest)
+                UpdateCheckResult.NewerRelease(latest, releases)
             } else {
-                UpdateCheckResult.UpToDate(latest)
+                UpdateCheckResult.UpToDate(latest, releases)
             }
         }.getOrElse { error ->
             UpdateCheckResult.Error(error.message ?: error::class.java.simpleName)
         }
     }
+
+    suspend fun recentReleases(): List<ReleaseInfo> = withContext(Dispatchers.IO) { fetchReleases() }
 
     private fun fetchReleases(): List<ReleaseInfo> {
         val connection = (URL(apiUrl).openConnection() as HttpURLConnection).apply {
@@ -112,6 +115,7 @@ internal fun parseReleases(json: String): List<ReleaseInfo> {
             val publishedAt = release.optString("published_at").takeIf { it.isNotBlank() }?.let(::formatPublishedAt)
             val notes = body.takeIf { it.isNotBlank() }?.let(::shortReleaseNotes)
             val htmlUrl = release.optString("html_url").takeIf { it.isNotBlank() } ?: GITHUB_RELEASES_WEB_URL
+            val prerelease = release.optBoolean("prerelease", false)
             val apkAsset = selectApkAsset(parseReleaseAssets(release.optJSONArray("assets")))
 
             add(
@@ -124,6 +128,7 @@ internal fun parseReleases(json: String): List<ReleaseInfo> {
                     publishedAt = publishedAt,
                     notes = notes,
                     htmlUrl = htmlUrl,
+                    prerelease = prerelease,
                     apkAsset = apkAsset,
                 ),
             )
