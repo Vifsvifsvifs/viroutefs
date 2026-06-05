@@ -73,6 +73,8 @@ internal fun VpnScreen(
     @Suppress("UNUSED_PARAMETER") tunTestRoutePreviewEnabled: Boolean,
     onVpnSwitch: (Boolean) -> Unit,
     @Suppress("UNUSED_PARAMETER") onTunTestRoutePreview: (Boolean) -> Unit,
+    onClearPacketList: () -> Unit,
+    onPausePacketInspector: (Boolean) -> Unit,
     onConfig: (RoutingConfig, String?) -> Unit,
 ) {
     var selectedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -144,6 +146,23 @@ internal fun VpnScreen(
             CardBlock {
                 Text(text.vpnPacketInspector, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 Text(text.vpnPacketInspectorPrivacy, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(text.vpnPausePacketInspector, style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            "${text.vpnPacketListLastUpdate}: ${vpnState.packetSummaryUpdatedAt.formatPacketTime(text)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = vpnState.packetInspectorPaused, onCheckedChange = onPausePacketInspector)
+                }
+                if (vpnState.packetInspectorPaused) WarningText(text.vpnPacketInspectorPaused)
+                OutlinedButton(onClick = onClearPacketList) { Text(text.vpnClearPacketList) }
                 if (vpnState.packetSummaries.isEmpty()) {
                     Text(text.vpnPacketInspectorEmpty, style = MaterialTheme.typography.bodySmall)
                 } else {
@@ -206,6 +225,10 @@ private fun PacketSummaryLine(summary: PacketSummary, routeDecisionPreview: Live
         }
     }
 }
+
+private fun Long?.formatPacketTime(text: UiText): String = this?.let {
+    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(Date(it))
+} ?: text.flowNever
 
 private fun PacketSummary.endpointLine(): String = if (srcPort != null && dstPort != null) {
     "$srcIp:$srcPort → $dstIp:$dstPort"

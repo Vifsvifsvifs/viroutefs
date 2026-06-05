@@ -18,7 +18,7 @@ import java.io.FileInputStream
 import java.io.InterruptedIOException
 
 /**
- * Safe ViRouteFS TUN runtime skeleton for 0.8.1-alpha.
+ * Safe ViRouteFS TUN runtime skeleton for 0.8.3-alpha.
  *
  * The default mode creates a minimal route-less Android TUN interface. The
  * optional test-route preview adds only 203.0.113.0/24 (TEST-NET-3) so users
@@ -39,6 +39,7 @@ class ViRouteVpnService : VpnService() {
     private var icmpPacketsRead: Long = 0L
     private var lastPacketAt: Long? = null
     private val packetHistory = PacketSummaryHistory()
+    private var lastUiPublishAt: Long = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -54,9 +55,21 @@ class ViRouteVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == VpnServiceController.ACTION_STOP) {
-            stopPreview()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            VpnServiceController.ACTION_STOP -> {
+                stopPreview()
+                return START_NOT_STICKY
+            }
+            VpnServiceController.ACTION_CLEAR_PACKET_SUMMARIES -> {
+                packetHistory.clear()
+                publishActiveState(force = true)
+                return START_STICKY
+            }
+            VpnServiceController.ACTION_SET_PACKET_INSPECTOR_PAUSED -> {
+                packetHistory.setPaused(intent.getBooleanExtra(VpnServiceController.EXTRA_PACKET_INSPECTOR_PAUSED, false))
+                publishActiveState(force = true)
+                return START_STICKY
+            }
         }
 
         if (lastState.status == VpnServiceStatus.Error) return START_NOT_STICKY
@@ -151,7 +164,7 @@ class ViRouteVpnService : VpnService() {
                     if (read < 0) break
                     if (read == 0) continue
                     inspectPacket(buffer, read)
-                    publishActiveState()
+                    publishActiveStateThrottled()
                 }
             }
         }.onFailure { error ->
@@ -220,13 +233,15 @@ class ViRouteVpnService : VpnService() {
         udpPacketsRead = 0L
         icmpPacketsRead = 0L
         lastPacketAt = null
+        lastUiPublishAt = 0L
         packetHistory.clear()
     }
 
     private fun activeStatus(): VpnServiceStatus =
         if (testRoutePreviewActive) VpnServiceStatus.TunTestRouteActive else VpnServiceStatus.TunPreviewActive
 
-    private fun publishActiveState() {
+    private fun publishActiveState(force: Boolean = false) {
+        if (force) lastUiPublishAt = System.currentTimeMillis()
         publishState(
             status = activeStatus(),
             tunTestRouteActive = testRoutePreviewActive,
@@ -237,8 +252,16 @@ class ViRouteVpnService : VpnService() {
             udpPacketsRead = udpPacketsRead,
             icmpPacketsRead = icmpPacketsRead,
             lastPacketAt = lastPacketAt,
+            packetSummaryUpdatedAt = packetHistory.lastUpdatedAt(),
+            packetInspectorPaused = packetHistory.isPaused(),
             packetSummaries = packetHistory.newestFirst(),
         )
+    }
+
+    private fun publishActiveStateThrottled(now: Long = System.currentTimeMillis()) {
+        if (now - lastUiPublishAt < UI_PUBLISH_INTERVAL_MS) return
+        lastUiPublishAt = now
+        publishActiveState()
     }
 
     private fun publishStoppedState() {
@@ -251,6 +274,8 @@ class ViRouteVpnService : VpnService() {
             udpPacketsRead = udpPacketsRead,
             icmpPacketsRead = icmpPacketsRead,
             lastPacketAt = lastPacketAt,
+            packetSummaryUpdatedAt = packetHistory.lastUpdatedAt(),
+            packetInspectorPaused = packetHistory.isPaused(),
             packetSummaries = packetHistory.newestFirst(),
         )
     }
@@ -313,6 +338,8 @@ class ViRouteVpnService : VpnService() {
         udpPacketsRead: Long = 0L,
         icmpPacketsRead: Long = 0L,
         lastPacketAt: Long? = null,
+        packetSummaryUpdatedAt: Long? = null,
+        packetInspectorPaused: Boolean = false,
         packetSummaries: List<PacketSummary> = emptyList(),
     ) {
         val state = VpnServiceUiState(
@@ -326,6 +353,8 @@ class ViRouteVpnService : VpnService() {
             udpPacketsRead = udpPacketsRead,
             icmpPacketsRead = icmpPacketsRead,
             lastPacketAt = lastPacketAt,
+            packetSummaryUpdatedAt = packetSummaryUpdatedAt,
+            packetInspectorPaused = packetInspectorPaused,
             packetSummaries = packetSummaries,
         )
         rememberState(state)
@@ -341,6 +370,8 @@ class ViRouteVpnService : VpnService() {
             .putExtra(VpnServiceController.EXTRA_UDP_PACKETS_READ, udpPacketsRead)
             .putExtra(VpnServiceController.EXTRA_ICMP_PACKETS_READ, icmpPacketsRead)
             .putExtra(VpnServiceController.EXTRA_LAST_PACKET_AT, lastPacketAt ?: VpnServiceController.NO_PACKET_TIME)
+            .putExtra(VpnServiceController.EXTRA_PACKET_SUMMARY_UPDATED_AT, packetSummaryUpdatedAt ?: VpnServiceController.NO_PACKET_TIME)
+            .putExtra(VpnServiceController.EXTRA_PACKET_INSPECTOR_PAUSED, packetInspectorPaused)
             .putStringArrayListExtra(
                 VpnServiceController.EXTRA_PACKET_SUMMARIES,
                 ArrayList(packetSummaries.map(VpnServiceController::encodePacketSummary)),
@@ -371,5 +402,6 @@ class ViRouteVpnService : VpnService() {
         private const val TEST_ROUTE_IPV4_PREFIX_LENGTH = 24
         private const val TUN_MTU = 1500
         private const val PACKET_LOOP_JOIN_TIMEOUT_MS = 500L
+        private const val UI_PUBLISH_INTERVAL_MS = 250L
     }
 }

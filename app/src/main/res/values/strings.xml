@@ -168,7 +168,7 @@
     <string name="tools_result_not_run">Проверка ещё не запускалась. Заполните поля и нажмите кнопку проверки.</string>
     <string name="settings_version_title">Версия приложения</string>
     <string name="settings_version_simple">Установлена версия ViRouteFS %1$s.</string>
-    <string name="settings_version_details">versionCode: %1$d. Веха: 0.6.8-alpha — stable alpha signing и ручная проверка обновлений; без runtime engine integration, dependency/native binary additions, default-route enforcement, DNS в VPN builder, payload-логов, пересылки или прокси.</string>
+    <string name="settings_version_details">versionCode: %1$d. Веха: 0.8.3-alpha — safety-контролы runtime observation; без runtime engine integration, dependency/native binary additions, default-route enforcement, DNS в VPN builder, payload-логов, пересылки или прокси.</string>
     <string name="settings_version_action">Обновляйте приложение только из доверенного источника и проверяйте список изменений перед установкой.</string>
 
 </resources>

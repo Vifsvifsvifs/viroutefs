@@ -71,3 +71,14 @@ Current limitations:
 ## Safety and privacy
 
 Route diagnostics are local-first and user-controlled: no background checks, telemetry, analytics, ad tracking, cloud upload, automatic report export, packet capture, scanners, or offensive security features.
+
+## Runtime observation controls in 0.8.3-alpha
+
+VPN Runtime observation remains a local, opt-in read/drop preview. Packets read from the safe TUN preview are counted and dropped; ViRouteFS does not forward packets, write packets back to TUN, proxy DNS, implement VLESS, implement SOCKS5 forwarding, persist packet summaries, or upload telemetry/cloud logs.
+
+The packet inspector has safety controls for heavy or sensitive testing:
+
+- **Pause packet inspector** freezes the summary list by preventing new in-memory summaries from being appended. Runtime counters may continue to update while the service stays active and stable.
+- **Clear packet list** empties the current in-memory summaries without resetting counters. Because summaries are not persisted, there is no on-disk packet history to delete.
+
+The UI keeps only the latest 50 metadata-only summaries, debounces list publication to avoid excessive Compose updates under traffic, shows the last packet-list update timestamp, and displays "No packets observed yet" when the in-memory list is empty.
