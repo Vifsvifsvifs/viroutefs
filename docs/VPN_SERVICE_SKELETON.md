@@ -63,3 +63,8 @@ Flow Scanner can show the local runtime counters from the opt-in TEST-NET route 
 8. Confirm normal internet still works.
 9. Disable VPN preview.
 10. Confirm TUN closes and counters stop.
+
+
+## 0.8.0-alpha packet counters
+
+The Android VpnService runtime skeleton now reads packets from the TUN ParcelFileDescriptor when the opt-in TEST-NET developer route is active. It parses IPv4 header metadata only and updates local counters for total packets, bytes, IPv4 packets, TCP, UDP, and ICMP. Packets are dropped after counting. There is no packet forwarding, SOCKS5 forwarding, VLESS, default-route capture, payload logging, telemetry, or background upload.

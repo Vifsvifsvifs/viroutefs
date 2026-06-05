@@ -18,13 +18,13 @@ import java.io.FileInputStream
 import java.io.InterruptedIOException
 
 /**
- * Safe ViRouteFS TUN preview for 0.6.5-alpha.
+ * Safe ViRouteFS TUN runtime skeleton for 0.8.0-alpha.
  *
  * The default mode creates a minimal route-less Android TUN interface. The
  * optional test-route preview adds only 203.0.113.0/24 (TEST-NET-3) so users
  * can validate the read/drop lifecycle without routing normal internet traffic.
  * No DNS servers, default routes, packet payload logging, forwarding, proxying,
- * or real VPN engines are enabled.
+ * or real VPN engines are enabled. The packet loop parses only IPv4 header metadata for local TCP/UDP/ICMP counters and drops every packet.
  */
 class ViRouteVpnService : VpnService() {
     private var tunDescriptor: ParcelFileDescriptor? = null
@@ -33,6 +33,10 @@ class ViRouteVpnService : VpnService() {
     private var testRoutePreviewActive: Boolean = false
     private var packetsRead: Long = 0L
     private var bytesRead: Long = 0L
+    private var ipv4PacketsRead: Long = 0L
+    private var tcpPacketsRead: Long = 0L
+    private var udpPacketsRead: Long = 0L
+    private var icmpPacketsRead: Long = 0L
     private var lastPacketAt: Long? = null
 
     override fun onCreate() {
@@ -123,7 +127,7 @@ class ViRouteVpnService : VpnService() {
         }
 
         tunDescriptor = descriptor
-        if (enableTestRoute) startPacketLoop(descriptor)
+        startPacketLoop(descriptor)
         publishActiveState()
         updateNotification(activeStatus())
     }
@@ -145,8 +149,7 @@ class ViRouteVpnService : VpnService() {
                     val read = input.read(buffer)
                     if (read < 0) break
                     if (read == 0) continue
-                    packetsRead += 1L
-                    bytesRead += read.toLong()
+                    countPacket(buffer, read)
                     lastPacketAt = System.currentTimeMillis()
                     publishActiveState()
                 }
@@ -190,9 +193,34 @@ class ViRouteVpnService : VpnService() {
         packetLoopThread = null
     }
 
+    private fun countPacket(buffer: ByteArray, length: Int) {
+        packetsRead += 1L
+        bytesRead += length.toLong()
+        when (Ipv4PacketParser.parse(buffer, length)) {
+            Ipv4Protocol.Tcp -> {
+                ipv4PacketsRead += 1L
+                tcpPacketsRead += 1L
+            }
+            Ipv4Protocol.Udp -> {
+                ipv4PacketsRead += 1L
+                udpPacketsRead += 1L
+            }
+            Ipv4Protocol.Icmp -> {
+                ipv4PacketsRead += 1L
+                icmpPacketsRead += 1L
+            }
+            Ipv4Protocol.Other -> ipv4PacketsRead += 1L
+            null -> Unit
+        }
+    }
+
     private fun resetCounters() {
         packetsRead = 0L
         bytesRead = 0L
+        ipv4PacketsRead = 0L
+        tcpPacketsRead = 0L
+        udpPacketsRead = 0L
+        icmpPacketsRead = 0L
         lastPacketAt = null
     }
 
@@ -205,6 +233,10 @@ class ViRouteVpnService : VpnService() {
             tunTestRouteActive = testRoutePreviewActive,
             packetsRead = packetsRead,
             bytesRead = bytesRead,
+            ipv4PacketsRead = ipv4PacketsRead,
+            tcpPacketsRead = tcpPacketsRead,
+            udpPacketsRead = udpPacketsRead,
+            icmpPacketsRead = icmpPacketsRead,
             lastPacketAt = lastPacketAt,
         )
     }
@@ -214,6 +246,10 @@ class ViRouteVpnService : VpnService() {
             status = VpnServiceStatus.Stopped,
             packetsRead = packetsRead,
             bytesRead = bytesRead,
+            ipv4PacketsRead = ipv4PacketsRead,
+            tcpPacketsRead = tcpPacketsRead,
+            udpPacketsRead = udpPacketsRead,
+            icmpPacketsRead = icmpPacketsRead,
             lastPacketAt = lastPacketAt,
         )
     }
@@ -271,9 +307,24 @@ class ViRouteVpnService : VpnService() {
         tunTestRouteActive: Boolean = false,
         packetsRead: Long = 0L,
         bytesRead: Long = 0L,
+        ipv4PacketsRead: Long = 0L,
+        tcpPacketsRead: Long = 0L,
+        udpPacketsRead: Long = 0L,
+        icmpPacketsRead: Long = 0L,
         lastPacketAt: Long? = null,
     ) {
-        val state = VpnServiceUiState(status, detail, tunTestRouteActive, packetsRead, bytesRead, lastPacketAt)
+        val state = VpnServiceUiState(
+            status = status,
+            detail = detail,
+            tunTestRouteActive = tunTestRouteActive,
+            packetsRead = packetsRead,
+            bytesRead = bytesRead,
+            ipv4PacketsRead = ipv4PacketsRead,
+            tcpPacketsRead = tcpPacketsRead,
+            udpPacketsRead = udpPacketsRead,
+            icmpPacketsRead = icmpPacketsRead,
+            lastPacketAt = lastPacketAt,
+        )
         rememberState(state)
         val intent = Intent(VpnServiceController.ACTION_STATE_CHANGED)
             .setPackage(packageName)
@@ -282,6 +333,10 @@ class ViRouteVpnService : VpnService() {
             .putExtra(VpnServiceController.EXTRA_TEST_ROUTE_ACTIVE, tunTestRouteActive)
             .putExtra(VpnServiceController.EXTRA_PACKETS_READ, packetsRead)
             .putExtra(VpnServiceController.EXTRA_BYTES_READ, bytesRead)
+            .putExtra(VpnServiceController.EXTRA_IPV4_PACKETS_READ, ipv4PacketsRead)
+            .putExtra(VpnServiceController.EXTRA_TCP_PACKETS_READ, tcpPacketsRead)
+            .putExtra(VpnServiceController.EXTRA_UDP_PACKETS_READ, udpPacketsRead)
+            .putExtra(VpnServiceController.EXTRA_ICMP_PACKETS_READ, icmpPacketsRead)
             .putExtra(VpnServiceController.EXTRA_LAST_PACKET_AT, lastPacketAt ?: VpnServiceController.NO_PACKET_TIME)
         sendBroadcast(intent)
     }

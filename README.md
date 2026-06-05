@@ -17,9 +17,9 @@ ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project 
 - No hidden interception of third-party traffic.
 - No offensive security features.
 
-## Current status: 0.7.7-alpha
+## Current status: 0.8.0-alpha
 
-Version `0.7.7-alpha` adds an internal SOCKS5 outbound connector abstraction that reuses the manual SOCKS5 greeting/authentication and CONNECT protocol path. This is a foundation for future runtime routing only: it does not enable TUN-to-SOCKS forwarding, does not forward Android device traffic, does not capture the default route, does not send application payloads, and does not change VpnService packet forwarding behavior. Manual SOCKS5 diagnostics remain explicit button-driven checks with no background checks, no startup tests, no auto-connect behavior, no silent DNS changes, no telemetry/cloud upload, and no credential exposure.
+Version `0.8.0-alpha` adds the Android VpnService runtime skeleton: the app requests Android VPN permission, establishes the existing safe TUN preview, reads packets from the ParcelFileDescriptor in the opt-in TEST-NET developer route mode, parses IPv4 headers locally, and shows TCP/UDP/ICMP counters in the UI. Packets are counted and dropped only; there is still no packet forwarding, no SOCKS5 forwarding, no VLESS, no default route capture, no payload logging, no telemetry, and no background upload.
 
 What exists now:
 
@@ -46,6 +46,10 @@ What is intentionally not implemented yet:
 - No Xray, OpenVPN, WireGuard, Hysteria2, or runtime SOCKS5 proxy engines yet. The internal SOCKS5 outbound connector is used for explicit manual diagnostics only, not runtime forwarding.
 - No Play Store or F-Droid release is claimed yet.
 - No background update checks, automatic APK downloads, silent install behavior, telemetry, analytics, tracking, ads, or cloud upload.
+
+## 0.8.0-alpha VpnService runtime skeleton
+
+ViRouteFS 0.8.0-alpha keeps the safe local-first VPN boundary and adds runtime packet reading for the opt-in TEST-NET route preview. The foreground VpnService establishes a TUN interface, reads packets from the ParcelFileDescriptor, parses only IPv4 header metadata, increments local TCP/UDP/ICMP counters, and drops packets without forwarding them. The normal route-less TUN preview still adds no default route, and the developer TEST-NET route remains the only explicit packet-producing preview route.
 
 ## 0.7.7-alpha SOCKS5 outbound connector abstraction
 

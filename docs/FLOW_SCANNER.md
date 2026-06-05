@@ -25,3 +25,8 @@ Current safety boundaries:
 - No telemetry, analytics, tracking SDKs, ads, or cloud upload.
 
 The developer TEST-NET route is `203.0.113.0/24`. Packets routed into that preview are counted and dropped. Counters are local runtime state.
+
+
+## 0.8.0-alpha packet counters
+
+The Android VpnService runtime skeleton now reads packets from the TUN ParcelFileDescriptor when the opt-in TEST-NET developer route is active. It parses IPv4 header metadata only and updates local counters for total packets, bytes, IPv4 packets, TCP, UDP, and ICMP. Packets are dropped after counting. There is no packet forwarding, SOCKS5 forwarding, VLESS, default-route capture, payload logging, telemetry, or background upload.
