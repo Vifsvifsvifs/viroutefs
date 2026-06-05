@@ -127,3 +127,4 @@ fun VlessTcpReachabilityResult.toProfileStatus(): VlessProfileStatus = when (sta
 
 fun String.sanitizeVlessReachabilityMessage(): String =
     replace(Regex("(?i)(uuid|password|pass|pwd|secret|token)=\\S+"), "$1=***")
+        .replace(Regex("(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b"), "[uuid redacted]")

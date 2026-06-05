@@ -98,6 +98,15 @@ Safety boundaries remain unchanged:
 - SOCKS5 credentials are not written to routing exports, diagnostic history, result messages, logs, telemetry, or cloud storage.
 - Telemetry, tracking, ads, analytics SDKs, and cloud upload remain out of scope.
 
+
+## 0.8.8-alpha manual VLESS protocol probe
+
+- Add a user-triggered manual plain-TCP VLESS protocol probe from the VLESS profile screen.
+- Build and send one minimal VLESS TCP request frame to a user-selected target using the existing VLESS request builder.
+- Store local no-backup history capped at 20 entries per profile without UUID values or raw frame bytes.
+- TLS/REALITY transport is not implemented yet.
+- Runtime VLESS forwarding, Android traffic forwarding, packets written back to TUN, DNS proxying, auto-testing, telemetry, analytics, and cloud upload remain out of scope.
+
 ## 0.8.5-alpha VLESS URI import/export
 
 - Add VLESS URI import/export for local configuration and route decision preview only.

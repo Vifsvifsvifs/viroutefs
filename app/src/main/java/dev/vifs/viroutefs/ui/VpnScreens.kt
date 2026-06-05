@@ -57,6 +57,12 @@ import dev.vifs.viroutefs.socks5.deriveSocks5ReadinessSummary
 import dev.vifs.viroutefs.socks5.toProfileStatus
 import dev.vifs.viroutefs.socks5.validateSocks5Profile
 import dev.vifs.viroutefs.vless.VLESS_NO_HANDSHAKE_NOTICE
+import dev.vifs.viroutefs.vless.VLESS_PROTOCOL_PROBE_NOTICE
+import dev.vifs.viroutefs.vless.VLESS_TLS_REALITY_UNSUPPORTED_MESSAGE
+import dev.vifs.viroutefs.vless.VlessProtocolProbeHistoryItem
+import dev.vifs.viroutefs.vless.VlessProtocolProbeHistoryStore
+import dev.vifs.viroutefs.vless.VlessProtocolProbeResult
+import dev.vifs.viroutefs.vless.VlessProtocolProber
 import dev.vifs.viroutefs.vless.VLESS_ROUTE_PREVIEW_ONLY
 import dev.vifs.viroutefs.vless.VLESS_RUNTIME_LIMITATION
 import dev.vifs.viroutefs.vless.VLESS_TCP_REACHABILITY_NOTICE
@@ -446,6 +452,7 @@ private fun VlessProfileEditorScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val historyStore = remember(context) { VlessTcpReachabilityHistoryStore(context) }
+    val protocolProbeHistoryStore = remember(context) { VlessProtocolProbeHistoryStore(context) }
     val clipboardManager = LocalClipboardManager.current
     var name by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.name ?: profile?.name ?: "") }
     var host by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.host ?: "") }
@@ -470,6 +477,10 @@ private fun VlessProfileEditorScreen(
     var exportUri by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf<String?>(null) }
     var currentReachability by remember(profile?.id ?: "new-vless") { mutableStateOf<VlessTcpReachabilityResult?>(null) }
     var history by remember(profile?.id ?: "new-vless") { mutableStateOf<List<VlessTcpReachabilityHistoryItem>>(emptyList()) }
+    var probeTargetHost by rememberSaveable(profile?.id ?: "new-vless-probe-target-host") { mutableStateOf("example.com") }
+    var probeTargetPortText by rememberSaveable(profile?.id ?: "new-vless-probe-target-port") { mutableStateOf("80") }
+    var currentProtocolProbe by remember(profile?.id ?: "new-vless-probe") { mutableStateOf<VlessProtocolProbeResult?>(null) }
+    var protocolProbeHistory by remember(profile?.id ?: "new-vless-probe-history") { mutableStateOf<List<VlessProtocolProbeHistoryItem>>(emptyList()) }
     var errors by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf<List<String>>(emptyList()) }
 
     fun draft(nextStatus: VlessProfileStatus = vless?.status ?: VlessProfileStatus.NotTested): VlessProfileConfig = VlessProfileConfig(
@@ -494,7 +505,10 @@ private fun VlessProfileEditorScreen(
     )
 
     LaunchedEffect(profile?.id) {
-        if (profile != null) history = historyStore.recentForProfile(profile.id)
+        if (profile != null) {
+            history = historyStore.recentForProfile(profile.id)
+            protocolProbeHistory = protocolProbeHistoryStore.recentForProfile(profile.id)
+        }
     }
 
     fun applyVlessProfile(parsed: VlessProfileConfig) {
@@ -546,6 +560,25 @@ private fun VlessProfileEditorScreen(
             ),
         )
         history = historyStore.recentForProfile(profile.id)
+    }
+
+    suspend fun recordProtocolProbeHistory(result: VlessProtocolProbeResult) {
+        if (profile == null) return
+        protocolProbeHistoryStore.add(
+            VlessProtocolProbeHistoryItem(
+                profileId = profile.id,
+                profileNameSnapshot = name.trim(),
+                serverHost = result.serverHost,
+                serverPort = result.serverPort,
+                targetHost = result.targetHost,
+                targetPort = result.targetPort,
+                timestamp = result.timestamp,
+                state = result.state,
+                message = result.message,
+                elapsedMs = result.elapsedMs,
+            ),
+        )
+        protocolProbeHistory = protocolProbeHistoryStore.recentForProfile(profile.id)
     }
 
     ScreenList(padding) {
@@ -632,6 +665,60 @@ private fun VlessProfileEditorScreen(
                 Text("TCP reachability only: no VLESS handshake, no TLS, no REALITY, no runtime forwarding, and no packets are written back to TUN.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+
+        item {
+            CardBlock {
+                Text("Manual VLESS protocol probe", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                WarningText(VLESS_PROTOCOL_PROBE_NOTICE)
+                Text("Only plain TCP VLESS profiles with security=none are supported. TLS/REALITY profiles report: $VLESS_TLS_REALITY_UNSUPPORTED_MESSAGE", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(probeTargetHost, { probeTargetHost = it }, label = { Text("Target host") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(probeTargetPortText, { probeTargetPortText = it }, label = { Text("Target port") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Button(
+                    enabled = profile != null && vless?.status != VlessProfileStatus.Testing,
+                    onClick = {
+                        val candidate = draft(VlessProfileStatus.Testing)
+                        val targetPort = probeTargetPortText.toIntOrNull() ?: -1
+                        errors = validateVlessProfile(candidate)
+                        if (errors.isEmpty()) {
+                            saveVlessStatus(VlessProfileStatus.Testing)
+                            scope.launch {
+                                val result = VlessProtocolProber().probe(candidate, probeTargetHost, targetPort)
+                                currentProtocolProbe = result
+                                saveVlessStatus(result.toProfileStatus())
+                                recordProtocolProbeHistory(result)
+                            }
+                        }
+                    },
+                ) { Text("Run VLESS probe") }
+                currentProtocolProbe?.let { result ->
+                    Text("Result: ${result.displayMessage}", style = MaterialTheme.typography.bodySmall)
+                    result.elapsedMs?.let { Text("Elapsed: $it ms", style = MaterialTheme.typography.bodySmall) }
+                    if (result.steps.isNotEmpty()) {
+                        Text("States: ${result.steps.joinToString(" → ") { it.label }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                if (profile == null) {
+                    Text("Save the VLESS profile first so the manual protocol probe result can be stored in local no-backup history.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("The probe sends only the locally built VLESS TCP request frame and no HTTP payload, Android traffic, DNS proxy traffic, or packets back to TUN.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (profile != null) {
+            item {
+                CardBlock {
+                    Text("Last manual VLESS protocol probe history", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+                    Text("Stored locally in app no-backup storage; newest first, last 20 per profile. UUID and raw frame bytes are never stored in this history.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (protocolProbeHistory.isEmpty()) {
+                        Text(text.none, style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        protocolProbeHistory.forEach { item ->
+                            Text(item.historyLabel(), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        }
+
         if (profile != null) {
             item {
                 CardBlock {
@@ -747,7 +834,7 @@ private fun String.toVlessSecurityMode(): VlessSecurityMode = VlessSecurityMode.
 } ?: VlessSecurityMode.NONE
 
 private fun vlessDescription(profile: VlessProfileConfig): String =
-    "VLESS ${profile.host}:${profile.port} (${profile.securityMode.wireName}). Manual TCP reachability only; no VLESS handshake, TLS/REALITY runtime, DNS proxying, or forwarding is implemented. UUID is hidden from summaries and diagnostics."
+    "VLESS ${profile.host}:${profile.port} (${profile.securityMode.wireName}). Manual diagnostics only: TCP reachability and plain-TCP VLESS probe for security=none; no TLS/REALITY runtime, DNS proxying, Android traffic forwarding, TUN writes, or runtime forwarding is implemented. UUID is hidden from summaries and diagnostics."
 
 private fun vlessReadinessLabel(status: VlessProfileStatus, history: List<VlessTcpReachabilityHistoryItem>): String = when {
     status == VlessProfileStatus.TcpReachable || history.firstOrNull()?.state == VlessTcpReachabilityState.Reachable -> "TCP reachable"
@@ -759,6 +846,12 @@ private fun VlessTcpReachabilityHistoryItem.historyLabel(): String {
     val time = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(timestamp))
     val latency = elapsedMs?.let { " (${it} ms)" }.orEmpty()
     return "$time • $host:$port • ${state.label}$latency • ${message.sanitizeForHistoryLabel()}"
+}
+
+private fun VlessProtocolProbeHistoryItem.historyLabel(): String {
+    val time = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(timestamp))
+    val latency = elapsedMs?.let { " (${it} ms)" }.orEmpty()
+    return "$time • $serverHost:$serverPort → $targetHost:$targetPort • ${state.label}$latency • ${message.sanitizeForHistoryLabel()}"
 }
 
 @Composable
@@ -1015,7 +1108,8 @@ private fun Socks5TestHistoryItem.historyLabel(): String {
     return "$time • ${testType.name}$target • ${state.label}$latency • ${message.sanitizeForHistoryLabel()}"
 }
 
-private fun String.sanitizeForHistoryLabel(): String = replace(Regex("(?i)(password|pass|pwd|secret)=\\S+"), "$1=***")
+private fun String.sanitizeForHistoryLabel(): String = replace(Regex("(?i)(uuid|password|pass|pwd|secret|token)=\\S+"), "$1=***")
+    .replace(Regex("(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b"), "[uuid redacted]")
 
 private fun socks5Description(profile: Socks5ProfileConfig): String =
     "SOCKS5 ${profile.host}:${profile.port}. Manual connectivity testing only; full device traffic routing through SOCKS5 will be added later. Passwords are stored locally and are not logged."

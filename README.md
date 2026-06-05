@@ -17,9 +17,9 @@ ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project 
 - No hidden interception of third-party traffic.
 - No offensive security features.
 
-## Current status: 0.8.7-alpha
+## Current status: 0.8.8-alpha
 
-Version `0.8.7-alpha` adds pure/local VLESS TCP request encoding for later manual handshake diagnostics without network I/O, server connections, runtime forwarding, TLS/REALITY/XTLS, or UUID logging. Version `0.8.5-alpha` added explicit VLESS URI import/export for local configuration only and keeps the 0.8.x local packet-inspection safety boundary. Version `0.8.1-alpha` added a local in-memory packet inspector to the Android VpnService runtime skeleton. The app requests Android VPN permission, establishes the existing safe TUN preview, reads packets from the ParcelFileDescriptor in the opt-in TEST-NET developer route mode, parses IPv4 metadata locally, and shows the latest 50 packet summaries newest first in the VPN Runtime screen. Summaries contain timestamp, protocol, IPv4 source/destination addresses, TCP/UDP ports when present, and packet size. Packets are counted and dropped only; there is still no packet forwarding, no SOCKS5 forwarding, no VLESS runtime forwarding, no DNS proxying, no default route capture, no payload capture, no payload logging, no PCAP export, no persistence, no telemetry, and no background upload.
+Version `0.8.8-alpha` adds a user-triggered manual plain-TCP VLESS protocol probe for saved VLESS profiles. It connects to the configured VLESS server, sends one minimal locally built VLESS TCP request frame to a user-selected target, stores privacy-safe local no-backup history, and still does not enable runtime forwarding, Android traffic forwarding, TUN writes, DNS proxying, TLS/REALITY/XTLS, auto-testing, telemetry, or cloud upload. Version `0.8.7-alpha` added pure/local VLESS TCP request encoding for later manual handshake diagnostics without runtime forwarding, TLS/REALITY/XTLS, or UUID logging. Version `0.8.5-alpha` added explicit VLESS URI import/export for local configuration only and keeps the 0.8.x local packet-inspection safety boundary. Version `0.8.1-alpha` added a local in-memory packet inspector to the Android VpnService runtime skeleton. The app requests Android VPN permission, establishes the existing safe TUN preview, reads packets from the ParcelFileDescriptor in the opt-in TEST-NET developer route mode, parses IPv4 metadata locally, and shows the latest 50 packet summaries newest first in the VPN Runtime screen. Summaries contain timestamp, protocol, IPv4 source/destination addresses, TCP/UDP ports when present, and packet size. Packets are counted and dropped only; there is still no packet forwarding, no SOCKS5 forwarding, no VLESS runtime forwarding, no DNS proxying, no default route capture, no payload capture, no payload logging, no PCAP export, no persistence, no telemetry, and no background upload.
 
 What exists now:
 
@@ -47,6 +47,10 @@ What is intentionally not implemented yet:
 - No Play Store or F-Droid release is claimed yet.
 - No background update checks, automatic APK downloads, silent install behavior, telemetry, analytics, tracking, ads, or cloud upload.
 
+
+## 0.8.8-alpha manual VLESS protocol probe
+
+ViRouteFS 0.8.8-alpha adds an explicit manual plain-TCP VLESS protocol probe on the VLESS profile screen. Users choose a target host and port, tap **Run VLESS probe**, and the app validates the profile, connects to the configured VLESS server, builds one minimal VLESS TCP request frame with the existing builder, sends that frame, waits briefly for close/error/timeout, and closes the socket. The probe does not send HTTP payloads, does not proxy DNS, does not forward Android traffic, and does not write packets back to TUN. TLS/REALITY transport is not implemented yet. Probe history stays local in app no-backup storage, is capped at 20 per profile, and excludes UUID values and raw frame bytes. See [`docs/VLESS_PROTOCOL.md`](docs/VLESS_PROTOCOL.md).
 
 ## 0.8.7-alpha VLESS protocol request builder
 
