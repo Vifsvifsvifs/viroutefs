@@ -17,9 +17,9 @@ ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project 
 - No hidden interception of third-party traffic.
 - No offensive security features.
 
-## Current status: 0.7.6-alpha
+## Current status: 0.7.7-alpha
 
-Version `0.7.6-alpha` adds SOCKS5 readiness summaries derived only from local manual diagnostic history in app no-backup storage. SOCKS5 profile cards and details can show whether the profile has not been tested, reached the handshake stage, completed a manual CONNECT test, or last failed; route explanations may show the latest manual SOCKS5 diagnostic readiness while still warning that runtime forwarding is not enabled. There are no automatic checks, no startup tests, no auto-connect behavior, no DNS changes, no runtime VPN engine changes, and no TUN-to-SOCKS forwarding.
+Version `0.7.7-alpha` adds an internal SOCKS5 outbound connector abstraction that reuses the manual SOCKS5 greeting/authentication and CONNECT protocol path. This is a foundation for future runtime routing only: it does not enable TUN-to-SOCKS forwarding, does not forward Android device traffic, does not capture the default route, does not send application payloads, and does not change VpnService packet forwarding behavior. Manual SOCKS5 diagnostics remain explicit button-driven checks with no background checks, no startup tests, no auto-connect behavior, no silent DNS changes, no telemetry/cloud upload, and no credential exposure.
 
 What exists now:
 
@@ -43,9 +43,15 @@ What is intentionally not implemented yet:
 - No DNS server is added to the VPN builder.
 - No packet payload logging.
 - No forwarding or proxying.
-- No Xray, OpenVPN, WireGuard, Hysteria2, or SOCKS5 proxy engines yet. SOCKS5 readiness is a read-only summary of manual diagnostics, not runtime forwarding.
+- No Xray, OpenVPN, WireGuard, Hysteria2, or runtime SOCKS5 proxy engines yet. The internal SOCKS5 outbound connector is used for explicit manual diagnostics only, not runtime forwarding.
 - No Play Store or F-Droid release is claimed yet.
 - No background update checks, automatic APK downloads, silent install behavior, telemetry, analytics, tracking, ads, or cloud upload.
+
+## 0.7.7-alpha SOCKS5 outbound connector abstraction
+
+ViRouteFS 0.7.7-alpha introduces a small internal outbound connector model and a SOCKS5 TCP outbound connector. The connector can validate a target, perform SOCKS5 greeting/authentication, issue a SOCKS5 CONNECT request, map sanitized results, and then close the socket without sending HTTP requests, application payloads, raw packet payloads, or device traffic. The model does not contain passwords and connector results must not expose credentials.
+
+The existing manual **Test CONNECT target** diagnostic now reuses this connector/shared protocol path so there is one CONNECT implementation for manual diagnostics. History, readiness summaries, and UI boundaries stay unchanged. Runtime forwarding is still not enabled yet: no TUN-to-SOCKS forwarding, no Android default-route capture, no real device traffic proxying, no background checks, no startup tests, no auto-connect, no silent DNS changes, and no telemetry or cloud upload.
 
 ## 0.7.6-alpha SOCKS5 readiness summaries
 

@@ -38,3 +38,7 @@ See [ROUTING_POLICY.md](ROUTING_POLICY.md).
 Starting in 0.7.6-alpha, route explanations may show a selected SOCKS5 profile's last manual diagnostic readiness, such as a recent manual CONNECT success target or the latest safe failure message. This readiness is derived from local no-backup SOCKS5 test history only.
 
 The routing model still does not implement runtime TUN-to-SOCKS forwarding, Android default-route capture, or real device traffic forwarding through SOCKS5. Any route explanation for SOCKS5 must keep the warning: "Selected profile: SOCKS5. Runtime forwarding is not enabled yet."
+
+## SOCKS5 outbound connector foundation
+
+Starting in 0.7.7-alpha, the app has an internal SOCKS5 outbound connector abstraction used by explicit manual CONNECT diagnostics. It is a foundation for future runtime routing, but the routing configuration model still does not route Android device traffic through SOCKS5. It does not enable TUN-to-SOCKS forwarding, default-route capture, background checks, startup tests, auto-connect, silent DNS changes, credential export, telemetry, or cloud upload.
