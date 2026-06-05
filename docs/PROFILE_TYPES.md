@@ -27,3 +27,9 @@ Every future type must preserve the ViRouteFS safety model: explicit user contro
 ## UI exposure rule
 
 Do not expose unimplemented profile type buttons, fake configured tunnels, or fake route targets in the normal app UI. Future profile types may be documented here and linked from admin/developer help, but normal users should only see features that have real, safe behavior.
+
+## VLESS profile model in 0.8.4-alpha
+
+VLESS profiles are configuration-only in 0.8.4-alpha. The app can store and validate local profile fields for route decision preview, including UUID and placeholder TLS/REALITY metadata, but it does not connect to VLESS servers, forward packets, write packets back to TUN, implement REALITY/XTLS runtime, or proxy DNS. Route decision preview must warn: "Selected profile is VLESS. Runtime forwarding is not enabled yet."
+
+`routing_config.json` and user exports may contain VLESS connection identifiers such as UUID, host, SNI, and placeholder key metadata. Treat exported routing configs as sensitive local files. UUID values must not appear in summaries, diagnostics text, logs, or route-preview text. No telemetry, cloud upload, analytics, ads, background validation, startup tests, or auto-connect behavior is added.

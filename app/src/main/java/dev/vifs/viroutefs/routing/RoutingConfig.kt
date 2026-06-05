@@ -2,11 +2,15 @@ package dev.vifs.viroutefs.routing
 
 import dev.vifs.viroutefs.socks5.Socks5ProfileConfig
 import dev.vifs.viroutefs.socks5.validateSocks5Profile
+import dev.vifs.viroutefs.vless.VLESS_RUNTIME_LIMITATION
+import dev.vifs.viroutefs.vless.VlessProfileConfig
+import dev.vifs.viroutefs.vless.validateVlessProfile
 import java.util.Locale
 
 const val CURRENT_ROUTING_CONFIG_VERSION = 2
 const val MOCK_PROFILE_LIMITATION = "Профиль пока не подключает реальный тоннель. Он используется для симуляции маршрутов."
 const val SOCKS5_RUNTIME_LIMITATION = "Selected profile: SOCKS5. Runtime forwarding is not enabled yet."
+const val VLESS_ROUTE_DECISION_LIMITATION = "Selected profile is VLESS. Runtime forwarding is not enabled yet."
 const val DNS_POLICY_LIMITATION = "DNS-политика пока используется для объяснения и проверки риска утечки. Реальное DNS-маршрутизирование будет добавлено позже."
 
 data class RoutingConfig(
@@ -28,6 +32,7 @@ data class TunnelProfile(
     val platformNotes: String? = null,
     val dnsPolicyId: String? = null,
     val socks5: Socks5ProfileConfig? = null,
+    val vless: VlessProfileConfig? = null,
 ) {
     val warningText: String?
         get() = when (type) {
@@ -68,6 +73,7 @@ enum class TunnelType(val label: String, val isMockOnly: Boolean) {
     Brook("Brook", true),
     ShadowTls("ShadowTLS", true),
     Socks5("SOCKS5", true),
+    VLESS("VLESS", true),
     HttpProxy("HTTP proxy", true),
     HttpsProxy("HTTPS proxy", true),
     SshTunnel("SSH tunnel", true),
@@ -154,6 +160,8 @@ data class RouteDecision(
     val dnsPolicySummary: String = dnsPolicy?.name ?: "Не выбрана"
     val profileMockSummary: String = if (tunnelProfile.type == TunnelType.Socks5) {
         SOCKS5_RUNTIME_LIMITATION
+    } else if (tunnelProfile.type == TunnelType.VLESS) {
+        VLESS_ROUTE_DECISION_LIMITATION
     } else if (tunnelProfile.mockOnly) {
         MOCK_PROFILE_LIMITATION
     } else {
@@ -238,6 +246,9 @@ class RouteEngine(
         }
         if (selectedProfile.type == TunnelType.Socks5) {
             add(SOCKS5_RUNTIME_LIMITATION)
+        } else if (selectedProfile.type == TunnelType.VLESS) {
+            add(VLESS_ROUTE_DECISION_LIMITATION)
+            add(VLESS_RUNTIME_LIMITATION)
         } else if (selectedProfile.mockOnly) {
             add(MOCK_PROFILE_LIMITATION)
         }
@@ -267,6 +278,7 @@ class RouteEngine(
         appendLine("Матчеры: ${rule.matchers.joinToString().ifBlank { "не требуются" }}")
         appendLine("Профиль: ${profile.name} (${profile.type.label})")
         if (profile.type == TunnelType.Socks5) appendLine(SOCKS5_RUNTIME_LIMITATION)
+        if (profile.type == TunnelType.VLESS) appendLine(VLESS_ROUTE_DECISION_LIMITATION)
         appendLine("DNS-политика: ${dnsPolicy?.name ?: "не выбрана"}")
         appendLine("DNS default: ${if (dnsPolicy == null || dnsPolicy.type == DnsPolicyType.System) "Android system DNS" else "configured policy, not enforced yet"}")
         if (warnings.isNotEmpty()) {
@@ -314,6 +326,14 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
                     existingProfiles = config.profiles.mapNotNull { it.socks5 },
                     originalName = socks5.name,
                 ).forEach { add("Профиль ${profile.name}: $it") }
+            }
+        }
+        if (profile.type == TunnelType.VLESS) {
+            val vless = profile.vless
+            if (vless == null) {
+                add("VLESS profile ${profile.name} has no VLESS configuration.")
+            } else {
+                validateVlessProfile(vless).forEach { add("Профиль ${profile.name}: $it") }
             }
         }
         profile.dnsPolicyId?.takeIf { it !in dnsPolicyIds }?.let { add("Профиль ${profile.name}: DNS-политика $it не найдена.") }

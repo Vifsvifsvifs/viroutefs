@@ -3,6 +3,9 @@ package dev.vifs.viroutefs.routing
 import android.content.Context
 import dev.vifs.viroutefs.socks5.Socks5ProfileConfig
 import dev.vifs.viroutefs.socks5.Socks5ProfileStatus
+import dev.vifs.viroutefs.vless.VlessProfileConfig
+import dev.vifs.viroutefs.vless.VlessProfileStatus
+import dev.vifs.viroutefs.vless.VlessSecurityMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -135,6 +138,7 @@ object RoutingConfigJson {
         put("platformNotes", platformNotes)
         put("dnsPolicyId", dnsPolicyId)
         put("socks5", socks5?.toJson(includeSocks5Password))
+        put("vless", vless?.toJson())
     }
 
     private fun JSONObject.toTunnelProfile(): TunnelProfile {
@@ -149,6 +153,7 @@ object RoutingConfigJson {
             platformNotes = optNullableString("platformNotes"),
             dnsPolicyId = optNullableString("dnsPolicyId"),
             socks5 = optJSONObject("socks5")?.toSocks5ProfileConfig(),
+            vless = optJSONObject("vless")?.toVlessProfileConfig(),
         )
     }
 
@@ -190,6 +195,50 @@ object RoutingConfigJson {
         "Reachable" -> Socks5ProfileStatus.Reachable
         "Failed" -> Socks5ProfileStatus.Failed(optString("message", "invalid response"))
         else -> Socks5ProfileStatus.NotTested
+    }
+
+    private fun VlessProfileConfig.toJson(): JSONObject = JSONObject().apply {
+        put("name", name)
+        put("host", host)
+        put("port", port)
+        put("uuid", uuid)
+        put("flow", flow)
+        put("securityMode", securityMode.wireName)
+        put("sni", sni)
+        put("publicKey", publicKey)
+        put("shortId", shortId)
+        put("fingerprint", fingerprint)
+        put("enabled", enabled)
+        put("status", status.toJson())
+    }
+
+    private fun JSONObject.toVlessProfileConfig(): VlessProfileConfig = VlessProfileConfig(
+        name = getString("name"),
+        host = getString("host"),
+        port = optInt("port"),
+        uuid = getString("uuid"),
+        flow = optNullableString("flow"),
+        securityMode = optVlessSecurityMode("securityMode"),
+        sni = optNullableString("sni"),
+        publicKey = optNullableString("publicKey"),
+        shortId = optNullableString("shortId"),
+        fingerprint = optNullableString("fingerprint"),
+        enabled = optBoolean("enabled", true),
+        status = optJSONObject("status")?.toVlessProfileStatus() ?: VlessProfileStatus.NotTested,
+    )
+
+    private fun VlessProfileStatus.toJson(): JSONObject = JSONObject().apply {
+        put("state", when (this@toJson) {
+            VlessProfileStatus.NotTested -> "NotTested"
+            VlessProfileStatus.Invalid -> "Invalid"
+            VlessProfileStatus.ConfigReady -> "ConfigReady"
+        })
+    }
+
+    private fun JSONObject.toVlessProfileStatus(): VlessProfileStatus = when (optString("state")) {
+        "Invalid" -> VlessProfileStatus.Invalid
+        "ConfigReady" -> VlessProfileStatus.ConfigReady
+        else -> VlessProfileStatus.NotTested
     }
 
     private fun DnsHostOverride.toJson(): JSONObject = JSONObject().apply {
@@ -274,6 +323,12 @@ object RoutingConfigJson {
 
     private fun JSONObject.optDnsPolicyType(name: String): DnsPolicyType = optEnum(name, DnsPolicyType.System)
 
+    private fun JSONObject.optVlessSecurityMode(name: String): VlessSecurityMode {
+        val value = optNullableString(name) ?: return VlessSecurityMode.NONE
+        return VlessSecurityMode.entries.firstOrNull { it.wireName.equals(value, ignoreCase = true) || it.name.equals(value, ignoreCase = true) }
+            ?: VlessSecurityMode.NONE
+    }
+
     private inline fun <reified T : Enum<T>> JSONObject.optEnum(key: String, fallback: T): T {
         val value = optNullableString(key) ?: return fallback
         return enumValues<T>().firstOrNull { it.name.equals(value, ignoreCase = true) } ?: fallback
@@ -289,7 +344,7 @@ object RoutingConfigJson {
     private val legacyTunnelTypeAliases = mapOf(
         "xray" to TunnelType.XrayMock,
         "xrayvless" to TunnelType.XrayVlessReality,
-        "vless" to TunnelType.XrayVlessReality,
+        "vless" to TunnelType.VLESS,
         "hysteria" to TunnelType.Hysteria2,
         "openvpn" to TunnelType.OpenVpn,
         "socks" to TunnelType.Socks5,
