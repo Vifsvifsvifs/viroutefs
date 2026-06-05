@@ -461,7 +461,7 @@ private fun RouteDetailsScreen(
     var appSearch by rememberSaveable { mutableStateOf("") }
     var saveErrors by rememberSaveable(rule.id) { mutableStateOf<List<String>>(emptyList()) }
     val availableProfiles = config.profiles.filter { profile ->
-        profile.type == TunnelType.Direct || profile.type == TunnelType.Block || !profile.mockOnly
+        profile.type == TunnelType.Direct || profile.type == TunnelType.Block || profile.type == TunnelType.Socks5 || !profile.mockOnly
     }
     val targetProfile = config.profiles.firstOrNull { it.id == targetProfileId }
     val filteredApps = remember(installedApps, appSearch) {
@@ -706,6 +706,7 @@ private fun unavailableTargetWarning(config: RoutingConfig, rule: RouteRule): Li
     return when {
         profile == null -> listOf("Target unavailable: fail closed")
         !profile.enabled -> listOf("Target disabled: fail closed")
+        profile.type == TunnelType.Socks5 -> listOf("Selected profile: SOCKS5. Runtime forwarding is not enabled yet.")
         profile.mockOnly -> listOf("Target is mock-only")
         else -> emptyList()
     }
