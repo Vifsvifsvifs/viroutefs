@@ -267,11 +267,11 @@ private fun invalidConnectResponse(message: String) = Socks5DiagnosticResult(
 
 private fun Socks5TestResult.toHandshakeDiagnostic(): Socks5DiagnosticResult = when (this) {
     Socks5TestResult.Reachable -> Socks5DiagnosticResult(Socks5DiagnosticTestType.Handshake, Socks5DiagnosticState.HandshakeReachable, "SOCKS5 greeting/auth completed.")
-    Socks5TestResult.Failed.AuthenticationRejected -> Socks5DiagnosticResult(Socks5DiagnosticTestType.Handshake, Socks5DiagnosticState.AuthenticationRejected, message)
-    Socks5TestResult.Failed.UnsupportedMethod -> Socks5DiagnosticResult(Socks5DiagnosticTestType.Handshake, Socks5DiagnosticState.UnsupportedAuthMethod, message)
-    Socks5TestResult.Failed.ConnectionTimeout -> Socks5DiagnosticResult(Socks5DiagnosticTestType.Handshake, Socks5DiagnosticState.Timeout, message)
-    Socks5TestResult.Failed.ConnectionRefused -> Socks5DiagnosticResult(Socks5DiagnosticTestType.Handshake, Socks5DiagnosticState.TargetUnreachable, message)
-    is Socks5TestResult.Failed.InvalidResponse -> Socks5DiagnosticResult(Socks5DiagnosticTestType.Handshake, Socks5DiagnosticState.InvalidSocks5Response, message)
+    Socks5TestResult.Failed.AuthenticationRejected -> Socks5DiagnosticResult(Socks5DiagnosticTestType.Handshake, Socks5DiagnosticState.AuthenticationRejected, Socks5TestResult.Failed.AuthenticationRejected.message)
+    Socks5TestResult.Failed.UnsupportedMethod -> Socks5DiagnosticResult(Socks5DiagnosticTestType.Handshake, Socks5DiagnosticState.UnsupportedAuthMethod, Socks5TestResult.Failed.UnsupportedMethod.message)
+    Socks5TestResult.Failed.ConnectionTimeout -> Socks5DiagnosticResult(Socks5DiagnosticTestType.Handshake, Socks5DiagnosticState.Timeout, Socks5TestResult.Failed.ConnectionTimeout.message)
+    Socks5TestResult.Failed.ConnectionRefused -> Socks5DiagnosticResult(Socks5DiagnosticTestType.Handshake, Socks5DiagnosticState.TargetUnreachable, Socks5TestResult.Failed.ConnectionRefused.message)
+    is Socks5TestResult.Failed.InvalidResponse -> Socks5DiagnosticResult(Socks5DiagnosticTestType.Handshake, Socks5DiagnosticState.InvalidSocks5Response, this.message)
 }
 
 private fun Socks5DiagnosticResult.toLegacyResult(): Socks5TestResult = when (state) {
