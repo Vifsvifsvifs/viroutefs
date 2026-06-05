@@ -105,3 +105,8 @@ Safety boundaries remain unchanged:
 - Validate host, port, and UUID locally without connecting to, testing, or resolving any VLESS server.
 - Show the route-preview warning: "Selected profile is VLESS. Runtime forwarding is not enabled yet."
 - Do not implement VLESS runtime forwarding, packet forwarding, TUN writes, REALITY/XTLS runtime, DNS proxying, telemetry, analytics, cloud upload, startup tests, or auto-connect.
+
+
+## VLESS protocol builder boundary in 0.8.7-alpha
+
+The VLESS protocol request builder constructs a first TCP request frame locally and returns bytes to the caller. It must not open sockets, resolve DNS, connect to a VLESS server, perform a VLESS handshake, forward runtime traffic, write packets back to TUN, proxy DNS, or implement TLS/REALITY/XTLS. UUID values are used only in local frame construction and must not be logged, included in validation errors, uploaded, or displayed as raw frame bytes in production UI.

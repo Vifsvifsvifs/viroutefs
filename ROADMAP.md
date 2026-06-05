@@ -174,3 +174,11 @@ Boundaries for this release:
 - Do not connect to, test, or resolve VLESS servers during import.
 - Do not implement runtime VLESS forwarding, packet forwarding, TUN writes, DNS proxying, telemetry, analytics, or cloud upload.
 - Warn that exported VLESS URIs contain connection identifiers and require explicit user action before showing the generated URI.
+
+
+## 0.8.7-alpha — VLESS protocol request builder
+
+- Add pure/local VLESS TCP request frame construction for later manual handshake diagnostics.
+- Encode UUID bytes, TCP command `0x01`, big-endian port, IPv4 destinations, and domain destinations.
+- Keep VLESS networking out of scope: no sockets, no server connection, no runtime forwarding, no TUN writes, no DNS proxying, and no TLS/REALITY/XTLS.
+- Keep UUID handling local and redacted in debug/test helpers.
