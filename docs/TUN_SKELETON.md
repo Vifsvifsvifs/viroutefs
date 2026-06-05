@@ -76,3 +76,10 @@ This is still not full packet capture or real app traffic analysis. The preview 
 ## 0.8.0-alpha packet counters
 
 The Android VpnService runtime skeleton now reads packets from the TUN ParcelFileDescriptor when the opt-in TEST-NET developer route is active. It parses IPv4 header metadata only and updates local counters for total packets, bytes, IPv4 packets, TCP, UDP, and ICMP. Packets are dropped after counting. There is no packet forwarding, SOCKS5 forwarding, VLESS, default-route capture, payload logging, telemetry, or background upload.
+
+
+## 0.8.1-alpha local packet inspector
+
+The safe TUN skeleton now includes a local in-memory packet inspector. It parses only IPv4 metadata: timestamp, protocol, source IP, destination IP, TCP/UDP source and destination ports, and packet size. The latest 50 summaries are retained newest first in memory only for the VPN Runtime screen.
+
+The skeleton still does not capture payloads, persist summaries, export PCAP, extract hostnames, proxy DNS, forward packets, write packets back to TUN, implement VLESS, implement SOCKS5 runtime forwarding, use telemetry, or upload packet data.

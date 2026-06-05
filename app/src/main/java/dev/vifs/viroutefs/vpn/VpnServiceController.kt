@@ -35,6 +35,7 @@ internal data class VpnServiceUiState(
     val udpPacketsRead: Long = 0L,
     val icmpPacketsRead: Long = 0L,
     val lastPacketAt: Long? = null,
+    val packetSummaries: List<PacketSummary> = emptyList(),
 )
 
 internal class VpnServiceController(context: Context) {
@@ -93,6 +94,7 @@ internal class VpnServiceController(context: Context) {
                         icmpPacketsRead = intent.getLongExtra(EXTRA_ICMP_PACKETS_READ, 0L),
                         lastPacketAt = intent.getLongExtra(EXTRA_LAST_PACKET_AT, NO_PACKET_TIME)
                             .takeUnless { it == NO_PACKET_TIME },
+                        packetSummaries = decodePacketSummaries(intent.getStringArrayListExtra(EXTRA_PACKET_SUMMARIES)),
                     ),
                 )
             }
@@ -121,6 +123,7 @@ internal class VpnServiceController(context: Context) {
         udpPacketsRead: Long = 0L,
         icmpPacketsRead: Long = 0L,
         lastPacketAt: Long? = null,
+        packetSummaries: List<PacketSummary> = emptyList(),
     ) {
         val state = VpnServiceUiState(
             status = status,
@@ -133,6 +136,7 @@ internal class VpnServiceController(context: Context) {
             udpPacketsRead = udpPacketsRead,
             icmpPacketsRead = icmpPacketsRead,
             lastPacketAt = lastPacketAt,
+            packetSummaries = packetSummaries,
         )
         ViRouteVpnService.rememberState(state)
         val intent = Intent(ACTION_STATE_CHANGED)
@@ -147,6 +151,7 @@ internal class VpnServiceController(context: Context) {
             .putExtra(EXTRA_UDP_PACKETS_READ, udpPacketsRead)
             .putExtra(EXTRA_ICMP_PACKETS_READ, icmpPacketsRead)
             .putExtra(EXTRA_LAST_PACKET_AT, lastPacketAt ?: NO_PACKET_TIME)
+            .putStringArrayListExtra(EXTRA_PACKET_SUMMARIES, ArrayList(packetSummaries.map(::encodePacketSummary)))
         appContext.sendBroadcast(intent)
     }
 
@@ -165,6 +170,41 @@ internal class VpnServiceController(context: Context) {
         internal const val EXTRA_UDP_PACKETS_READ = "udp_packets_read"
         internal const val EXTRA_ICMP_PACKETS_READ = "icmp_packets_read"
         internal const val EXTRA_LAST_PACKET_AT = "last_packet_at"
+        internal const val EXTRA_PACKET_SUMMARIES = "packet_summaries"
         internal const val NO_PACKET_TIME = -1L
+
+        internal fun encodePacketSummary(summary: PacketSummary): String = listOf(
+            summary.timestamp.toString(),
+            summary.protocol.name,
+            summary.srcIp,
+            summary.srcPort?.toString().orEmpty(),
+            summary.dstIp,
+            summary.dstPort?.toString().orEmpty(),
+            summary.packetSize.toString(),
+        ).joinToString(PACKET_SUMMARY_SEPARATOR)
+
+        internal fun decodePacketSummaries(encoded: ArrayList<String>?): List<PacketSummary> = encoded
+            .orEmpty()
+            .mapNotNull(::decodePacketSummary)
+
+        private fun decodePacketSummary(encoded: String): PacketSummary? {
+            val parts = encoded.split(PACKET_SUMMARY_SEPARATOR)
+            if (parts.size != PACKET_SUMMARY_FIELD_COUNT) return null
+            return runCatching {
+                PacketSummary(
+                    timestamp = parts[0].toLong(),
+                    protocol = Ipv4Protocol.valueOf(parts[1]),
+                    srcIp = parts[2],
+                    srcPort = parts[3].takeIf { it.isNotBlank() }?.toInt(),
+                    dstIp = parts[4],
+                    dstPort = parts[5].takeIf { it.isNotBlank() }?.toInt(),
+                    packetSize = parts[6].toInt(),
+                )
+            }.getOrNull()
+        }
+
+        private const val PACKET_SUMMARY_SEPARATOR = "|"
+        private const val PACKET_SUMMARY_FIELD_COUNT = 7
+
     }
 }

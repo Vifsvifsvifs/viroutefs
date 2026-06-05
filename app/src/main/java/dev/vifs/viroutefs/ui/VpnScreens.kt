@@ -53,6 +53,8 @@ import dev.vifs.viroutefs.socks5.Socks5TestHistoryStore
 import dev.vifs.viroutefs.socks5.deriveSocks5ReadinessSummary
 import dev.vifs.viroutefs.socks5.toProfileStatus
 import dev.vifs.viroutefs.socks5.validateSocks5Profile
+import dev.vifs.viroutefs.vpn.Ipv4Protocol
+import dev.vifs.viroutefs.vpn.PacketSummary
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
 import kotlinx.coroutines.launch
@@ -136,6 +138,19 @@ internal fun VpnScreen(
             }
         }
         item {
+            CardBlock {
+                Text(text.vpnPacketInspector, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Text(text.vpnPacketInspectorPrivacy, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (vpnState.packetSummaries.isEmpty()) {
+                    Text(text.vpnPacketInspectorEmpty, style = MaterialTheme.typography.bodySmall)
+                } else {
+                    vpnState.packetSummaries.forEach { summary ->
+                        PacketSummaryLine(summary)
+                    }
+                }
+            }
+        }
+        item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 AssistChip(onClick = {}, label = { Text(text.profileCount(visibleProfiles.size)) })
                 OutlinedButton(onClick = { addSocks5 = true }) { Text("Add SOCKS5") }
@@ -166,6 +181,32 @@ private fun CounterLine(label: String, value: Long) = Row(
 ) {
     Text(label, style = MaterialTheme.typography.bodySmall)
     Text(value.toString(), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+}
+
+@Composable
+private fun PacketSummaryLine(summary: PacketSummary) {
+    val time = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(summary.timestamp))
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            "${summary.protocol.safeLabel()}  ${summary.endpointLine()}  ${summary.packetSize} B",
+            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text(time, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+private fun PacketSummary.endpointLine(): String = if (srcPort != null && dstPort != null) {
+    "$srcIp:$srcPort → $dstIp:$dstPort"
+} else {
+    "$srcIp → $dstIp"
+}
+
+private fun Ipv4Protocol.safeLabel(): String = when (this) {
+    Ipv4Protocol.Tcp -> "TCP"
+    Ipv4Protocol.Udp -> "UDP"
+    Ipv4Protocol.Icmp -> "ICMP"
+    Ipv4Protocol.Other -> "OTHER"
 }
 
 @Composable
