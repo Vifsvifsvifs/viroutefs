@@ -42,3 +42,9 @@ The routing model still does not implement runtime TUN-to-SOCKS forwarding, Andr
 ## SOCKS5 outbound connector foundation
 
 Starting in 0.7.7-alpha, the app has an internal SOCKS5 outbound connector abstraction used by explicit manual CONNECT diagnostics. It is a foundation for future runtime routing, but the routing configuration model still does not route Android device traffic through SOCKS5. It does not enable TUN-to-SOCKS forwarding, default-route capture, background checks, startup tests, auto-connect, silent DNS changes, credential export, telemetry, or cloud upload.
+
+## VLESS profile model in 0.8.4-alpha
+
+VLESS profiles are configuration-only in 0.8.4-alpha. The app can store and validate local profile fields for route decision preview, including UUID and placeholder TLS/REALITY metadata, but it does not connect to VLESS servers, forward packets, write packets back to TUN, implement REALITY/XTLS runtime, or proxy DNS. Route decision preview must warn: "Selected profile is VLESS. Runtime forwarding is not enabled yet."
+
+`routing_config.json` and user exports may contain VLESS connection identifiers such as UUID, host, SNI, and placeholder key metadata. Treat exported routing configs as sensitive local files. UUID values must not appear in summaries, diagnostics text, logs, or route-preview text. No telemetry, cloud upload, analytics, ads, background validation, startup tests, or auto-connect behavior is added.

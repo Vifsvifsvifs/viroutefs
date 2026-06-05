@@ -10,6 +10,8 @@ import dev.vifs.viroutefs.routing.TunnelType
 
 internal const val SOCKS5_RUNTIME_FORWARDING_NOT_ENABLED =
     "Selected profile is SOCKS5. Runtime forwarding is not enabled yet."
+internal const val VLESS_RUNTIME_FORWARDING_NOT_ENABLED =
+    "Selected profile is VLESS. Runtime forwarding is not enabled yet."
 internal const val REMOTE_RUNTIME_FORWARDING_NOT_ENABLED =
     "Selected profile requires runtime forwarding, which is not enabled yet."
 internal const val OBSERVATION_ONLY_NO_FORWARDING =
@@ -58,6 +60,7 @@ internal class LiveRouteDecisionPreviewer(config: RoutingConfig) {
     private fun TunnelProfile.runtimeForwardingWarnings(): List<String> = when (type) {
         TunnelType.Socks5,
         TunnelType.Socks5Mock -> listOf(SOCKS5_RUNTIME_FORWARDING_NOT_ENABLED)
+        TunnelType.VLESS -> listOf(VLESS_RUNTIME_FORWARDING_NOT_ENABLED)
         TunnelType.Direct,
         TunnelType.Block -> emptyList()
         else -> if (mockOnly || type.remoteRuntimeForwardingRequired()) {
@@ -69,6 +72,7 @@ internal class LiveRouteDecisionPreviewer(config: RoutingConfig) {
 
     private fun TunnelType.remoteRuntimeForwardingRequired(): Boolean = when (this) {
         TunnelType.XrayVlessReality,
+        TunnelType.VLESS,
         TunnelType.XrayMock,
         TunnelType.VMess,
         TunnelType.Trojan,

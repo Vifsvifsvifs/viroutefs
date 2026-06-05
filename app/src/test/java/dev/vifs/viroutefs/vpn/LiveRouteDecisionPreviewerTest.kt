@@ -9,6 +9,8 @@ import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.socks5.Socks5ProfileConfig
+import dev.vifs.viroutefs.vless.VlessProfileConfig
+import dev.vifs.viroutefs.vless.VlessSecurityMode
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -91,6 +93,41 @@ class LiveRouteDecisionPreviewerTest {
         assertTrue(decisionText.contains("Runtime forwarding is not enabled yet"))
         assertFalse(decisionText.contains(secret), "decision text must not include passwords/secrets")
         assertFalse(decisionText.contains("tester"), "decision text must not include SOCKS5 usernames")
+    }
+
+    @Test
+    fun vlessProfileShowsRuntimeForwardingWarningWithoutUuid() {
+        val uuid = "123e4567-e89b-12d3-a456-426614174000"
+        val vlessProfile = TunnelProfile(
+            id = "vless-lab",
+            name = "Lab VLESS",
+            type = TunnelType.VLESS,
+            description = "VLESS config only.",
+            mockOnly = true,
+            vless = VlessProfileConfig(
+                name = "Lab VLESS",
+                host = "example.com",
+                port = 443,
+                uuid = uuid,
+                securityMode = VlessSecurityMode.TLS,
+            ),
+        )
+        val config = withProfileAndRule(
+            profile = vlessProfile,
+            rule = cidrRule(
+                id = "vless-test-net",
+                name = "VLESS TEST-NET",
+                matcher = "203.0.113.0/24",
+                targetProfileId = vlessProfile.id,
+            ),
+        )
+
+        val preview = LiveRouteDecisionPreviewer(config).preview(tcpSummary(dstIp = "203.0.113.9"))
+        val decisionText = preview.displayLines.joinToString("\n")
+
+        assertTrue(preview.warnings.contains(VLESS_RUNTIME_FORWARDING_NOT_ENABLED))
+        assertTrue(decisionText.contains("Selected profile is VLESS. Runtime forwarding is not enabled yet."))
+        assertFalse(decisionText.contains(uuid), "decision text must not include VLESS UUID")
     }
 
     @Test

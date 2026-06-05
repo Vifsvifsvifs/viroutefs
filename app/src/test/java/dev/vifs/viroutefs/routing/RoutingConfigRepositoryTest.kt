@@ -4,6 +4,8 @@ package dev.vifs.viroutefs.routing
 
 import android.test.mock.MockContext
 import dev.vifs.viroutefs.socks5.Socks5ProfileConfig
+import dev.vifs.viroutefs.vless.VlessProfileConfig
+import dev.vifs.viroutefs.vless.VlessSecurityMode
 import java.io.File
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -123,6 +125,19 @@ class RoutingConfigRepositoryTest {
         }
     }
 
+    @Test
+    fun routingConfigJsonStoresVlessConfigLocallyButSummaryHidesUuid() {
+        val uuid = "123e4567-e89b-12d3-a456-426614174000"
+        val json = RoutingConfigJson.encode(configWithVless(uuid))
+        val decoded = RoutingConfigJson.decode(json)
+        val decodedVless = decoded.profiles.first { it.id == VLESS_ID }.vless
+
+        assertTrue(json.contains(uuid))
+        assertEquals(uuid, decodedVless?.uuid)
+        assertFalse(decodedVless?.safeSummary().orEmpty().contains(uuid))
+        assertTrue(validateRoutingConfig(decoded).isEmpty())
+    }
+
     private fun File.routingTestContext(): MockContext = object : MockContext() {
         override fun getFilesDir(): File = this@routingTestContext
         override fun getNoBackupFilesDir(): File = File(this@routingTestContext, "no_backup").also { it.mkdirs() }
@@ -149,8 +164,31 @@ class RoutingConfigRepositoryTest {
         return defaults.copy(profiles = defaults.profiles + profile)
     }
 
+
+    private fun configWithVless(uuid: String): RoutingConfig {
+        val defaults = RoutingConfigDefaults.defaultConfig()
+        val vless = VlessProfileConfig(
+            name = "Office VLESS",
+            host = "vless.example",
+            port = 443,
+            uuid = uuid,
+            securityMode = VlessSecurityMode.TLS,
+        )
+        val profile = TunnelProfile(
+            id = VLESS_ID,
+            name = vless.name,
+            type = TunnelType.VLESS,
+            description = "VLESS config-only profile.",
+            mockOnly = true,
+            dnsPolicyId = RoutingConfigDefaults.SYSTEM_DNS_ID,
+            vless = vless,
+        )
+        return defaults.copy(profiles = defaults.profiles + profile)
+    }
+
     companion object {
         private const val SOCKS5_ID = "socks5-test"
+        private const val VLESS_ID = "vless-test"
         private const val SECRET = "test-secret-value"
         private const val PASSWORD_KEY_JSON = "\"password\""
     }

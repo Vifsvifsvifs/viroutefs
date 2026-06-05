@@ -104,6 +104,7 @@ import dev.vifs.viroutefs.update.formatBytes
 import dev.vifs.viroutefs.update.UpdateChecker
 import dev.vifs.viroutefs.vpn.VpnServiceController
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
+import dev.vifs.viroutefs.vpn.VLESS_RUNTIME_FORWARDING_NOT_ENABLED
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
 import kotlinx.coroutines.launch
 import java.io.File
@@ -396,6 +397,10 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
                     WarningText("Selected profile: SOCKS5. Runtime forwarding is not enabled yet.")
                     Text(readinessByProfile[decision.tunnelProfile.id]?.routeExplanationLine ?: "SOCKS5 profile has not been tested yet.", style = MaterialTheme.typography.bodySmall)
                 }
+                if (decision.tunnelProfile.type == TunnelType.VLESS) {
+                    WarningText(VLESS_RUNTIME_FORWARDING_NOT_ENABLED)
+                    Text("This profile can be used for route decision preview only.", style = MaterialTheme.typography.bodySmall)
+                }
                 Details(text.details, text.routeIsolationNote)
             }
         }
@@ -475,7 +480,7 @@ private fun RouteDetailsScreen(
     var appSearch by rememberSaveable { mutableStateOf("") }
     var saveErrors by rememberSaveable(rule.id) { mutableStateOf<List<String>>(emptyList()) }
     val availableProfiles = config.profiles.filter { profile ->
-        profile.type == TunnelType.Direct || profile.type == TunnelType.Block || profile.type == TunnelType.Socks5 || !profile.mockOnly
+        profile.type == TunnelType.Direct || profile.type == TunnelType.Block || profile.type == TunnelType.Socks5 || profile.type == TunnelType.VLESS || !profile.mockOnly
     }
     val targetProfile = config.profiles.firstOrNull { it.id == targetProfileId }
     val context = LocalContext.current
@@ -735,6 +740,7 @@ private fun unavailableTargetWarning(config: RoutingConfig, rule: RouteRule): Li
         profile == null -> listOf("Target unavailable: fail closed")
         !profile.enabled -> listOf("Target disabled: fail closed")
         profile.type == TunnelType.Socks5 -> listOf("Selected profile: SOCKS5. Runtime forwarding is not enabled yet.")
+        profile.type == TunnelType.VLESS -> listOf(VLESS_RUNTIME_FORWARDING_NOT_ENABLED)
         profile.mockOnly -> listOf("Target is mock-only")
         else -> emptyList()
     }
@@ -808,6 +814,10 @@ private fun ToolsScreen(padding: PaddingValues, text: UiText, config: RoutingCon
                 if (d.tunnelProfile.type == TunnelType.Socks5) {
                     WarningText("Selected profile: SOCKS5. Runtime forwarding is not enabled yet.")
                     Text(readinessByProfile[d.tunnelProfile.id]?.routeExplanationLine ?: "SOCKS5 profile has not been tested yet.", style = MaterialTheme.typography.bodySmall)
+                }
+                if (d.tunnelProfile.type == TunnelType.VLESS) {
+                    WarningText(VLESS_RUNTIME_FORWARDING_NOT_ENABLED)
+                    Text("This profile can be used for route decision preview only.", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }

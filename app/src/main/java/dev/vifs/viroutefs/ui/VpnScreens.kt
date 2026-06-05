@@ -53,6 +53,12 @@ import dev.vifs.viroutefs.socks5.Socks5TestHistoryStore
 import dev.vifs.viroutefs.socks5.deriveSocks5ReadinessSummary
 import dev.vifs.viroutefs.socks5.toProfileStatus
 import dev.vifs.viroutefs.socks5.validateSocks5Profile
+import dev.vifs.viroutefs.vless.VLESS_ROUTE_PREVIEW_ONLY
+import dev.vifs.viroutefs.vless.VLESS_RUNTIME_LIMITATION
+import dev.vifs.viroutefs.vless.VlessProfileConfig
+import dev.vifs.viroutefs.vless.VlessProfileStatus
+import dev.vifs.viroutefs.vless.VlessSecurityMode
+import dev.vifs.viroutefs.vless.validateVlessProfile
 import dev.vifs.viroutefs.vpn.Ipv4Protocol
 import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreview
 import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreviewer
@@ -79,8 +85,9 @@ internal fun VpnScreen(
 ) {
     var selectedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
     var addSocks5 by rememberSaveable { mutableStateOf(false) }
+    var addVless by rememberSaveable { mutableStateOf(false) }
     val selectedProfile = selectedProfileId?.let { id -> config.profiles.firstOrNull { it.id == id } }
-    val visibleProfiles = config.profiles.filter { !it.mockOnly || it.type == TunnelType.Socks5 }
+    val visibleProfiles = config.profiles.filter { !it.mockOnly || it.type == TunnelType.Socks5 || it.type == TunnelType.VLESS }
     val routeDecisionPreviewer = remember(config) { LiveRouteDecisionPreviewer(config) }
 
     if (addSocks5) {
@@ -90,6 +97,18 @@ internal fun VpnScreen(
             config = config,
             profile = null,
             onBack = { addSocks5 = false },
+            onConfig = { next, message -> onConfig(next, message) },
+        )
+        return
+    }
+
+    if (addVless) {
+        VlessProfileEditorScreen(
+            padding = padding,
+            text = text,
+            config = config,
+            profile = null,
+            onBack = { addVless = false },
             onConfig = { next, message -> onConfig(next, message) },
         )
         return
@@ -179,12 +198,15 @@ internal fun VpnScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 AssistChip(onClick = {}, label = { Text(text.profileCount(visibleProfiles.size)) })
                 OutlinedButton(onClick = { addSocks5 = true }) { Text("Add SOCKS5") }
+                OutlinedButton(onClick = { addVless = true }) { Text("Add VLESS") }
             }
         }
         item {
             CardBlock {
                 Text("SOCKS5-профиль добавлен. Проверка подключения запускается только вручную. Полная маршрутизация трафика устройства через SOCKS5 будет добавлена позже.", style = MaterialTheme.typography.bodySmall)
                 Text("SOCKS5 profile added. Connectivity testing runs only manually. Full device traffic routing through SOCKS5 will be added later.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(VLESS_RUNTIME_LIMITATION, style = MaterialTheme.typography.bodySmall)
+                Text(VLESS_ROUTE_PREVIEW_ONLY, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         items(visibleProfiles, key = { it.id }) { profile ->
@@ -304,6 +326,17 @@ private fun NetworkProfileDetailsScreen(
         )
         return
     }
+    if (profile.type == TunnelType.VLESS) {
+        VlessProfileEditorScreen(
+            padding = padding,
+            text = text,
+            config = config,
+            profile = profile,
+            onBack = onBack,
+            onConfig = onConfig,
+        )
+        return
+    }
     val dns = config.dnsPolicies.firstOrNull { it.id == profile.dnsPolicyId }
     val usedRuleNames = config.rules.filter { it.targetProfileId == profile.id }.map { it.name }
     val protectedProfile = profile.type in listOf(TunnelType.Direct, TunnelType.Block)
@@ -385,6 +418,129 @@ private fun VpnServiceUiState.label(text: UiText): String = when (status) {
     VpnServiceStatus.Stopped -> text.vpnStopped
     VpnServiceStatus.Error -> text.vpnError
 }
+
+@Composable
+private fun VlessProfileEditorScreen(
+    padding: PaddingValues,
+    text: UiText,
+    config: RoutingConfig,
+    profile: TunnelProfile?,
+    onBack: () -> Unit,
+    onConfig: (RoutingConfig, String?) -> Unit,
+) {
+    val vless = profile?.vless
+    var name by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.name ?: profile?.name ?: "") }
+    var host by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.host ?: "") }
+    var portText by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.port?.toString() ?: "443") }
+    var uuid by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.uuid.orEmpty()) }
+    var flow by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.flow.orEmpty()) }
+    var securityModeText by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.securityMode?.wireName ?: VlessSecurityMode.NONE.wireName) }
+    var sni by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.sni.orEmpty()) }
+    var publicKey by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.publicKey.orEmpty()) }
+    var shortId by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.shortId.orEmpty()) }
+    var fingerprint by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.fingerprint.orEmpty()) }
+    var enabled by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.enabled ?: profile?.enabled ?: true) }
+    var errors by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf<List<String>>(emptyList()) }
+
+    fun draft(nextStatus: VlessProfileStatus = vless?.status ?: VlessProfileStatus.NotTested): VlessProfileConfig = VlessProfileConfig(
+        name = name.trim(),
+        host = host.trim(),
+        port = portText.toIntOrNull() ?: -1,
+        uuid = uuid.trim(),
+        flow = flow.trim().takeIf { it.isNotBlank() },
+        securityMode = securityModeText.toVlessSecurityMode(),
+        sni = sni.trim().takeIf { it.isNotBlank() },
+        publicKey = publicKey.trim().takeIf { it.isNotBlank() },
+        shortId = shortId.trim().takeIf { it.isNotBlank() },
+        fingerprint = fingerprint.trim().takeIf { it.isNotBlank() },
+        enabled = enabled,
+        status = nextStatus,
+    )
+
+    ScreenList(padding) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onBack) { Text(text.back) }
+                Header(if (profile == null) "Add VLESS profile" else "Edit VLESS profile", "Local-only VLESS configuration for route decision preview")
+            }
+        }
+        item {
+            CardBlock {
+                Text(VLESS_RUNTIME_LIMITATION, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                Text(VLESS_ROUTE_PREVIEW_ONLY, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                WarningText("UUID is stored locally in routing_config.json and is hidden from summaries, logs, and diagnostics text.")
+                Text("Security mode supports none/tls/reality as configuration placeholders only. REALITY/XTLS runtime is not implemented.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        item {
+            CardBlock {
+                OutlinedTextField(name, { name = it }, label = { Text(text.name) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(host, { host = it }, label = { Text("Host") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(portText, { portText = it.filter(Char::isDigit).take(5) }, label = { Text("Port") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(uuid, { uuid = it }, label = { Text("UUID") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(flow, { flow = it }, label = { Text("Flow (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(securityModeText, { securityModeText = it.lowercase().take(16) }, label = { Text("Security mode: none/tls/reality") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(sni, { sni = it }, label = { Text("SNI (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(publicKey, { publicKey = it }, label = { Text("Public key placeholder (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(shortId, { shortId = it }, label = { Text("Short ID placeholder (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(fingerprint, { fingerprint = it }, label = { Text("Fingerprint placeholder (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                    Text(text.enabled, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = enabled, onCheckedChange = { enabled = it })
+                }
+                errors.forEach { WarningText(it) }
+                Button(onClick = {
+                    val candidate = draft()
+                    errors = validateVlessProfile(candidate)
+                    if (errors.isEmpty()) {
+                        val readyVless = candidate.copy(status = VlessProfileStatus.ConfigReady)
+                        val nextProfile = TunnelProfile(
+                            id = profile?.id ?: "vless-${UUID.randomUUID()}",
+                            name = readyVless.name,
+                            type = TunnelType.VLESS,
+                            description = vlessDescription(readyVless),
+                            enabled = readyVless.enabled,
+                            mockOnly = true,
+                            platformNotes = "VLESS config-only profile. Runtime forwarding is not implemented yet; route decision preview only.",
+                            dnsPolicyId = RoutingConfigDefaults.SYSTEM_DNS_ID,
+                            vless = readyVless,
+                        )
+                        val nextProfiles = if (profile == null) config.profiles + nextProfile else config.profiles.map { if (it.id == profile.id) nextProfile else it }
+                        onConfig(config.copy(profiles = nextProfiles), "VLESS profile saved. Runtime forwarding is not implemented yet.")
+                        onBack()
+                    }
+                }) { Text(text.save) }
+            }
+        }
+        if (profile != null) {
+            item {
+                CardBlock {
+                    OutlinedButton(
+                        onClick = {
+                            onConfig(
+                                config.copy(
+                                    profiles = config.profiles.filterNot { it.id == profile.id },
+                                    rules = config.rules.map { rule ->
+                                        if (rule.targetProfileId == profile.id) rule.copy(targetProfileId = RoutingConfigDefaults.BLOCK_PROFILE_ID) else rule
+                                    },
+                                ),
+                                text.profileDeleted,
+                            )
+                            onBack()
+                        },
+                    ) { Text(text.delete) }
+                }
+            }
+        }
+    }
+}
+
+private fun String.toVlessSecurityMode(): VlessSecurityMode = VlessSecurityMode.entries.firstOrNull {
+    it.wireName.equals(trim(), ignoreCase = true) || it.name.equals(trim(), ignoreCase = true)
+} ?: VlessSecurityMode.NONE
+
+private fun vlessDescription(profile: VlessProfileConfig): String =
+    "VLESS ${profile.host}:${profile.port} (${profile.securityMode.wireName}). Runtime forwarding is not implemented yet; route decision preview only. UUID is hidden from summaries and diagnostics."
 
 @Composable
 private fun Socks5ProfileEditorScreen(

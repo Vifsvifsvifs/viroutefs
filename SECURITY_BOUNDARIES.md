@@ -97,3 +97,11 @@ Safety boundaries remain unchanged:
 - DNS is not silently changed.
 - SOCKS5 credentials are not written to routing exports, diagnostic history, result messages, logs, telemetry, or cloud storage.
 - Telemetry, tracking, ads, analytics SDKs, and cloud upload remain out of scope.
+
+## 0.8.4-alpha VLESS profile model
+
+- Add VLESS as a local configuration/profile type for route decision preview only.
+- Store VLESS UUID and placeholder TLS/REALITY metadata locally in `routing_config.json`; warn users that exports can contain connection identifiers.
+- Validate host, port, and UUID manually without connecting to any VLESS server.
+- Show the route-preview warning: "Selected profile is VLESS. Runtime forwarding is not enabled yet."
+- Do not implement VLESS runtime forwarding, packet forwarding, TUN writes, REALITY/XTLS runtime, DNS proxying, telemetry, analytics, cloud upload, startup tests, or auto-connect.
