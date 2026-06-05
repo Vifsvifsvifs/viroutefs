@@ -32,3 +32,9 @@ If no DNS is configured for a route/profile, the model says **Uses Android syste
 Rules are exclusive: app/domain/IP bindings must not silently fall back to another tunnel/profile. If the selected profile is unavailable, the safe behavior is Block / fail closed.
 
 See [ROUTING_POLICY.md](ROUTING_POLICY.md).
+
+## SOCKS5 readiness in route explanations
+
+Starting in 0.7.6-alpha, route explanations may show a selected SOCKS5 profile's last manual diagnostic readiness, such as a recent manual CONNECT success target or the latest safe failure message. This readiness is derived from local no-backup SOCKS5 test history only.
+
+The routing model still does not implement runtime TUN-to-SOCKS forwarding, Android default-route capture, or real device traffic forwarding through SOCKS5. Any route explanation for SOCKS5 must keep the warning: "Selected profile: SOCKS5. Runtime forwarding is not enabled yet."

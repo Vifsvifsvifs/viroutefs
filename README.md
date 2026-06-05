@@ -17,9 +17,9 @@ ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project 
 - No hidden interception of third-party traffic.
 - No offensive security features.
 
-## Current status: 0.6.15-alpha
+## Current status: 0.7.6-alpha
 
-Version `0.6.15-alpha` adds project notices and keeps the launcher icon full-color across home launcher, installer, and APK/file-manager preview surfaces by omitting Android themed launcher icon metadata for now. The manual Settings update flow remains user-initiated: a user can check GitHub Releases, manually download an APK asset such as `ViRouteFS-0.6.15-alpha.apk`, and open Android's system package installer. The user must confirm installation in Android system UI. There are still no background update checks, no auto-downloads, no silent installs, and no runtime VPN/TUN routing behavior changes.
+Version `0.7.6-alpha` adds SOCKS5 readiness summaries derived only from local manual diagnostic history in app no-backup storage. SOCKS5 profile cards and details can show whether the profile has not been tested, reached the handshake stage, completed a manual CONNECT test, or last failed; route explanations may show the latest manual SOCKS5 diagnostic readiness while still warning that runtime forwarding is not enabled. There are no automatic checks, no startup tests, no auto-connect behavior, no DNS changes, no runtime VPN engine changes, and no TUN-to-SOCKS forwarding.
 
 What exists now:
 
@@ -43,9 +43,17 @@ What is intentionally not implemented yet:
 - No DNS server is added to the VPN builder.
 - No packet payload logging.
 - No forwarding or proxying.
-- No Xray, OpenVPN, WireGuard, Hysteria2, or SOCKS5 proxy engines yet.
+- No Xray, OpenVPN, WireGuard, Hysteria2, or SOCKS5 proxy engines yet. SOCKS5 readiness is a read-only summary of manual diagnostics, not runtime forwarding.
 - No Play Store or F-Droid release is claimed yet.
 - No background update checks, automatic APK downloads, silent install behavior, telemetry, analytics, tracking, ads, or cloud upload.
+
+## 0.7.6-alpha SOCKS5 readiness summaries
+
+ViRouteFS 0.7.6-alpha summarizes each SOCKS5 profile's local manual diagnostic history. The summary is derived from `socks5_test_history.json` in app-private no-backup storage and can show **Not tested**, **Handshake OK**, **CONNECT OK**, or **Last test failed** plus compact time and target details when a manual CONNECT success exists.
+
+Route explanations can include the last manual SOCKS5 diagnostic result for the selected SOCKS5 profile, but they must still say: "Selected profile: SOCKS5. Runtime forwarding is not enabled yet." This does not mean Android traffic is being routed through SOCKS5. Runtime TUN-to-SOCKS forwarding, default-route capture, and device traffic proxying are still not implemented.
+
+Safety and privacy remain unchanged: no background SOCKS5 checks, no startup checks, no auto-connect, no silent DNS changes, no telemetry, no cloud upload, and no password storage in routing exports or diagnostic history.
 
 ## Notices
 

@@ -83,6 +83,9 @@ import dev.vifs.viroutefs.routing.findConflictsForCandidate
 import dev.vifs.viroutefs.routing.findExactRouteConflicts
 import dev.vifs.viroutefs.routing.isValidIpOrCidr
 import dev.vifs.viroutefs.routing.validateRouteEditorDraft
+import dev.vifs.viroutefs.socks5.Socks5ReadinessSummary
+import dev.vifs.viroutefs.socks5.Socks5TestHistoryStore
+import dev.vifs.viroutefs.socks5.deriveSocks5ReadinessSummary
 import dev.vifs.viroutefs.settings.AppLanguage
 import dev.vifs.viroutefs.settings.AppSettings
 import dev.vifs.viroutefs.settings.AppSettingsRepository
@@ -315,6 +318,13 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
     var creatingRoute by rememberSaveable { mutableStateOf(false) }
     var draftRoute by remember { mutableStateOf<RouteRule?>(null) }
     val installedApps = remember(context) { context.loadLaunchableApps() }
+    val historyStore = remember(context) { Socks5TestHistoryStore(context) }
+    var readinessByProfile by remember(config.profiles) { mutableStateOf<Map<String, Socks5ReadinessSummary>>(emptyMap()) }
+    LaunchedEffect(config.profiles) {
+        readinessByProfile = config.profiles
+            .filter { it.type == TunnelType.Socks5 }
+            .associate { it.id to deriveSocks5ReadinessSummary(historyStore.recentForProfile(it.id)) }
+    }
     val userRules = config.rules.filter { it.type != RouteRuleType.DEFAULT }
     val selectedRoute = userRules.firstOrNull { it.id == selectedRouteId }
     val simulationInput = selectedAppPackage ?: target.ifBlank { "example.com" }
@@ -382,6 +392,10 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
                     singleLine = true,
                 )
                 Text("${decision.input} → ${decision.tunnelProfile.name}", style = MaterialTheme.typography.bodySmall)
+                if (decision.tunnelProfile.type == TunnelType.Socks5) {
+                    WarningText("Selected profile: SOCKS5. Runtime forwarding is not enabled yet.")
+                    Text(readinessByProfile[decision.tunnelProfile.id]?.routeExplanationLine ?: "SOCKS5 profile has not been tested yet.", style = MaterialTheme.typography.bodySmall)
+                }
                 Details(text.details, text.routeIsolationNote)
             }
         }
@@ -464,6 +478,16 @@ private fun RouteDetailsScreen(
         profile.type == TunnelType.Direct || profile.type == TunnelType.Block || profile.type == TunnelType.Socks5 || !profile.mockOnly
     }
     val targetProfile = config.profiles.firstOrNull { it.id == targetProfileId }
+    val context = LocalContext.current
+    val historyStore = remember(context) { Socks5TestHistoryStore(context) }
+    var selectedSocks5Readiness by remember(targetProfileId) { mutableStateOf<Socks5ReadinessSummary?>(null) }
+    LaunchedEffect(targetProfileId, targetProfile?.type) {
+        selectedSocks5Readiness = if (targetProfile?.type == TunnelType.Socks5) {
+            deriveSocks5ReadinessSummary(historyStore.recentForProfile(targetProfile.id))
+        } else {
+            null
+        }
+    }
     val filteredApps = remember(installedApps, appSearch) {
         val query = appSearch.trim().lowercase(Locale.ROOT)
         installedApps.filter { app ->
@@ -539,6 +563,10 @@ private fun RouteDetailsScreen(
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
                 Text("${text.targetProfile}: ${targetProfile?.name ?: targetProfileId}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (targetProfile?.type == TunnelType.Socks5) {
+                    WarningText("Selected profile: SOCKS5. Runtime forwarding is not enabled yet.")
+                    Text(selectedSocks5Readiness?.routeExplanationLine ?: "SOCKS5 profile has not been tested yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
         item {
@@ -729,6 +757,14 @@ private fun routeRecommendedAction(targetProfileId: String): String = if (target
 @Composable
 private fun ToolsScreen(padding: PaddingValues, text: UiText, config: RoutingConfig) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val historyStore = remember(context) { Socks5TestHistoryStore(context) }
+    var readinessByProfile by remember(config.profiles) { mutableStateOf<Map<String, Socks5ReadinessSummary>>(emptyMap()) }
+    LaunchedEffect(config.profiles) {
+        readinessByProfile = config.profiles
+            .filter { it.type == TunnelType.Socks5 }
+            .associate { it.id to deriveSocks5ReadinessSummary(historyStore.recentForProfile(it.id)) }
+    }
     var host by rememberSaveable { mutableStateOf("example.com") }
     var port by rememberSaveable { mutableStateOf("443") }
     var sni by rememberSaveable { mutableStateOf("example.com") }
@@ -769,6 +805,10 @@ private fun ToolsScreen(padding: PaddingValues, text: UiText, config: RoutingCon
                 Text(text.routeDiagnostics, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 OutlinedTextField(routeTarget, { routeTarget = it }, label = { Text(text.domainIpApp) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Text("${d.input} → ${d.tunnelProfile.name} • ${d.dnsPolicySummary}", style = MaterialTheme.typography.bodySmall)
+                if (d.tunnelProfile.type == TunnelType.Socks5) {
+                    WarningText("Selected profile: SOCKS5. Runtime forwarding is not enabled yet.")
+                    Text(readinessByProfile[d.tunnelProfile.id]?.routeExplanationLine ?: "SOCKS5 profile has not been tested yet.", style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
         item { CompactCard(text, "MTU", text.mtuShort, text.mtuDetails) }
