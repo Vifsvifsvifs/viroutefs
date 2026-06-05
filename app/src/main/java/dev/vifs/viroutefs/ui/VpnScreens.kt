@@ -101,24 +101,6 @@ internal fun VpnScreen(
         return
     }
 
-    suspend fun recordHistory(result: Socks5DiagnosticResult, testType: Socks5DiagnosticTestType, targetHostForHistory: String? = null, targetPortForHistory: Int? = null) {
-        val currentProfile = profile ?: return
-        historyStore.add(
-            Socks5TestHistoryItem(
-                profileId = currentProfile.id,
-                profileNameSnapshot = name.trim().ifBlank { currentProfile.name },
-                testType = testType,
-                targetHost = targetHostForHistory,
-                targetPort = targetPortForHistory,
-                timestamp = System.currentTimeMillis(),
-                state = result.state,
-                message = result.message,
-                elapsedMs = result.elapsedMs,
-            ),
-        )
-        history = historyStore.recentForProfile(currentProfile.id)
-    }
-
     ScreenList(padding) {
         item { Header(text.networks, text.networksSubtitle) }
         item {
