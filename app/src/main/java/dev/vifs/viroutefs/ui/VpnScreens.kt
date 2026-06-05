@@ -46,9 +46,11 @@ import dev.vifs.viroutefs.socks5.Socks5DiagnosticState
 import dev.vifs.viroutefs.socks5.Socks5DiagnosticTestType
 import dev.vifs.viroutefs.socks5.Socks5HandshakeTester
 import dev.vifs.viroutefs.socks5.Socks5ProfileConfig
+import dev.vifs.viroutefs.socks5.Socks5ReadinessSummary
 import dev.vifs.viroutefs.socks5.Socks5ProfileStatus
 import dev.vifs.viroutefs.socks5.Socks5TestHistoryItem
 import dev.vifs.viroutefs.socks5.Socks5TestHistoryStore
+import dev.vifs.viroutefs.socks5.deriveSocks5ReadinessSummary
 import dev.vifs.viroutefs.socks5.toProfileStatus
 import dev.vifs.viroutefs.socks5.validateSocks5Profile
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
@@ -147,6 +149,16 @@ internal fun VpnScreen(
 @Composable
 private fun CompactNetworkProfileCard(text: UiText, profile: TunnelProfile, config: RoutingConfig, onOpen: () -> Unit) {
     val routeCount = config.rules.count { it.targetProfileId == profile.id && it.type != RouteRuleType.DEFAULT }
+    val context = LocalContext.current
+    val historyStore = remember(context) { Socks5TestHistoryStore(context) }
+    var readiness by remember(profile.id) { mutableStateOf<Socks5ReadinessSummary?>(null) }
+    LaunchedEffect(profile.id, profile.socks5?.status) {
+        readiness = if (profile.type == TunnelType.Socks5) {
+            deriveSocks5ReadinessSummary(historyStore.recentForProfile(profile.id))
+        } else {
+            null
+        }
+    }
     CardBlock {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -162,7 +174,10 @@ private fun CompactNetworkProfileCard(text: UiText, profile: TunnelProfile, conf
                 }
                 Text(profile.type.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(text.assignedRoutesCount(routeCount), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                profile.socks5?.let { Text(it.status.safeLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                readiness?.let { summary ->
+                    Text(summary.compactListLine, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    summary.lastConnectSuccessLine?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                } ?: profile.socks5?.let { Text(it.status.safeLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
             StatusChip(if (profile.enabled) text.on else text.off)
         }
@@ -357,6 +372,8 @@ private fun Socks5ProfileEditorScreen(
         history = historyStore.recentForProfile(currentProfile.id)
     }
 
+    val readiness = remember(history) { deriveSocks5ReadinessSummary(history) }
+
     ScreenList(padding) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -369,7 +386,14 @@ private fun Socks5ProfileEditorScreen(
                 Text("SOCKS5-профиль добавлен. Проверка подключения запускается только вручную. Полная маршрутизация трафика устройства через SOCKS5 будет добавлена позже.", style = MaterialTheme.typography.bodySmall)
                 Text("SOCKS5 profile added. Connectivity testing runs only manually. Full device traffic routing through SOCKS5 will be added later.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("Runtime forwarding is not enabled yet. This test only verifies the SOCKS5 server and target CONNECT behavior.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                StatusChip(status.safeLabel)
+                StatusChip(readiness.badgeLabel)
+                Text(readiness.userSafeMessage, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                readiness.lastHandshake?.let { Text("Last handshake: ${it.state.label} • ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it.timestamp))}", style = MaterialTheme.typography.bodySmall) }
+                readiness.lastConnect?.let { item ->
+                    val target = if (item.targetHost != null && item.targetPort != null) " • ${item.targetHost}:${item.targetPort}" else ""
+                    Text("Last CONNECT: ${item.state.label}$target • ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(item.timestamp))}", style = MaterialTheme.typography.bodySmall)
+                }
+                readiness.lastConnectSuccessLine?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 currentDiagnostic?.let { Text(it.displayMessage, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold) }
             }
         }

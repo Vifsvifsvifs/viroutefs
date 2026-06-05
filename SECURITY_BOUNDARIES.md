@@ -80,3 +80,7 @@ Boundaries for this release:
 - Test history is stored locally in app-private no-backup storage (`socks5_test_history.json`) and is not automatically exported or uploaded.
 - SOCKS5 credentials are not logged, exported, or stored in diagnostic history.
 - No telemetry, ads, analytics, tracking SDKs, or cloud upload are added.
+
+## SOCKS5 readiness summaries
+
+SOCKS5 readiness in 0.7.6-alpha is a local, read-only summary of manual diagnostic history stored in app-private no-backup storage. It must not trigger network checks, run at startup, auto-connect profiles, change DNS, upload history, export history automatically, or expose credentials. The route explanation may show the last manual diagnostic result, but it must continue to warn that SOCKS5 runtime forwarding is not enabled and must not imply Android traffic is routed through SOCKS5.
