@@ -202,12 +202,16 @@ object RoutingConfigJson {
         put("host", host)
         put("port", port)
         put("uuid", uuid)
-        put("flow", flow)
+        put("transportType", transportType)
         put("securityMode", securityMode.wireName)
+        put("encryption", encryption)
+        put("flow", flow)
         put("sni", sni)
         put("publicKey", publicKey)
         put("shortId", shortId)
         put("fingerprint", fingerprint)
+        put("path", path)
+        put("hostHeader", hostHeader)
         put("enabled", enabled)
         put("status", status.toJson())
     }
@@ -217,12 +221,16 @@ object RoutingConfigJson {
         host = getString("host"),
         port = optInt("port"),
         uuid = getString("uuid"),
-        flow = optNullableString("flow"),
+        transportType = optNullableString("transportType"),
         securityMode = optVlessSecurityMode("securityMode"),
+        encryption = optNullableString("encryption"),
+        flow = optNullableString("flow"),
         sni = optNullableString("sni"),
         publicKey = optNullableString("publicKey"),
         shortId = optNullableString("shortId"),
         fingerprint = optNullableString("fingerprint"),
+        path = optNullableString("path"),
+        hostHeader = optNullableString("hostHeader"),
         enabled = optBoolean("enabled", true),
         status = optJSONObject("status")?.toVlessProfileStatus() ?: VlessProfileStatus.NotTested,
     )

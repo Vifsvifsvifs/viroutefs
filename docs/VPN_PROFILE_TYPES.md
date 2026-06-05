@@ -54,8 +54,8 @@
 
 Each network profile may reference a DNS policy. DNS is configured primarily on the DNS page; the Networks page only shows compact profile details.
 
-## VLESS profile model in 0.8.4-alpha
+## VLESS profile model in 0.8.5-alpha
 
-VLESS profiles are configuration-only in 0.8.4-alpha. The app can store and validate local profile fields for route decision preview, including UUID and placeholder TLS/REALITY metadata, but it does not connect to VLESS servers, forward packets, write packets back to TUN, implement REALITY/XTLS runtime, or proxy DNS. Route decision preview must warn: "Selected profile is VLESS. Runtime forwarding is not enabled yet."
+VLESS profiles are configuration-only in 0.8.5-alpha. The app can store and validate local profile fields for route decision preview, including UUID, transport placeholders (`tcp`, `ws`, or `grpc`), and placeholder TLS/REALITY metadata. It can also import and explicitly export usable `vless://` URIs as documented in [`VLESS_URI_IMPORT_EXPORT.md`](VLESS_URI_IMPORT_EXPORT.md). It does not connect to VLESS servers, forward packets, write packets back to TUN, implement REALITY/XTLS runtime, or proxy DNS. Route decision preview must warn: "Selected profile is VLESS. Runtime forwarding is not enabled yet."
 
-`routing_config.json` and user exports may contain VLESS connection identifiers such as UUID, host, SNI, and placeholder key metadata. Treat exported routing configs as sensitive local files. UUID values must not appear in summaries, diagnostics text, logs, or route-preview text. No telemetry, cloud upload, analytics, ads, background validation, startup tests, or auto-connect behavior is added.
+`routing_config.json`, routing exports, and explicit VLESS URI exports may contain VLESS connection identifiers such as UUID, host, SNI, and placeholder key metadata. Treat exported routing configs and VLESS URIs as sensitive local files. UUID values must not appear in summaries, diagnostics text, logs, route-preview text, or masked import previews. No telemetry, cloud upload, analytics, ads, background validation, startup tests, or auto-connect behavior is added.
