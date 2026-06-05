@@ -11,9 +11,10 @@ import java.io.File
 
 class RoutingConfigRepository(
     private val context: Context,
+    private val credentialStore: Socks5CredentialStore = Socks5CredentialStore(context),
 ) {
     private val configFile: File
-        get() = File(context.filesDir, "routing_config.json")
+        get() = File(context.filesDir, ROUTING_CONFIG_FILENAME)
 
     suspend fun load(): RoutingConfigLoadResult = withContext(Dispatchers.IO) {
         val file = configFile
@@ -21,11 +22,19 @@ class RoutingConfigRepository(
             return@withContext RoutingConfigLoadResult(RoutingConfigDefaults.defaultConfig(), null)
         }
         runCatching {
-            val config = decodeConfig(file.readText())
+            val decodedConfig = RoutingConfigJson.decode(file.readText())
+            val legacyPasswords = decodedConfig.socks5PasswordsByProfileId()
+            val storedPasswords = credentialStore.load()
+            val mergedPasswords = storedPasswords + legacyPasswords
+            val config = decodedConfig.withSocks5Passwords(mergedPasswords)
             val errors = validateRoutingConfig(config)
             if (errors.isNotEmpty()) {
                 RoutingConfigLoadResult(RoutingConfigDefaults.defaultConfig(), "Сохранённая конфигурация некорректна: ${errors.joinToString()}")
             } else {
+                if (legacyPasswords.isNotEmpty()) {
+                    credentialStore.save(mergedPasswords.onlyProfilesIn(config))
+                    file.writeText(RoutingConfigJson.encode(config, includeSocks5Passwords = false))
+                }
                 RoutingConfigLoadResult(config, null)
             }
         }.getOrElse { error ->
@@ -34,28 +43,72 @@ class RoutingConfigRepository(
     }
 
     suspend fun save(config: RoutingConfig) = withContext(Dispatchers.IO) {
-        configFile.writeText(encodeConfig(config))
+        credentialStore.save(config.socks5PasswordsByProfileId())
+        configFile.writeText(RoutingConfigJson.encode(config, includeSocks5Passwords = false))
     }
 
-    fun exportJson(config: RoutingConfig): String = encodeConfig(config)
+    fun exportJson(config: RoutingConfig): String = RoutingConfigJson.encode(config, includeSocks5Passwords = false)
 
     fun importJson(json: String): Result<RoutingConfig> = runCatching {
-        val config = decodeConfig(json)
+        val config = RoutingConfigJson.decode(json).withoutSocks5Passwords()
         val errors = validateRoutingConfig(config)
         require(errors.isEmpty()) { errors.joinToString("\n") }
         config
     }
 
-    private fun encodeConfig(config: RoutingConfig): String = JSONObject().apply {
+    companion object {
+        const val ROUTING_CONFIG_FILENAME = "routing_config.json"
+    }
+}
+
+class Socks5CredentialStore(
+    private val credentialsFile: File,
+) {
+    constructor(context: Context) : this(File(context.noBackupFilesDir, FILENAME))
+
+    fun load(): Map<String, String> {
+        if (!credentialsFile.exists()) return emptyMap()
+        return runCatching {
+            val root = JSONObject(credentialsFile.readText())
+            root.keys().asSequence()
+                .mapNotNull { profileId ->
+                    root.optNullableString(profileId)?.takeIf { it.isNotEmpty() }?.let { profileId to it }
+                }
+                .toMap()
+        }.getOrDefault(emptyMap())
+    }
+
+    fun save(passwordsByProfileId: Map<String, String>) {
+        credentialsFile.parentFile?.mkdirs()
+        val root = JSONObject()
+        passwordsByProfileId
+            .filterKeys { it.isNotBlank() }
+            .filterValues { it.isNotEmpty() }
+            .toSortedMap()
+            .forEach { (profileId, password) -> root.put(profileId, password) }
+        credentialsFile.writeText(root.toString(2))
+        credentialsFile.setReadable(false, false)
+        credentialsFile.setWritable(false, false)
+        credentialsFile.setReadable(true, true)
+        credentialsFile.setWritable(true, true)
+    }
+
+    companion object {
+        const val FILENAME = "socks5_credentials.json"
+    }
+}
+
+object RoutingConfigJson {
+    fun encode(config: RoutingConfig, includeSocks5Passwords: Boolean = false): String = JSONObject().apply {
         put("version", config.version)
-        put("profiles", JSONArray(config.profiles.map { it.toJson() }))
+        put("profiles", JSONArray(config.profiles.map { it.toJson(includeSocks5Passwords) }))
         put("dnsPolicies", JSONArray(config.dnsPolicies.map { it.toJson() }))
         put("rules", JSONArray(config.rules.map { it.toJson() }))
         put("defaultProfileId", config.defaultProfileId)
         put("hostOverrides", JSONArray(config.hostOverrides.map { it.toJson() }))
     }.toString(2)
 
-    private fun decodeConfig(json: String): RoutingConfig {
+    fun decode(json: String): RoutingConfig {
         val root = JSONObject(json)
         return RoutingConfig(
             version = root.optInt("version", CURRENT_ROUTING_CONFIG_VERSION),
@@ -67,7 +120,7 @@ class RoutingConfigRepository(
         )
     }
 
-    private fun TunnelProfile.toJson(): JSONObject = JSONObject().apply {
+    private fun TunnelProfile.toJson(includeSocks5Password: Boolean): JSONObject = JSONObject().apply {
         put("id", id)
         put("name", name)
         put("type", type.name)
@@ -76,7 +129,7 @@ class RoutingConfigRepository(
         put("mockOnly", mockOnly)
         put("platformNotes", platformNotes)
         put("dnsPolicyId", dnsPolicyId)
-        put("socks5", socks5?.toJson())
+        put("socks5", socks5?.toJson(includeSocks5Password))
     }
 
     private fun JSONObject.toTunnelProfile(): TunnelProfile {
@@ -94,12 +147,12 @@ class RoutingConfigRepository(
         )
     }
 
-    private fun Socks5ProfileConfig.toJson(): JSONObject = JSONObject().apply {
+    private fun Socks5ProfileConfig.toJson(includePassword: Boolean): JSONObject = JSONObject().apply {
         put("name", name)
         put("host", host)
         put("port", port)
         put("username", username)
-        put("password", password)
+        put("password", if (includePassword && password != null) password else JSONObject.NULL)
         put("enabled", enabled)
         put("status", status.toJson())
     }
@@ -161,7 +214,7 @@ class RoutingConfigRepository(
     private fun JSONObject.toDnsPolicy(): DnsPolicy = DnsPolicy(
         id = getString("id"),
         name = getString("name"),
-        type = optEnum("type", DnsPolicyType.System),
+        type = optDnsPolicyType("type"),
         serverText = optNullableString("serverText"),
         resolveThroughProfileId = optNullableString("resolveThroughProfileId"),
         description = optString("description"),
@@ -186,7 +239,7 @@ class RoutingConfigRepository(
     private fun JSONObject.toRouteRule(): RouteRule = RouteRule(
         id = getString("id"),
         name = getString("name"),
-        type = optEnum("type", RouteRuleType.DOMAIN),
+        type = optRouteRuleType("type"),
         targetProfileId = optString("targetProfileId", optString("targetTunnelId")),
         dnsPolicyId = optNullableString("dnsPolicyId"),
         priority = optInt("priority", 1000),
@@ -210,11 +263,9 @@ class RoutingConfigRepository(
         displayName = optNullableString("displayName"),
     )
 
-    private fun JSONArray.mapStrings(): List<String> = (0 until length()).map { getString(it) }
+    private fun JSONObject.optRouteRuleType(name: String): RouteRuleType = optEnum(name, RouteRuleType.DOMAIN)
 
-    private fun <T> JSONArray.mapObjects(transform: (JSONObject) -> T): List<T> = (0 until length()).map { index ->
-        transform(getJSONObject(index))
-    }
+    private fun JSONObject.optDnsPolicyType(name: String): DnsPolicyType = optEnum(name, DnsPolicyType.System)
 
     private inline fun <reified T : Enum<T>> JSONObject.optEnum(key: String, fallback: T): T {
         val value = optNullableString(key) ?: return fallback
@@ -228,22 +279,46 @@ class RoutingConfigRepository(
             ?: fallback
     }
 
-    private fun JSONObject.optNullableString(key: String): String? = if (has(key) && !isNull(key)) optString(key).takeIf { it.isNotBlank() } else null
-
-    private companion object {
-        val legacyTunnelTypeAliases = mapOf(
-            "xray" to TunnelType.XrayMock,
-            "xrayvless" to TunnelType.XrayVlessReality,
-            "vless" to TunnelType.XrayVlessReality,
-            "hysteria" to TunnelType.Hysteria2,
-            "openvpn" to TunnelType.OpenVpn,
-            "socks" to TunnelType.Socks5,
-            "socks5" to TunnelType.Socks5,
-        )
-    }
+    private val legacyTunnelTypeAliases = mapOf(
+        "xray" to TunnelType.XrayMock,
+        "xrayvless" to TunnelType.XrayVlessReality,
+        "vless" to TunnelType.XrayVlessReality,
+        "hysteria" to TunnelType.Hysteria2,
+        "openvpn" to TunnelType.OpenVpn,
+        "socks" to TunnelType.Socks5,
+        "socks5" to TunnelType.Socks5,
+    )
 }
 
-data class RoutingConfigLoadResult(
-    val config: RoutingConfig,
-    val errorMessage: String?,
+fun RoutingConfig.socks5PasswordsByProfileId(): Map<String, String> = profiles.mapNotNull { profile ->
+    profile.socks5?.password?.takeIf { it.isNotEmpty() }?.let { profile.id to it }
+}.toMap()
+
+fun RoutingConfig.withoutSocks5Passwords(): RoutingConfig = copy(
+    profiles = profiles.map { profile ->
+        profile.copy(socks5 = profile.socks5?.copy(password = null))
+    },
 )
+
+fun RoutingConfig.withSocks5Passwords(passwordsByProfileId: Map<String, String>): RoutingConfig = copy(
+    profiles = profiles.map { profile ->
+        val socks5 = profile.socks5
+        val password = passwordsByProfileId[profile.id]
+        if (socks5 != null && password != null) {
+            profile.copy(socks5 = socks5.copy(password = password))
+        } else {
+            profile.copy(socks5 = socks5?.copy(password = null))
+        }
+    },
+)
+
+private fun Map<String, String>.onlyProfilesIn(config: RoutingConfig): Map<String, String> {
+    val profileIds = config.profiles.map { it.id }.toSet()
+    return filterKeys { it in profileIds }
+}
+
+private fun JSONArray.mapStrings(): List<String> = (0 until length()).map { getString(it) }
+
+private fun <T> JSONArray.mapObjects(transform: JSONObject.() -> T): List<T> = (0 until length()).map { getJSONObject(it).transform() }
+
+private fun JSONObject.optNullableString(name: String): String? = if (isNull(name)) null else optString(name).takeIf { it.isNotBlank() }

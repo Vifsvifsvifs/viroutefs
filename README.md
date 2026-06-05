@@ -172,8 +172,12 @@ If you generate the Gradle wrapper locally, you can also use:
 - Keep logs and future PCAP exports local unless the user explicitly exports them.
 - Prefer small, compiling pull requests with clear commit messages.
 
-## SOCKS5 profiles in 0.7.0-alpha
+## SOCKS5 profiles in 0.7.1-alpha
 
-ViRouteFS 0.7.0-alpha adds local-only SOCKS5 profile configuration and an explicit manual SOCKS5 handshake connectivity tester. A user can store a SOCKS5 name, host, port, optional username, optional password, enabled flag, and test status locally on the device. Connectivity testing runs only when the user taps **Test connection**; there are no startup checks, background checks, periodic checks, auto-connect behavior, silent DNS changes, telemetry, analytics, cloud upload, or public/free proxy dependency.
+ViRouteFS 0.7.1-alpha keeps SOCKS5 profile configuration local-only and manual-only while hardening credential storage. SOCKS5 profile metadata such as name, host, port, optional username, enabled flag, and test status is stored locally, but SOCKS5 passwords are stored separately in app-private Android no-backup storage. Passwords are not written to `routing_config.json`, are not included in routing configuration exports, and are not shown in summaries, cards, status, diagnostics, errors, or logs.
 
-Full TUN-to-SOCKS device traffic routing is not implemented yet: ViRouteFS does not capture the default route for SOCKS5, does not forward runtime packets to SOCKS5, and route explanations must treat SOCKS5 targets as configuration/preview only with: "Selected profile: SOCKS5. Runtime forwarding is not enabled yet." For manual testing, use a trusted/self-owned SOCKS5 server. Public/free SOCKS5 proxies are not required or recommended. Credentials remain local, and passwords must not be logged, shown in diagnostics, or included in docs/PR text.
+Android backup and device-transfer rules exclude `routing_config.json` because routing profiles can reveal private network infrastructure even without stored passwords. Logs and future PCAP exports remain excluded from backup as before.
+
+Connectivity testing runs only when the user taps **Test connection**; there are no startup checks, background checks, periodic checks, auto-connect behavior, silent DNS changes, telemetry, analytics, cloud upload, or public/free proxy dependency.
+
+Full TUN-to-SOCKS device traffic routing is still not implemented: ViRouteFS does not capture the default route for SOCKS5, does not forward runtime packets to SOCKS5, and route explanations must treat SOCKS5 targets as configuration/preview only with: "Selected profile: SOCKS5. Runtime forwarding is not enabled yet." For manual testing, use a trusted/self-owned SOCKS5 server. Public/free SOCKS5 proxies are not required or recommended.
