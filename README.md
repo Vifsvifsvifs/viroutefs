@@ -17,9 +17,9 @@ ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project 
 - No hidden interception of third-party traffic.
 - No offensive security features.
 
-## Current status: 0.6.13-alpha
+## Current status: 0.6.14-alpha
 
-Version `0.6.13-alpha` polishes the launcher icon, repairs manual APK download validation, and adds a compact release history in Settings → Updates. The manual Settings update flow still lets a user check GitHub Releases, manually download an APK asset such as `ViRouteFS-0.6.13-alpha.apk`, and open Android's system package installer. The user must confirm installation in Android system UI. There are still no background update checks, no auto-downloads, no silent installs, and no runtime VPN/TUN routing behavior changes.
+Version `0.6.14-alpha` completes the launcher icon cleanup across Android surfaces by aligning the manifest, adaptive, round, monochrome/themed, and legacy fallback resources around one black-background, red `V`, and white network-branch motif. The manual Settings update flow remains user-initiated: a user can check GitHub Releases, manually download an APK asset such as `ViRouteFS-0.6.14-alpha.apk`, and open Android's system package installer. The user must confirm installation in Android system UI. There are still no background update checks, no auto-downloads, no silent installs, and no runtime VPN/TUN routing behavior changes.
 
 What exists now:
 
@@ -30,7 +30,7 @@ What exists now:
 - Flow Scanner can show local counters when developer diagnostics explicitly enable the TEST-NET preview.
 - The app has Compose screens for Networks, Routes, DNS, Flow Scanner, Tools, and Settings with Help collapsed by default.
 - GitHub Actions builds APK artifacts with dynamic version-based names.
-- Published releases contain friendly APK assets, such as `ViRouteFS-0.6.13-alpha.apk`, attached to GitHub Releases.
+- Published releases contain friendly APK assets, such as `ViRouteFS-0.6.14-alpha.apk`, attached to GitHub Releases.
 - Stable update-over-install for alpha APKs requires the alpha signing secrets documented in [`docs/ALPHA_SIGNING.md`](docs/ALPHA_SIGNING.md).
 - Settings includes a manual update checker that contacts GitHub Releases only after the user taps **Check for updates**. Settings → Updates shows the current version, newest available release, and a compact recent release history with notes previews and links. When a release has an APK asset, the user can tap **Download APK** and then **Install update** to open Android's system package installer.
 - Routing configuration, DNS policy metadata, diagnostics reports, and logs are local-first.
@@ -49,7 +49,7 @@ What is intentionally not implemented yet:
 
 ## Releases
 
-Stable APK downloads should come from [GitHub Releases](https://github.com/Vifsvifsvifs/viroutefs/releases). GitHub Releases are the official alpha APK channel and include friendly APK assets such as `ViRouteFS-0.6.13-alpha.apk` plus release notes. The app icon direction is a minimalist dark launcher tile with a central red `V` and white network branches, maintained as XML/vector resources for adaptive, monochrome, and legacy consistency.
+Stable APK downloads should come from [GitHub Releases](https://github.com/Vifsvifsvifs/viroutefs/releases). GitHub Releases are the official alpha APK channel and include friendly APK assets such as `ViRouteFS-0.6.14-alpha.apk` plus release notes. The app icon direction is a minimalist dark launcher tile with a central red `V` and white network branches, maintained as XML/vector resources for adaptive, round, monochrome/themed, and legacy consistency with unique launcher resource names to avoid stale `ic_launcher` cache fallbacks.
 
 GitHub Actions artifacts are mainly CI artifacts for maintainers and testers. They are useful for validating pull requests and pushes, but Releases should be preferred for normal alpha APK downloads because they are published intentionally with a changelog and attached APK asset.
 
