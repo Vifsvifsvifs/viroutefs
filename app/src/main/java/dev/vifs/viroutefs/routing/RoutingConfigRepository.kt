@@ -9,6 +9,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
+data class RoutingConfigLoadResult(
+    val config: RoutingConfig,
+    val errorMessage: String?,
+)
+
 class RoutingConfigRepository(
     private val context: Context,
     private val credentialStore: Socks5CredentialStore = Socks5CredentialStore(context),
@@ -319,6 +324,7 @@ private fun Map<String, String>.onlyProfilesIn(config: RoutingConfig): Map<Strin
 
 private fun JSONArray.mapStrings(): List<String> = (0 until length()).map { getString(it) }
 
-private fun <T> JSONArray.mapObjects(transform: JSONObject.() -> T): List<T> = (0 until length()).map { getJSONObject(it).transform() }
+private fun <T> JSONArray.mapObjects(transform: (JSONObject) -> T): List<T> =
+    (0 until length()).map { index -> transform(getJSONObject(index)) }
 
 private fun JSONObject.optNullableString(name: String): String? = if (isNull(name)) null else optString(name).takeIf { it.isNotBlank() }
