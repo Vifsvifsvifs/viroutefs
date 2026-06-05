@@ -19,6 +19,8 @@ The importer parses the following URI parts and stores them in the local VLESS p
 - `sid`
 - `path`
 - host header from `host=`
+- `alpn` when present
+- gRPC service name from `serviceName=` when present
 
 The parser validates UUID syntax and requires a port in the `1..65535` range. Unsupported schemes, unsupported transport placeholders, unsupported security values, missing hosts, invalid UUIDs, and invalid ports are rejected with user-visible errors.
 
@@ -30,4 +32,4 @@ VLESS runtime is not implemented in this release. Importing or saving a VLESS pr
 
 The app masks UUIDs in summaries and previews so casual logs and UI text do not reveal the full connection identifier. The full UUID is still stored locally because it is required to recreate a usable VLESS URI.
 
-Export is an explicit user action only. The exported URI contains connection identifiers, including the UUID and any parameters the user saved. Treat exported URIs as sensitive and share them only with trusted recipients.
+Export is an explicit user action only. The UI warns: “Exported VLESS URI contains connection identifiers. Share it carefully.” The exported URI contains connection identifiers, including the UUID and any parameters the user saved. Treat exported URIs as sensitive and share them only with trusted recipients.

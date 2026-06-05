@@ -62,6 +62,15 @@ Focus: expand explicitly enabled outbound experiments after safe route handling 
 - Diagnostics that separate policy decisions from network failures.
 - Continued local-first behavior with no telemetry, ads, tracking SDKs, or cloud upload.
 
+
+## 0.8.5-alpha VLESS URI import/export
+
+- Add VLESS URI import/export for local profile configuration.
+- Imported VLESS profiles remain config-only and can be used for route decision preview only.
+- Do not connect to, test, or resolve VLESS servers during import.
+- Do not implement runtime VLESS forwarding, packet forwarding, TUN writes, DNS proxying, telemetry, analytics, or cloud upload.
+- Warn that exported VLESS URIs contain connection identifiers and require explicit user action before showing the generated URI.
+
 ## 0.9.x: import preparation
 
 Focus: prepare user-friendly import flows while staying honest about implementation status.
@@ -157,3 +166,11 @@ Boundaries for this release:
 - Validate host, port, and UUID manually without connecting to any VLESS server.
 - Show the route-preview warning: "Selected profile is VLESS. Runtime forwarding is not enabled yet."
 - Do not implement VLESS runtime forwarding, packet forwarding, TUN writes, REALITY/XTLS runtime, DNS proxying, telemetry, analytics, cloud upload, startup tests, or auto-connect.
+
+## 0.8.5-alpha VLESS URI import/export
+
+- Add VLESS URI import/export for local profile configuration.
+- Imported VLESS profiles remain config-only and can be used for route decision preview only.
+- Do not connect to, test, or resolve VLESS servers during import.
+- Do not implement runtime VLESS forwarding, packet forwarding, TUN writes, DNS proxying, telemetry, analytics, or cloud upload.
+- Warn that exported VLESS URIs contain connection identifiers and require explicit user action before showing the generated URI.
