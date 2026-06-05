@@ -23,8 +23,8 @@ android {
         applicationId = "dev.vifs.viroutefs"
         minSdk = 26
         targetSdk = 36
-        versionCode = 25
-        versionName = "0.6.14-alpha"
+        versionCode = 26
+        versionName = "0.6.15-alpha"
     }
 
     signingConfigs {
