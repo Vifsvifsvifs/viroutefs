@@ -1,6 +1,8 @@
 package dev.vifs.viroutefs.routing
 
 import android.content.Context
+import dev.vifs.viroutefs.socks5.Socks5ProfileConfig
+import dev.vifs.viroutefs.socks5.Socks5ProfileStatus
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -74,6 +76,7 @@ class RoutingConfigRepository(
         put("mockOnly", mockOnly)
         put("platformNotes", platformNotes)
         put("dnsPolicyId", dnsPolicyId)
+        put("socks5", socks5?.toJson())
     }
 
     private fun JSONObject.toTunnelProfile(): TunnelProfile {
@@ -87,7 +90,46 @@ class RoutingConfigRepository(
             mockOnly = optBoolean("mockOnly", type.isMockOnly),
             platformNotes = optNullableString("platformNotes"),
             dnsPolicyId = optNullableString("dnsPolicyId"),
+            socks5 = optJSONObject("socks5")?.toSocks5ProfileConfig(),
         )
+    }
+
+    private fun Socks5ProfileConfig.toJson(): JSONObject = JSONObject().apply {
+        put("name", name)
+        put("host", host)
+        put("port", port)
+        put("username", username)
+        put("password", password)
+        put("enabled", enabled)
+        put("status", status.toJson())
+    }
+
+    private fun JSONObject.toSocks5ProfileConfig(): Socks5ProfileConfig = Socks5ProfileConfig(
+        name = getString("name"),
+        host = getString("host"),
+        port = optInt("port"),
+        username = optNullableString("username"),
+        password = optNullableString("password"),
+        enabled = optBoolean("enabled", true),
+        status = optJSONObject("status")?.toSocks5ProfileStatus() ?: Socks5ProfileStatus.NotTested,
+    )
+
+    private fun Socks5ProfileStatus.toJson(): JSONObject = JSONObject().apply {
+        when (this@toJson) {
+            Socks5ProfileStatus.NotTested -> put("state", "NotTested")
+            Socks5ProfileStatus.Testing -> put("state", "NotTested")
+            Socks5ProfileStatus.Reachable -> put("state", "Reachable")
+            is Socks5ProfileStatus.Failed -> {
+                put("state", "Failed")
+                put("message", message)
+            }
+        }
+    }
+
+    private fun JSONObject.toSocks5ProfileStatus(): Socks5ProfileStatus = when (optString("state")) {
+        "Reachable" -> Socks5ProfileStatus.Reachable
+        "Failed" -> Socks5ProfileStatus.Failed(optString("message", "invalid response"))
+        else -> Socks5ProfileStatus.NotTested
     }
 
     private fun DnsHostOverride.toJson(): JSONObject = JSONObject().apply {

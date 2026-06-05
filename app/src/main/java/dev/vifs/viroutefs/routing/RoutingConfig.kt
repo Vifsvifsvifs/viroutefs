@@ -1,9 +1,12 @@
 package dev.vifs.viroutefs.routing
 
+import dev.vifs.viroutefs.socks5.Socks5ProfileConfig
+import dev.vifs.viroutefs.socks5.validateSocks5Profile
 import java.util.Locale
 
 const val CURRENT_ROUTING_CONFIG_VERSION = 2
 const val MOCK_PROFILE_LIMITATION = "Профиль пока не подключает реальный тоннель. Он используется для симуляции маршрутов."
+const val SOCKS5_RUNTIME_LIMITATION = "Selected profile: SOCKS5. Runtime forwarding is not enabled yet."
 const val DNS_POLICY_LIMITATION = "DNS-политика пока используется для объяснения и проверки риска утечки. Реальное DNS-маршрутизирование будет добавлено позже."
 
 data class RoutingConfig(
@@ -24,6 +27,7 @@ data class TunnelProfile(
     val mockOnly: Boolean = type.isMockOnly,
     val platformNotes: String? = null,
     val dnsPolicyId: String? = null,
+    val socks5: Socks5ProfileConfig? = null,
 ) {
     val warningText: String?
         get() = when (type) {
@@ -148,7 +152,13 @@ data class RouteDecision(
     val warnings: List<String>,
 ) {
     val dnsPolicySummary: String = dnsPolicy?.name ?: "Не выбрана"
-    val profileMockSummary: String = if (tunnelProfile.mockOnly) MOCK_PROFILE_LIMITATION else "Профиль не является mock-тоннелем."
+    val profileMockSummary: String = if (tunnelProfile.type == TunnelType.Socks5) {
+        SOCKS5_RUNTIME_LIMITATION
+    } else if (tunnelProfile.mockOnly) {
+        MOCK_PROFILE_LIMITATION
+    } else {
+        "Профиль не является mock-тоннелем."
+    }
     val dnsLeakSummary: String = if (dnsPolicy == null || dnsPolicy.type == DnsPolicyType.System) {
         "Uses Android system DNS through the ViRouteFS policy model; real DNS enforcement is not implemented yet."
     } else {
@@ -226,7 +236,9 @@ class RouteEngine(
         } else if (!targetProfile.enabled) {
             add("Профиль правила отключён. Модель безопасного поведения: Block / fail closed; без тихого fallback на другой профиль.")
         }
-        if (selectedProfile.mockOnly) {
+        if (selectedProfile.type == TunnelType.Socks5) {
+            add(SOCKS5_RUNTIME_LIMITATION)
+        } else if (selectedProfile.mockOnly) {
             add(MOCK_PROFILE_LIMITATION)
         }
         if (dnsPolicy == null && matchedRule.dnsPolicyId != null) {
@@ -254,6 +266,7 @@ class RouteEngine(
         appendLine("Приоритет: ${rule.priority} (меньше — важнее)")
         appendLine("Матчеры: ${rule.matchers.joinToString().ifBlank { "не требуются" }}")
         appendLine("Профиль: ${profile.name} (${profile.type.label})")
+        if (profile.type == TunnelType.Socks5) appendLine(SOCKS5_RUNTIME_LIMITATION)
         appendLine("DNS-политика: ${dnsPolicy?.name ?: "не выбрана"}")
         appendLine("DNS default: ${if (dnsPolicy == null || dnsPolicy.type == DnsPolicyType.System) "Android system DNS" else "configured policy, not enforced yet"}")
         if (warnings.isNotEmpty()) {
@@ -291,6 +304,18 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
     config.profiles.forEach { profile ->
         if (profile.id.isBlank()) add("Профиль без id: ${profile.name}")
         if (profile.name.isBlank()) add("Профиль ${profile.id} без имени.")
+        if (profile.type == TunnelType.Socks5) {
+            val socks5 = profile.socks5
+            if (socks5 == null) {
+                add("SOCKS5 profile ${profile.name} has no SOCKS5 configuration.")
+            } else {
+                validateSocks5Profile(
+                    candidate = socks5,
+                    existingProfiles = config.profiles.mapNotNull { it.socks5 },
+                    originalName = socks5.name,
+                ).forEach { add("Профиль ${profile.name}: $it") }
+            }
+        }
         profile.dnsPolicyId?.takeIf { it !in dnsPolicyIds }?.let { add("Профиль ${profile.name}: DNS-политика $it не найдена.") }
     }
     config.dnsPolicies.forEach { policy ->
@@ -299,6 +324,9 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
         policy.resolveThroughProfileId?.takeIf { it !in profileIds }?.let {
             add("DNS-политика ${policy.name} ссылается на отсутствующий профиль $it.")
         }
+    }
+    config.profiles.mapNotNull { it.socks5 }.groupBy { it.name.trim().lowercase(Locale.ROOT) }.filterKeys { it.isNotBlank() }.forEach { (name, profiles) ->
+        if (profiles.size > 1) add("Duplicate SOCKS5 profile name: $name")
     }
     config.hostOverrides.forEach { override ->
         if (override.id.isBlank()) add("DNS override без id: ${override.hostname}")

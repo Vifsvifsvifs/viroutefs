@@ -171,3 +171,9 @@ If you generate the Gradle wrapper locally, you can also use:
 - Routing configuration is local app-private JSON unless the user explicitly copies it.
 - Keep logs and future PCAP exports local unless the user explicitly exports them.
 - Prefer small, compiling pull requests with clear commit messages.
+
+## SOCKS5 profiles in 0.7.0-alpha
+
+ViRouteFS 0.7.0-alpha adds local-only SOCKS5 profile configuration and an explicit manual SOCKS5 handshake connectivity tester. A user can store a SOCKS5 name, host, port, optional username, optional password, enabled flag, and test status locally on the device. Connectivity testing runs only when the user taps **Test connection**; there are no startup checks, background checks, periodic checks, auto-connect behavior, silent DNS changes, telemetry, analytics, cloud upload, or public/free proxy dependency.
+
+Full TUN-to-SOCKS device traffic routing is not implemented yet: ViRouteFS does not capture the default route for SOCKS5, does not forward runtime packets to SOCKS5, and route explanations must treat SOCKS5 targets as configuration/preview only with: "Selected profile: SOCKS5. Runtime forwarding is not enabled yet." For manual testing, use a trusted/self-owned SOCKS5 server. Public/free SOCKS5 proxies are not required or recommended. Credentials remain local, and passwords must not be logged, shown in diagnostics, or included in docs/PR text.
