@@ -41,3 +41,9 @@ See [ROUTE_DIAGNOSTICS.md](ROUTE_DIAGNOSTICS.md) for details.
 Real VPN routing is still not implemented. Xray, Hysteria2, OpenVPN, WireGuard, SOCKS5, packet capture, and true custom DNS routing are also not implemented in this milestone.
 
 The Route Simulator and selected Route Diagnostics tunnel remain simulation-only. They are UX and configuration models for explaining future routing decisions, not a real routing engine connected to Android VPN traffic.
+
+## Live route decision preview in 0.8.2-alpha
+
+The local packet inspector now derives an observation-only route decision preview from each in-memory `PacketSummary`. The preview reuses the existing route model to show the matched rule name, selected profile, and selected profile type beside packet summaries.
+
+This preview does not enable runtime forwarding: packets are not forwarded, written back to TUN, proxied through SOCKS5, sent through VLESS-like engines, DNS-proxied, persisted, uploaded, or logged with payload data. SOCKS5 and other remote/mock runtime profiles are shown with explicit runtime-forwarding warnings.

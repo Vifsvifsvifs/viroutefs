@@ -54,6 +54,8 @@ import dev.vifs.viroutefs.socks5.deriveSocks5ReadinessSummary
 import dev.vifs.viroutefs.socks5.toProfileStatus
 import dev.vifs.viroutefs.socks5.validateSocks5Profile
 import dev.vifs.viroutefs.vpn.Ipv4Protocol
+import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreview
+import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreviewer
 import dev.vifs.viroutefs.vpn.PacketSummary
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
@@ -77,6 +79,7 @@ internal fun VpnScreen(
     var addSocks5 by rememberSaveable { mutableStateOf(false) }
     val selectedProfile = selectedProfileId?.let { id -> config.profiles.firstOrNull { it.id == id } }
     val visibleProfiles = config.profiles.filter { !it.mockOnly || it.type == TunnelType.Socks5 }
+    val routeDecisionPreviewer = remember(config) { LiveRouteDecisionPreviewer(config) }
 
     if (addSocks5) {
         Socks5ProfileEditorScreen(
@@ -145,7 +148,10 @@ internal fun VpnScreen(
                     Text(text.vpnPacketInspectorEmpty, style = MaterialTheme.typography.bodySmall)
                 } else {
                     vpnState.packetSummaries.forEach { summary ->
-                        PacketSummaryLine(summary)
+                        PacketSummaryLine(
+                            summary = summary,
+                            routeDecisionPreview = routeDecisionPreviewer.preview(summary),
+                        )
                     }
                 }
             }
@@ -184,7 +190,7 @@ private fun CounterLine(label: String, value: Long) = Row(
 }
 
 @Composable
-private fun PacketSummaryLine(summary: PacketSummary) {
+private fun PacketSummaryLine(summary: PacketSummary, routeDecisionPreview: LiveRouteDecisionPreview) {
     val time = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(summary.timestamp))
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
@@ -193,6 +199,11 @@ private fun PacketSummaryLine(summary: PacketSummary) {
             style = MaterialTheme.typography.bodySmall,
         )
         Text(time, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(routeDecisionPreview.decisionLine, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(routeDecisionPreview.safetyLine, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        routeDecisionPreview.warnings.forEach { warning ->
+            WarningText(warning)
+        }
     }
 }
 
