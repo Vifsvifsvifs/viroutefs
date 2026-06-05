@@ -290,7 +290,7 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
         },
     ) { padding ->
         when (selectedScreen) {
-            AppScreen.Vpn -> VpnScreen(padding, text, config, vpnState, tunTestRoutePreviewEnabled, ::setVpnEnabled, ::setTunTestRoutePreviewEnabled, ::updateConfig)
+            AppScreen.Vpn -> VpnScreen(padding, text, config, vpnState, tunTestRoutePreviewEnabled, ::setVpnEnabled, ::setTunTestRoutePreviewEnabled, vpnController::clearPacketSummaries, vpnController::setPacketInspectorPaused, ::updateConfig)
             AppScreen.Routes -> RoutesScreen(padding, text, config, ::updateConfig)
             AppScreen.Dns -> DnsScreen(padding, text, config, ::updateConfig)
             AppScreen.Fs -> FlowScannerScreen(padding, text, vpnState)
@@ -1282,7 +1282,7 @@ internal class UiText(private val language: AppLanguage) {
     val networkControlSummary = vpnNoTrafficRoutingYet
     val vpnNoHiddenInterception = t("Нет скрытого перехвата", "No hidden interception", "没有隐藏拦截")
     val vpnPacketProcessingLater = t("Интернет должен остаться без изменений.", "Internet should remain unchanged.", "互联网应保持不变。")
-    val vpnLifecycleOnlyDetails = t("0.8.1-alpha по умолчанию создаёт минимальный route-less TUN с адресом 10.250.0.2/32 только для проверки VpnService. В режиме тестового маршрута явно добавляется только 203.0.113.0/24 (TEST-NET-3); runtime default-route enforcement, DNS-серверов, логирования payload, пересылки, прокси и VPN-движков нет. Инспектор хранит только последние 50 IPv4 metadata-сводок в памяти, без payload, hostname, PCAP или сохранения.", "0.8.1-alpha creates a minimal route-less TUN with address 10.250.0.2/32 by default only to verify VpnService. Test-route mode explicitly adds only 203.0.113.0/24 (TEST-NET-3); there is no runtime default-route enforcement, DNS servers, payload logging, forwarding, proxying, or VPN engines. The inspector keeps only the latest 50 IPv4 metadata summaries in memory, without payloads, hostnames, PCAP, or persistence.", "0.8.1-alpha 默认仅创建地址为 10.250.0.2/32 的最小无路由 TUN 来验证 VpnService。测试路由模式仅显式添加 203.0.113.0/24 (TEST-NET-3)；没有运行时默认路由执行、DNS 服务器、payload 日志、转发、代理或 VPN 引擎。检查器仅在内存中保留最近 50 条 IPv4 元数据摘要，不包含 payload、主机名、PCAP 或持久化。")
+    val vpnLifecycleOnlyDetails = t("0.8.3-alpha по умолчанию создаёт минимальный route-less TUN с адресом 10.250.0.2/32 только для проверки VpnService. В режиме тестового маршрута явно добавляется только 203.0.113.0/24 (TEST-NET-3); runtime default-route enforcement, DNS-серверов, логирования payload, пересылки, прокси и VPN-движков нет. Инспектор хранит только последние 50 IPv4 metadata-сводок в памяти, без payload, hostname, PCAP или сохранения.", "0.8.3-alpha creates a minimal route-less TUN with address 10.250.0.2/32 by default only to verify VpnService. Test-route mode explicitly adds only 203.0.113.0/24 (TEST-NET-3); there is no runtime default-route enforcement, DNS servers, payload logging, forwarding, proxying, or VPN engines. The inspector keeps only the latest 50 IPv4 metadata summaries in memory, without payloads, hostnames, PCAP, or persistence.", "0.8.3-alpha 默认仅创建地址为 10.250.0.2/32 的最小无路由 TUN 来验证 VpnService。测试路由模式仅显式添加 203.0.113.0/24 (TEST-NET-3)；没有运行时默认路由执行、DNS 服务器、payload 日志、转发、代理或 VPN 引擎。检查器仅在内存中保留最近 50 条 IPv4 元数据摘要，不包含 payload、主机名、PCAP 或持久化。")
     val vpnTestRoutePreview = t("Тестовый маршрут", "Test route preview", "测试路由预览")
     val vpnTestRoute = t("Тестовый маршрут: 203.0.113.0/24", "Test route: 203.0.113.0/24", "测试路由：203.0.113.0/24")
     val vpnPacketsRead = t("Прочитано пакетов", "Packets read", "已读取数据包")
@@ -1292,8 +1292,12 @@ internal class UiText(private val language: AppLanguage) {
     val vpnUdpPacketsRead = "UDP"
     val vpnIcmpPacketsRead = "ICMP"
     val vpnPacketInspector = t("Инспектор пакетов", "Packet inspector", "数据包检查器")
-    val vpnPacketInspectorEmpty = t("Пока нет IPv4 metadata. Включите тестовый маршрут и откройте TEST-NET адрес.", "No IPv4 metadata yet. Enable the test route and open the TEST-NET address.", "暂无 IPv4 元数据。启用测试路由并打开 TEST-NET 地址。")
-    val vpnPacketInspectorPrivacy = t("Только metadata: IP, TCP/UDP ports, protocol, size and time. Нет payload, hostname, PCAP, пересылки или сохранения.", "Metadata only: IPs, TCP/UDP ports, protocol, size, and time. No payloads, hostnames, PCAP, forwarding, or persistence.", "仅元数据：IP、TCP/UDP 端口、协议、大小和时间。无 payload、主机名、PCAP、转发或持久化。")
+    val vpnPacketInspectorEmpty = t("Пакеты пока не наблюдались", "No packets observed yet", "尚未观察到数据包")
+    val vpnPacketInspectorPrivacy = t("Observation only. Packets are read and dropped. No forwarding is enabled. Только metadata: IP, TCP/UDP ports, protocol, size and time; без payload, hostname, PCAP или сохранения.", "Observation only. Packets are read and dropped. No forwarding is enabled. Metadata only: IPs, TCP/UDP ports, protocol, size, and time; no payloads, hostnames, PCAP, or persistence.", "仅观察。数据包会被读取并丢弃。未启用转发。仅元数据：IP、TCP/UDP 端口、协议、大小和时间；无 payload、主机名、PCAP 或持久化。")
+    val vpnClearPacketList = t("Очистить список пакетов", "Clear packet list", "清除数据包列表")
+    val vpnPausePacketInspector = t("Пауза инспектора пакетов", "Pause packet inspector", "暂停数据包检查器")
+    val vpnPacketInspectorPaused = t("Инспектор на паузе: новые сводки не добавляются, сервис остаётся активным.", "Inspector paused: new summaries are not appended while the service remains active.", "检查器已暂停：服务保持活动，但不会追加新的摘要。")
+    val vpnPacketListLastUpdate = t("Последнее обновление списка", "Packet list last update", "数据包列表最后更新")
     val vpnNormalInternetUnchanged = t("Обычный интернет должен остаться без изменений", "Normal internet should remain unchanged", "正常互联网应保持不变")
     val vpnHowToTestTun = t("Откройте http://203.0.113.1 в браузере или выполните тестовое подключение к 203.0.113.1. Пакеты могут появиться здесь и будут отброшены.", "Open http://203.0.113.1 in a browser or run a test connection to 203.0.113.1. Packets may appear here and will be dropped.", "在浏览器中打开 http://203.0.113.1，或对 203.0.113.1 运行测试连接。数据包可能会显示在这里，并将被丢弃。")
     val vpnPermissionRequired = t("Требуется разрешение", "Permission required", "需要权限")

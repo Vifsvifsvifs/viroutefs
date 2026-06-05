@@ -35,6 +35,8 @@ internal data class VpnServiceUiState(
     val udpPacketsRead: Long = 0L,
     val icmpPacketsRead: Long = 0L,
     val lastPacketAt: Long? = null,
+    val packetSummaryUpdatedAt: Long? = null,
+    val packetInspectorPaused: Boolean = false,
     val packetSummaries: List<PacketSummary> = emptyList(),
 )
 
@@ -63,6 +65,34 @@ internal class VpnServiceController(context: Context) {
         } else {
             ContextCompat.startForegroundService(appContext, intent)
         }
+    }
+
+    fun clearPacketSummaries() {
+        if (!ViRouteVpnService.isRunning) {
+            val state = ViRouteVpnService.lastState.copy(
+                packetSummaries = emptyList(),
+                packetSummaryUpdatedAt = System.currentTimeMillis(),
+            )
+            publishState(state)
+            return
+        }
+        appContext.startService(Intent(appContext, ViRouteVpnService::class.java).setAction(ACTION_CLEAR_PACKET_SUMMARIES))
+    }
+
+    fun setPacketInspectorPaused(paused: Boolean) {
+        if (!ViRouteVpnService.isRunning) {
+            val state = ViRouteVpnService.lastState.copy(
+                packetInspectorPaused = paused,
+                packetSummaryUpdatedAt = System.currentTimeMillis(),
+            )
+            publishState(state)
+            return
+        }
+        appContext.startService(
+            Intent(appContext, ViRouteVpnService::class.java)
+                .setAction(ACTION_SET_PACKET_INSPECTOR_PAUSED)
+                .putExtra(EXTRA_PACKET_INSPECTOR_PAUSED, paused),
+        )
     }
 
     fun stopLocalService() {
@@ -94,6 +124,9 @@ internal class VpnServiceController(context: Context) {
                         icmpPacketsRead = intent.getLongExtra(EXTRA_ICMP_PACKETS_READ, 0L),
                         lastPacketAt = intent.getLongExtra(EXTRA_LAST_PACKET_AT, NO_PACKET_TIME)
                             .takeUnless { it == NO_PACKET_TIME },
+                        packetSummaryUpdatedAt = intent.getLongExtra(EXTRA_PACKET_SUMMARY_UPDATED_AT, NO_PACKET_TIME)
+                            .takeUnless { it == NO_PACKET_TIME },
+                        packetInspectorPaused = intent.getBooleanExtra(EXTRA_PACKET_INSPECTOR_PAUSED, false),
                         packetSummaries = decodePacketSummaries(intent.getStringArrayListExtra(EXTRA_PACKET_SUMMARIES)),
                     ),
                 )
@@ -123,6 +156,8 @@ internal class VpnServiceController(context: Context) {
         udpPacketsRead: Long = 0L,
         icmpPacketsRead: Long = 0L,
         lastPacketAt: Long? = null,
+        packetSummaryUpdatedAt: Long? = null,
+        packetInspectorPaused: Boolean = false,
         packetSummaries: List<PacketSummary> = emptyList(),
     ) {
         val state = VpnServiceUiState(
@@ -136,6 +171,8 @@ internal class VpnServiceController(context: Context) {
             udpPacketsRead = udpPacketsRead,
             icmpPacketsRead = icmpPacketsRead,
             lastPacketAt = lastPacketAt,
+            packetSummaryUpdatedAt = packetSummaryUpdatedAt,
+            packetInspectorPaused = packetInspectorPaused,
             packetSummaries = packetSummaries,
         )
         ViRouteVpnService.rememberState(state)
@@ -151,13 +188,35 @@ internal class VpnServiceController(context: Context) {
             .putExtra(EXTRA_UDP_PACKETS_READ, udpPacketsRead)
             .putExtra(EXTRA_ICMP_PACKETS_READ, icmpPacketsRead)
             .putExtra(EXTRA_LAST_PACKET_AT, lastPacketAt ?: NO_PACKET_TIME)
+            .putExtra(EXTRA_PACKET_SUMMARY_UPDATED_AT, packetSummaryUpdatedAt ?: NO_PACKET_TIME)
+            .putExtra(EXTRA_PACKET_INSPECTOR_PAUSED, packetInspectorPaused)
             .putStringArrayListExtra(EXTRA_PACKET_SUMMARIES, ArrayList(packetSummaries.map(::encodePacketSummary)))
         appContext.sendBroadcast(intent)
+    }
+
+    private fun publishState(state: VpnServiceUiState) {
+        publishState(
+            status = state.status,
+            detail = state.detail,
+            tunTestRouteActive = state.tunTestRouteActive,
+            packetsRead = state.packetsRead,
+            bytesRead = state.bytesRead,
+            ipv4PacketsRead = state.ipv4PacketsRead,
+            tcpPacketsRead = state.tcpPacketsRead,
+            udpPacketsRead = state.udpPacketsRead,
+            icmpPacketsRead = state.icmpPacketsRead,
+            lastPacketAt = state.lastPacketAt,
+            packetSummaryUpdatedAt = state.packetSummaryUpdatedAt,
+            packetInspectorPaused = state.packetInspectorPaused,
+            packetSummaries = state.packetSummaries,
+        )
     }
 
     companion object {
         internal const val ACTION_START = "dev.vifs.viroutefs.vpn.START"
         internal const val ACTION_STOP = "dev.vifs.viroutefs.vpn.STOP"
+        internal const val ACTION_CLEAR_PACKET_SUMMARIES = "dev.vifs.viroutefs.vpn.CLEAR_PACKET_SUMMARIES"
+        internal const val ACTION_SET_PACKET_INSPECTOR_PAUSED = "dev.vifs.viroutefs.vpn.SET_PACKET_INSPECTOR_PAUSED"
         internal const val ACTION_STATE_CHANGED = "dev.vifs.viroutefs.vpn.STATE_CHANGED"
         internal const val EXTRA_STATUS = "status"
         internal const val EXTRA_DETAIL = "detail"
@@ -170,6 +229,8 @@ internal class VpnServiceController(context: Context) {
         internal const val EXTRA_UDP_PACKETS_READ = "udp_packets_read"
         internal const val EXTRA_ICMP_PACKETS_READ = "icmp_packets_read"
         internal const val EXTRA_LAST_PACKET_AT = "last_packet_at"
+        internal const val EXTRA_PACKET_SUMMARY_UPDATED_AT = "packet_summary_updated_at"
+        internal const val EXTRA_PACKET_INSPECTOR_PAUSED = "packet_inspector_paused"
         internal const val EXTRA_PACKET_SUMMARIES = "packet_summaries"
         internal const val NO_PACKET_TIME = -1L
 

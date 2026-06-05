@@ -64,6 +64,22 @@ class Ipv4PacketParserTest {
         assertEquals(Ipv4Protocol.Other, Ipv4PacketParser.parse(ipv4Packet(protocol = 47, totalLength = 20), 20))
     }
 
+
+    @Test
+    fun parserDoesNotStorePayloadOrSecrets() {
+        val packet = ipv4Packet(protocol = 6, totalLength = 48, srcPort = 12_345, dstPort = 443).apply {
+            "secret!".encodeToByteArray().copyInto(this, destinationOffset = 40)
+        }
+
+        val summary = Ipv4PacketParser.parseSummary(packet, 48, timestamp = 4_000L)
+
+        requireNotNull(summary)
+        assertEquals(48, summary.packetSize)
+        assertEquals("10.0.0.2", summary.srcIp)
+        assertEquals("203.0.113.10", summary.dstIp)
+        assertEquals(12_345, summary.srcPort)
+        assertEquals(443, summary.dstPort)
+    }
     @Test
     fun rejectsNonIpv4OrTruncatedPackets() {
         assertNull(Ipv4PacketParser.parseSummary(byteArrayOf(0x60), 1))

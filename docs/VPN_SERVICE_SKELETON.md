@@ -81,3 +81,16 @@ The Android VpnService runtime skeleton now reads packets from the TUN ParcelFil
 - packet size.
 
 The service keeps only the latest 50 packet summaries in memory and publishes them to the VPN Runtime screen newest first. This is metadata-only visibility for the local preview. It does not capture payloads, create PCAP files, persist packet summaries, extract hostnames, proxy DNS, forward packets, write packets back to TUN, implement VLESS, or implement SOCKS5 runtime forwarding.
+
+## 0.8.3-alpha observation safety controls
+
+`0.8.3-alpha` keeps VPN Runtime in observation-only read/drop mode. The user-facing Runtime inspector explicitly states: "Observation only. Packets are read and dropped. No forwarding is enabled." The service still does not forward packets, write packets back to TUN, proxy DNS, implement VLESS, implement SOCKS5 forwarding, persist packet summaries, or upload telemetry.
+
+The packet summary list now has two local controls:
+
+- **Pause packet inspector** stops appending new packet summaries to the in-memory list while the runtime service remains active. Counters may continue to change because the TUN read/drop loop can still read and drop packets, but the visible summary history stays frozen until the inspector is resumed.
+- **Clear packet list** empties the in-memory packet summary list immediately. It does not reset runtime counters and does not delete any persisted packet history because packet summaries are never persisted.
+
+The inspector keeps a maximum of 50 packet summaries in memory, newest first. Heavy traffic is throttled before publishing UI state so the packet list does not spam Compose recomposition. The screen also shows a packet-list last-update timestamp and uses the safe empty state "No packets observed yet" when there are no summaries.
+
+Packet summaries remain metadata-only: timestamp, protocol, IPv4 source/destination addresses, TCP/UDP ports when present, and packet size. Payload bytes, hostnames, secrets, PCAP files, DNS answers, and packet contents are not stored.
