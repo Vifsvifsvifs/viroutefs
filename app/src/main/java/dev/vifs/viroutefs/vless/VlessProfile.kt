@@ -29,6 +29,8 @@ data class VlessProfileConfig(
     val fingerprint: String? = null,
     val path: String? = null,
     val hostHeader: String? = null,
+    val alpn: String? = null,
+    val serviceName: String? = null,
     val enabled: Boolean = true,
     val status: VlessProfileStatus = VlessProfileStatus.NotTested,
 ) {
@@ -50,6 +52,8 @@ data class VlessProfileConfig(
         if (!fingerprint.isNullOrBlank()) append(" fingerprint=provided")
         if (!path.isNullOrBlank()) append(" path=provided")
         if (!hostHeader.isNullOrBlank()) append(" hostHeader=provided")
+        if (!alpn.isNullOrBlank()) append(" alpn=provided")
+        if (!serviceName.isNullOrBlank()) append(" serviceName=provided")
         append(" status=")
         append(status.safeLabel)
     }
@@ -70,6 +74,8 @@ data class VlessProfileConfig(
         if (!shortId.isNullOrBlank()) appendLine("Short ID: provided")
         if (!path.isNullOrBlank()) appendLine("Path: ${path}")
         if (!hostHeader.isNullOrBlank()) appendLine("Host header: ${hostHeader}")
+        if (!alpn.isNullOrBlank()) appendLine("ALPN: ${alpn}")
+        if (!serviceName.isNullOrBlank()) appendLine("gRPC service name: ${serviceName}")
         append(VLESS_ROUTE_PREVIEW_ONLY)
     }
 }
@@ -148,6 +154,8 @@ fun parseVlessUri(rawUri: String): VlessUriParseResult {
         fingerprint = params["fp"]?.trimToNull(),
         path = params["path"]?.trimToNull(),
         hostHeader = params["host"]?.trimToNull(),
+        alpn = params["alpn"]?.trimToNull(),
+        serviceName = params["servicename"]?.trimToNull(),
         status = VlessProfileStatus.ConfigReady,
     )
     val validationErrors = validateVlessProfile(profile)
@@ -168,6 +176,8 @@ fun exportVlessUri(profile: VlessProfileConfig): String {
         profile.shortId?.trimToNull()?.let { add("sid" to it) }
         profile.path?.trimToNull()?.let { add("path" to it) }
         profile.hostHeader?.trimToNull()?.let { add("host" to it) }
+        profile.alpn?.trimToNull()?.let { add("alpn" to it) }
+        profile.serviceName?.trimToNull()?.let { add("serviceName" to it) }
     }.joinToString("&") { (key, value) -> "${key.percentEncode()}=${value.percentEncode()}" }
     val fragment = profile.name.trimToNull()?.percentEncode()?.let { "#$it" }.orEmpty()
     return buildString {

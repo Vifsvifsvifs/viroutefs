@@ -56,8 +56,8 @@ System / Система is an internal default route, not bypass. Full runtime e
 
 If no DNS is configured for a route/profile, the model uses Android system DNS. ViRouteFS must not silently replace missing DNS with public resolvers or swap failed user-defined DNS to another resolver.
 
-## VLESS profile model in 0.8.4-alpha
+## VLESS profile model in 0.8.5-alpha
 
-VLESS profiles are configuration-only in 0.8.4-alpha. The app can store and validate local profile fields for route decision preview, including UUID and placeholder TLS/REALITY metadata, but it does not connect to VLESS servers, forward packets, write packets back to TUN, implement REALITY/XTLS runtime, or proxy DNS. Route decision preview must warn: "Selected profile is VLESS. Runtime forwarding is not enabled yet."
+VLESS profiles are configuration-only in 0.8.5-alpha. The app can store, validate, import, and explicitly export local VLESS URI configuration for route decision preview, including UUID, transport placeholders, TLS/REALITY metadata, ALPN, and gRPC service names. It does not connect to VLESS servers, test reachability, forward packets, write packets back to TUN, implement REALITY/XTLS runtime, or proxy DNS. Route decision preview must warn: "Selected profile is VLESS. Runtime forwarding is not enabled yet."
 
-`routing_config.json` and user exports may contain VLESS connection identifiers such as UUID, host, SNI, and placeholder key metadata. Treat exported routing configs as sensitive local files. UUID values must not appear in summaries, diagnostics text, logs, or route-preview text. No telemetry, cloud upload, analytics, ads, background validation, startup tests, or auto-connect behavior is added.
+`routing_config.json`, route-config exports, and explicit VLESS URI exports may contain VLESS connection identifiers such as UUID, host, SNI, and placeholder key metadata. Treat exported routing configs and VLESS URIs as sensitive local files. UUID values must not appear in summaries, diagnostics text, logs, route-preview text, or masked import previews. Imported profiles can be used for route decision preview only. No telemetry, cloud upload, analytics, ads, background validation, startup tests, or auto-connect behavior is added.

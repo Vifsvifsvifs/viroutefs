@@ -212,6 +212,8 @@ object RoutingConfigJson {
         put("fingerprint", fingerprint)
         put("path", path)
         put("hostHeader", hostHeader)
+        put("alpn", alpn)
+        put("serviceName", serviceName)
         put("enabled", enabled)
         put("status", status.toJson())
     }
@@ -231,6 +233,8 @@ object RoutingConfigJson {
         fingerprint = optNullableString("fingerprint"),
         path = optNullableString("path"),
         hostHeader = optNullableString("hostHeader"),
+        alpn = optNullableString("alpn"),
+        serviceName = optNullableString("serviceName"),
         enabled = optBoolean("enabled", true),
         status = optJSONObject("status")?.toVlessProfileStatus() ?: VlessProfileStatus.NotTested,
     )

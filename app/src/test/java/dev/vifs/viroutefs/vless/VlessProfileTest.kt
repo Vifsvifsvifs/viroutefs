@@ -26,6 +26,38 @@ class VlessProfileTest {
     }
 
     @Test
+    fun parseTlsParams() {
+        val tls = assertIs<VlessUriParseResult.Success>(
+            parseVlessUri("vless://123e4567-e89b-12d3-a456-426614174000@example.com:443?security=tls&sni=example.com&alpn=h2%2Chttp%2F1.1#TLS"),
+        ).profile
+
+        assertEquals(VlessSecurityMode.TLS, tls.securityMode)
+        assertEquals("example.com", tls.sni)
+        assertEquals("h2,http/1.1", tls.alpn)
+    }
+
+    @Test
+    fun parseWsParams() {
+        val ws = assertIs<VlessUriParseResult.Success>(
+            parseVlessUri("vless://123e4567-e89b-12d3-a456-426614174000@example.com:443?type=ws&path=%2Fchat&host=edge.example#WS"),
+        ).profile
+
+        assertEquals("ws", ws.transportType)
+        assertEquals("/chat", ws.path)
+        assertEquals("edge.example", ws.hostHeader)
+    }
+
+    @Test
+    fun parseGrpcParams() {
+        val grpc = assertIs<VlessUriParseResult.Success>(
+            parseVlessUri("vless://123e4567-e89b-12d3-a456-426614174000@example.com:443?type=grpc&serviceName=my-service#Grpc"),
+        ).profile
+
+        assertEquals("grpc", grpc.transportType)
+        assertEquals("my-service", grpc.serviceName)
+    }
+
+    @Test
     fun parseTlsRealityParams() {
         val tls = assertIs<VlessUriParseResult.Success>(
             parseVlessUri("vless://123e4567-e89b-12d3-a456-426614174000@example.com:443?type=ws&security=tls&encryption=none&path=%2Fchat&host=edge.example#TLS"),
@@ -78,6 +110,20 @@ class VlessProfileTest {
     }
 
     @Test
+    fun missingHostRejected() {
+        val parseResult = parseVlessUri("vless://123e4567-e89b-12d3-a456-426614174000@:443#Bad")
+
+        assertIs<VlessUriParseResult.Error>(parseResult)
+    }
+
+    @Test
+    fun missingUuidRejected() {
+        val parseResult = parseVlessUri("vless://example.com:443#Bad")
+
+        assertIs<VlessUriParseResult.Error>(parseResult)
+    }
+
+    @Test
     fun exportedUriRoundTrips() {
         val original = validProfile(
             transportType = "grpc",
@@ -89,6 +135,8 @@ class VlessProfileTest {
             fingerprint = "chrome",
             path = "/service",
             hostHeader = "front.example",
+            alpn = "h2,http/1.1",
+            serviceName = "my-service",
         )
 
         val exported = exportVlessUri(original)
@@ -108,6 +156,8 @@ class VlessProfileTest {
         assertEquals(original.fingerprint, reparsed.fingerprint)
         assertEquals(original.path, reparsed.path)
         assertEquals(original.hostHeader, reparsed.hostHeader)
+        assertEquals(original.alpn, reparsed.alpn)
+        assertEquals(original.serviceName, reparsed.serviceName)
     }
 
     @Test
@@ -141,6 +191,8 @@ class VlessProfileTest {
         fingerprint: String? = null,
         path: String? = null,
         hostHeader: String? = null,
+        alpn: String? = null,
+        serviceName: String? = null,
     ): VlessProfileConfig = VlessProfileConfig(
         name = "Lab VLESS",
         host = "example.com",
@@ -156,5 +208,7 @@ class VlessProfileTest {
         fingerprint = fingerprint,
         path = path,
         hostHeader = hostHeader,
+        alpn = alpn,
+        serviceName = serviceName,
     )
 }

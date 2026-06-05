@@ -25,9 +25,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.vifs.viroutefs.CardBlock
 import dev.vifs.viroutefs.Details
@@ -432,6 +435,7 @@ private fun VlessProfileEditorScreen(
     onConfig: (RoutingConfig, String?) -> Unit,
 ) {
     val vless = profile?.vless
+    val clipboardManager = LocalClipboardManager.current
     var name by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.name ?: profile?.name ?: "") }
     var host by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.host ?: "") }
     var portText by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.port?.toString() ?: "443") }
@@ -446,8 +450,11 @@ private fun VlessProfileEditorScreen(
     var fingerprint by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.fingerprint.orEmpty()) }
     var path by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.path.orEmpty()) }
     var hostHeader by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.hostHeader.orEmpty()) }
+    var alpn by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.alpn.orEmpty()) }
+    var serviceName by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.serviceName.orEmpty()) }
     var enabled by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.enabled ?: profile?.enabled ?: true) }
     var importUri by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf("") }
+    var pendingImport by remember(profile?.id ?: "new-vless") { mutableStateOf<VlessProfileConfig?>(null) }
     var importPreview by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf<String?>(null) }
     var exportUri by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf<String?>(null) }
     var errors by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf<List<String>>(emptyList()) }
@@ -467,6 +474,8 @@ private fun VlessProfileEditorScreen(
         fingerprint = fingerprint.trim().takeIf { it.isNotBlank() },
         path = path.trim().takeIf { it.isNotBlank() },
         hostHeader = hostHeader.trim().takeIf { it.isNotBlank() },
+        alpn = alpn.trim().takeIf { it.isNotBlank() },
+        serviceName = serviceName.trim().takeIf { it.isNotBlank() },
         enabled = enabled,
         status = nextStatus,
     )
@@ -486,6 +495,9 @@ private fun VlessProfileEditorScreen(
         fingerprint = parsed.fingerprint.orEmpty()
         path = parsed.path.orEmpty()
         hostHeader = parsed.hostHeader.orEmpty()
+        alpn = parsed.alpn.orEmpty()
+        serviceName = parsed.serviceName.orEmpty()
+        pendingImport = null
         importPreview = parsed.maskedPreview()
         exportUri = null
     }
@@ -507,12 +519,13 @@ private fun VlessProfileEditorScreen(
         }
         item {
             CardBlock {
-                Text("Import VLESS URI", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Text("Import / Export VLESS URI", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 Text("Paste a vless:// URI to preview and fill this local config form. ViRouteFS does not connect, test, proxy DNS, or forward packets for VLESS.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     importUri,
                     { value ->
                         importUri = value
+                        pendingImport = null
                         importPreview = null
                         exportUri = null
                     },
@@ -524,17 +537,23 @@ private fun VlessProfileEditorScreen(
                     when (val result = parseVlessUri(importUri)) {
                         is VlessUriParseResult.Success -> {
                             errors = emptyList()
-                            applyVlessProfile(result.profile)
+                            pendingImport = result.profile
+                            importPreview = result.profile.maskedPreview()
+                            exportUri = null
                         }
                         is VlessUriParseResult.Error -> {
                             errors = result.messages
+                            pendingImport = null
                             importPreview = null
                         }
                     }
-                }) { Text("Preview parsed config") }
+                }) { Text("Preview URI") }
                 importPreview?.let { preview ->
                     Text("Preview with masked UUID", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
                     Details("Preview with masked UUID", preview)
+                }
+                pendingImport?.let { parsed ->
+                    Button(onClick = { applyVlessProfile(parsed) }) { Text("Apply imported profile") }
                 }
             }
         }
@@ -543,7 +562,14 @@ private fun VlessProfileEditorScreen(
                 OutlinedTextField(name, { name = it }, label = { Text(text.name) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(host, { host = it }, label = { Text("Host") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(portText, { portText = it.filter(Char::isDigit).take(5) }, label = { Text("Port") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                OutlinedTextField(uuid, { uuid = it }, label = { Text("UUID") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(
+                    uuid,
+                    { uuid = it },
+                    label = { Text("UUID (hidden)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
                 OutlinedTextField(transportType, { transportType = it.lowercase().take(16) }, label = { Text("Transport type: tcp/ws/grpc (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(securityModeText, { securityModeText = it.lowercase().take(16) }, label = { Text("Security mode: none/tls/reality") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(encryption, { encryption = it }, label = { Text("Encryption (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
@@ -554,6 +580,8 @@ private fun VlessProfileEditorScreen(
                 OutlinedTextField(fingerprint, { fingerprint = it }, label = { Text("Fingerprint / fp placeholder (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(path, { path = it }, label = { Text("Path (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(hostHeader, { hostHeader = it }, label = { Text("Host header (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(alpn, { alpn = it }, label = { Text("ALPN (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(serviceName, { serviceName = it }, label = { Text("gRPC serviceName (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                     Text(text.enabled, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
@@ -567,8 +595,9 @@ private fun VlessProfileEditorScreen(
                     }
                 }) { Text("Export VLESS URI") }
                 exportUri?.let { uri: String ->
-                    WarningText("Exported VLESS URIs contain connection identifiers, including the UUID. Share only with people you trust.")
+                    WarningText("Exported VLESS URI contains connection identifiers. Share it carefully.")
                     Details("Exported VLESS URI", uri)
+                    OutlinedButton(onClick = { clipboardManager.setText(AnnotatedString(uri)) }) { Text("Copy exported URI") }
                 }
                 Button(onClick = {
                     val candidate = draft()
