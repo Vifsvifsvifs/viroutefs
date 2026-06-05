@@ -17,9 +17,9 @@ ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project 
 - No hidden interception of third-party traffic.
 - No offensive security features.
 
-## Current status: 0.8.4-alpha
+## Current status: 0.8.5-alpha
 
-Version `0.8.4-alpha` adds local VLESS profile configuration for route decision preview only and keeps the 0.8.x local packet-inspection safety boundary. Version `0.8.1-alpha` added a local in-memory packet inspector to the Android VpnService runtime skeleton. The app requests Android VPN permission, establishes the existing safe TUN preview, reads packets from the ParcelFileDescriptor in the opt-in TEST-NET developer route mode, parses IPv4 metadata locally, and shows the latest 50 packet summaries newest first in the VPN Runtime screen. Summaries contain timestamp, protocol, IPv4 source/destination addresses, TCP/UDP ports when present, and packet size. Packets are counted and dropped only; there is still no packet forwarding, no SOCKS5 forwarding, no VLESS runtime forwarding, no DNS proxying, no default route capture, no payload capture, no payload logging, no PCAP export, no persistence, no telemetry, and no background upload.
+Version `0.8.5-alpha` adds explicit VLESS URI import/export for local configuration only and keeps the 0.8.x local packet-inspection safety boundary. Version `0.8.1-alpha` added a local in-memory packet inspector to the Android VpnService runtime skeleton. The app requests Android VPN permission, establishes the existing safe TUN preview, reads packets from the ParcelFileDescriptor in the opt-in TEST-NET developer route mode, parses IPv4 metadata locally, and shows the latest 50 packet summaries newest first in the VPN Runtime screen. Summaries contain timestamp, protocol, IPv4 source/destination addresses, TCP/UDP ports when present, and packet size. Packets are counted and dropped only; there is still no packet forwarding, no SOCKS5 forwarding, no VLESS runtime forwarding, no DNS proxying, no default route capture, no payload capture, no payload logging, no PCAP export, no persistence, no telemetry, and no background upload.
 
 What exists now:
 
@@ -47,17 +47,17 @@ What is intentionally not implemented yet:
 - No Play Store or F-Droid release is claimed yet.
 - No background update checks, automatic APK downloads, silent install behavior, telemetry, analytics, tracking, ads, or cloud upload.
 
-## 0.8.4-alpha VLESS profile model
+## 0.8.5-alpha VLESS profile model and URI import/export
 
-ViRouteFS 0.8.4-alpha adds VLESS as a configurable local profile type for route decision preview only. A VLESS profile can store name, host, port, UUID, optional flow, security mode (`none`, `tls`, or `reality` placeholder), optional SNI, public-key placeholder, short-ID placeholder, fingerprint placeholder, enabled state, and validation status. Manual validation checks that host is not blank, port is in `1..65535`, and UUID is valid.
+ViRouteFS 0.8.5-alpha keeps VLESS as a configurable local profile type for route decision preview only and adds explicit `vless://` URI import/export. A VLESS profile can store name, host, port, UUID, transport placeholder (`tcp`, `ws`, or `grpc`), security mode (`none`, `tls`, or `reality` placeholder), encryption, flow, SNI, public-key (`pbk`) placeholder, short-ID (`sid`) placeholder, fingerprint (`fp`) placeholder, path, host header, enabled state, and validation status. Manual validation checks that host is not blank, port is in `1..65535`, UUID is valid, and transport placeholders are supported. See [`docs/VLESS_URI_IMPORT_EXPORT.md`](docs/VLESS_URI_IMPORT_EXPORT.md).
 
-Safety boundaries for VLESS in 0.8.4-alpha:
+Safety boundaries for VLESS in 0.8.5-alpha:
 
 - VLESS runtime forwarding is not implemented yet.
 - This profile can be used for route decision preview only.
 - ViRouteFS does not connect to a VLESS server, forward packets, write packets back to TUN, implement REALITY/XTLS runtime, or add DNS proxying.
 - VLESS UUID values are treated as connection identifiers: they are hidden from profile summaries, route previews, diagnostics text, logs, and human-readable status lines.
-- `routing_config.json` and manual route-config exports may store the VLESS UUID locally because the profile is configuration data. Treat exported routing configs as sensitive because they can contain connection identifiers and private infrastructure details.
+- `routing_config.json`, manual route-config exports, and explicit VLESS URI exports may store the VLESS UUID locally because the profile is configuration data. Treat exports as sensitive because they can contain connection identifiers and private infrastructure details.
 - No telemetry, cloud upload, analytics, ads, background checks, startup tests, auto-connect behavior, or automatic PCAP/log export is added.
 
 ## 0.8.1-alpha local packet inspector

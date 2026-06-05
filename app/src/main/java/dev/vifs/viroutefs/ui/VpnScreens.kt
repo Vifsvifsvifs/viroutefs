@@ -58,6 +58,9 @@ import dev.vifs.viroutefs.vless.VLESS_RUNTIME_LIMITATION
 import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.VlessProfileStatus
 import dev.vifs.viroutefs.vless.VlessSecurityMode
+import dev.vifs.viroutefs.vless.VlessUriParseResult
+import dev.vifs.viroutefs.vless.exportVlessUri
+import dev.vifs.viroutefs.vless.parseVlessUri
 import dev.vifs.viroutefs.vless.validateVlessProfile
 import dev.vifs.viroutefs.vpn.Ipv4Protocol
 import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreview
@@ -433,13 +436,20 @@ private fun VlessProfileEditorScreen(
     var host by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.host ?: "") }
     var portText by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.port?.toString() ?: "443") }
     var uuid by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.uuid.orEmpty()) }
-    var flow by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.flow.orEmpty()) }
+    var transportType by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.transportType.orEmpty()) }
     var securityModeText by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.securityMode?.wireName ?: VlessSecurityMode.NONE.wireName) }
+    var encryption by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.encryption.orEmpty()) }
+    var flow by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.flow.orEmpty()) }
     var sni by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.sni.orEmpty()) }
     var publicKey by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.publicKey.orEmpty()) }
     var shortId by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.shortId.orEmpty()) }
     var fingerprint by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.fingerprint.orEmpty()) }
+    var path by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.path.orEmpty()) }
+    var hostHeader by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.hostHeader.orEmpty()) }
     var enabled by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.enabled ?: profile?.enabled ?: true) }
+    var importUri by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf("") }
+    var importPreview by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf<String?>(null) }
+    var exportUri by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf<String?>(null) }
     var errors by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf<List<String>>(emptyList()) }
 
     fun draft(nextStatus: VlessProfileStatus = vless?.status ?: VlessProfileStatus.NotTested): VlessProfileConfig = VlessProfileConfig(
@@ -447,15 +457,38 @@ private fun VlessProfileEditorScreen(
         host = host.trim(),
         port = portText.toIntOrNull() ?: -1,
         uuid = uuid.trim(),
-        flow = flow.trim().takeIf { it.isNotBlank() },
+        transportType = transportType.trim().takeIf { it.isNotBlank() }?.lowercase(),
         securityMode = securityModeText.toVlessSecurityMode(),
+        encryption = encryption.trim().takeIf { it.isNotBlank() },
+        flow = flow.trim().takeIf { it.isNotBlank() },
         sni = sni.trim().takeIf { it.isNotBlank() },
         publicKey = publicKey.trim().takeIf { it.isNotBlank() },
         shortId = shortId.trim().takeIf { it.isNotBlank() },
         fingerprint = fingerprint.trim().takeIf { it.isNotBlank() },
+        path = path.trim().takeIf { it.isNotBlank() },
+        hostHeader = hostHeader.trim().takeIf { it.isNotBlank() },
         enabled = enabled,
         status = nextStatus,
     )
+
+    fun applyVlessProfile(parsed: VlessProfileConfig) {
+        name = parsed.name
+        host = parsed.host
+        portText = parsed.port.toString()
+        uuid = parsed.uuid
+        transportType = parsed.transportType.orEmpty()
+        securityModeText = parsed.securityMode.wireName
+        encryption = parsed.encryption.orEmpty()
+        flow = parsed.flow.orEmpty()
+        sni = parsed.sni.orEmpty()
+        publicKey = parsed.publicKey.orEmpty()
+        shortId = parsed.shortId.orEmpty()
+        fingerprint = parsed.fingerprint.orEmpty()
+        path = parsed.path.orEmpty()
+        hostHeader = parsed.hostHeader.orEmpty()
+        importPreview = parsed.maskedPreview()
+        exportUri = null
+    }
 
     ScreenList(padding) {
         item {
@@ -474,21 +507,69 @@ private fun VlessProfileEditorScreen(
         }
         item {
             CardBlock {
+                Text("Import VLESS URI", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Text("Paste a vless:// URI to preview and fill this local config form. ViRouteFS does not connect, test, proxy DNS, or forward packets for VLESS.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    importUri,
+                    { value ->
+                        importUri = value
+                        importPreview = null
+                        exportUri = null
+                    },
+                    label = { Text("Paste URI") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                )
+                OutlinedButton(onClick = {
+                    when (val result = parseVlessUri(importUri)) {
+                        is VlessUriParseResult.Success -> {
+                            errors = emptyList()
+                            applyVlessProfile(result.profile)
+                        }
+                        is VlessUriParseResult.Error -> {
+                            errors = result.messages
+                            importPreview = null
+                        }
+                    }
+                }) { Text("Preview parsed config") }
+                importPreview?.let { preview ->
+                    Text("Preview with masked UUID", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                    Details("Preview with masked UUID", preview)
+                }
+            }
+        }
+        item {
+            CardBlock {
                 OutlinedTextField(name, { name = it }, label = { Text(text.name) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(host, { host = it }, label = { Text("Host") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(portText, { portText = it.filter(Char::isDigit).take(5) }, label = { Text("Port") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(uuid, { uuid = it }, label = { Text("UUID") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                OutlinedTextField(flow, { flow = it }, label = { Text("Flow (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(transportType, { transportType = it.lowercase().take(16) }, label = { Text("Transport type: tcp/ws/grpc (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(securityModeText, { securityModeText = it.lowercase().take(16) }, label = { Text("Security mode: none/tls/reality") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(encryption, { encryption = it }, label = { Text("Encryption (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(flow, { flow = it }, label = { Text("Flow (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(sni, { sni = it }, label = { Text("SNI (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                OutlinedTextField(publicKey, { publicKey = it }, label = { Text("Public key placeholder (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                OutlinedTextField(shortId, { shortId = it }, label = { Text("Short ID placeholder (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                OutlinedTextField(fingerprint, { fingerprint = it }, label = { Text("Fingerprint placeholder (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(publicKey, { publicKey = it }, label = { Text("Public key / pbk placeholder (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(shortId, { shortId = it }, label = { Text("Short ID / sid placeholder (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(fingerprint, { fingerprint = it }, label = { Text("Fingerprint / fp placeholder (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(path, { path = it }, label = { Text("Path (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(hostHeader, { hostHeader = it }, label = { Text("Host header (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                     Text(text.enabled, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
                 errors.forEach { WarningText(it) }
+                OutlinedButton(onClick = {
+                    val candidate = draft()
+                    errors = validateVlessProfile(candidate)
+                    if (errors.isEmpty()) {
+                        exportUri = exportVlessUri(candidate)
+                    }
+                }) { Text("Export VLESS URI") }
+                exportUri?.let { uri: String ->
+                    WarningText("Exported VLESS URIs contain connection identifiers, including the UUID. Share only with people you trust.")
+                    Details("Exported VLESS URI", uri)
+                }
                 Button(onClick = {
                     val candidate = draft()
                     errors = validateVlessProfile(candidate)
