@@ -280,8 +280,8 @@ private fun Socks5ProfileEditorScreen(
     var host by rememberSaveable(profile?.id ?: "new-socks5") { mutableStateOf(socks5?.host ?: "") }
     var portText by rememberSaveable(profile?.id ?: "new-socks5") { mutableStateOf(socks5?.port?.toString() ?: "1080") }
     var username by rememberSaveable(profile?.id ?: "new-socks5") { mutableStateOf(socks5?.username.orEmpty()) }
-    var password by rememberSaveable(profile?.id ?: "new-socks5") { mutableStateOf(socks5?.password.orEmpty()) }
-    var revealPassword by rememberSaveable(profile?.id ?: "new-socks5") { mutableStateOf(false) }
+    var password by remember(profile?.id ?: "new-socks5") { mutableStateOf(socks5?.password.orEmpty()) }
+    var revealPassword by remember(profile?.id ?: "new-socks5") { mutableStateOf(false) }
     var enabled by rememberSaveable(profile?.id ?: "new-socks5") { mutableStateOf(socks5?.enabled ?: profile?.enabled ?: true) }
     var status by remember(profile?.id ?: "new-socks5") { mutableStateOf<Socks5ProfileStatus>(socks5?.status ?: Socks5ProfileStatus.NotTested) }
     var errors by rememberSaveable(profile?.id ?: "new-socks5") { mutableStateOf<List<String>>(emptyList()) }
@@ -341,7 +341,7 @@ private fun Socks5ProfileEditorScreen(
                 OutlinedTextField(portText, { portText = it.filter(Char::isDigit).take(5) }, label = { Text("Port") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(username, { username = it }, label = { Text("Username (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(
-                    value = if (revealPassword) password else "•".repeat(password.length),
+                    value = if (revealPassword) password else password.takeIf { it.isNotEmpty() }?.let { "••••••••" }.orEmpty(),
                     onValueChange = { if (revealPassword) password = it },
                     label = { Text("Password (optional)") },
                     modifier = Modifier.fillMaxWidth(),

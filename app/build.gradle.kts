@@ -23,8 +23,8 @@ android {
         applicationId = "dev.vifs.viroutefs"
         minSdk = 26
         targetSdk = 36
-        versionCode = 27
-        versionName = "0.7.0-alpha"
+        versionCode = 29
+        versionName = "0.7.2-alpha"
     }
 
     signingConfigs {
@@ -88,4 +88,5 @@ dependencies {
 
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    testImplementation("org.json:json:20240303")
 }

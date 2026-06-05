@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
+    <exclude domain="file" path="routing_config.json" />
     <exclude domain="file" path="logs/" />
     <exclude domain="file" path="pcap/" />
 </full-backup-content>
