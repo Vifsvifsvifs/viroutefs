@@ -157,7 +157,9 @@ object RoutingConfigJson {
         put("host", host)
         put("port", port)
         put("username", username)
-        put("password", if (includePassword && password != null) password else JSONObject.NULL)
+        if (includePassword && !password.isNullOrBlank()) {
+            put("password", password)
+        }
         put("enabled", enabled)
         put("status", status.toJson())
     }
