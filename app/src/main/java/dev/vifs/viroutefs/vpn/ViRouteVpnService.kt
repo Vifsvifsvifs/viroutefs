@@ -233,7 +233,7 @@ class ViRouteVpnService : VpnService() {
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_viroutefs_launcher_monochrome)
+            .setSmallIcon(R.drawable.ic_viroutefs_launcher_0614_monochrome)
             .setContentTitle("ViRouteFS local VPN preview")
             .setContentText(text)
             .setStyle(

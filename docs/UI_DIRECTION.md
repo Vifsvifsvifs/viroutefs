@@ -29,13 +29,15 @@ Demo/sample material is allowed only when clearly labeled as Demo and not mixed 
 
 ## Icon direction
 
-Final app icon direction for this alpha:
+Final app icon direction for this alpha and later launcher-surface cleanup:
 
 - Minimalist black/red stylized `V`.
 - Very dark background with a central red angular `V`.
 - White branching/network-like lines around or behind the `V`, using a small number of node dots and thin connecting lines.
 - Sharp, clean, technical, and readable at small launcher sizes.
 - Not childish, horror/aggressive, a cartoon face, or a generic VPN shield.
-- Keep enough adaptive-icon padding so round, themed/monochrome, and legacy fallbacks stay visually consistent. Launcher resources use unique `ic_viroutefs_launcher*` names so updated installs cannot fall back to stale cached `ic_launcher` assets.
+- Keep enough adaptive-icon padding so round, themed/monochrome, installer/package parser, file manager APK preview, and legacy fallbacks stay visually consistent. Launcher resources use unique `ic_viroutefs_launcher_0614*` names so updated installs cannot fall back to stale cached `ic_launcher` assets; old `ic_launcher` resources should remain absent or visually identical if reintroduced for compatibility.
 
 Do not add low-quality generated raster artwork or external binary design files. Prefer adaptive icon XML/vector assets.
+
+Launcher icon resource audit for `0.6.14-alpha`: AndroidManifest `android:icon` and `android:roundIcon` point to `@mipmap/ic_viroutefs_launcher_0614*`; adaptive icon XML uses the shared dark background, red `V` foreground, and simplified monochrome/themed network mark; no runtime VPN/TUN packet forwarding, updater logic, telemetry, analytics, ads, tracking, cloud upload, background update checks, APK auto-download, or silent install behavior changed as part of the icon cleanup.
