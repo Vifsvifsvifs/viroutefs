@@ -68,3 +68,16 @@ Flow Scanner can show the local runtime counters from the opt-in TEST-NET route 
 ## 0.8.0-alpha packet counters
 
 The Android VpnService runtime skeleton now reads packets from the TUN ParcelFileDescriptor when the opt-in TEST-NET developer route is active. It parses IPv4 header metadata only and updates local counters for total packets, bytes, IPv4 packets, TCP, UDP, and ICMP. Packets are dropped after counting. There is no packet forwarding, SOCKS5 forwarding, VLESS, default-route capture, payload logging, telemetry, or background upload.
+
+## 0.8.1-alpha local packet inspector
+
+`0.8.1-alpha` extends the read/drop runtime skeleton with a local packet inspector for IPv4 metadata. For each accepted IPv4 packet, the inspector can summarize:
+
+- timestamp;
+- protocol (`TCP`, `UDP`, `ICMP`, or `OTHER`);
+- source IPv4 address;
+- destination IPv4 address;
+- source and destination ports for TCP/UDP only;
+- packet size.
+
+The service keeps only the latest 50 packet summaries in memory and publishes them to the VPN Runtime screen newest first. This is metadata-only visibility for the local preview. It does not capture payloads, create PCAP files, persist packet summaries, extract hostnames, proxy DNS, forward packets, write packets back to TUN, implement VLESS, or implement SOCKS5 runtime forwarding.

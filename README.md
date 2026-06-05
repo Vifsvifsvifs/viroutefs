@@ -17,9 +17,9 @@ ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project 
 - No hidden interception of third-party traffic.
 - No offensive security features.
 
-## Current status: 0.8.0-alpha
+## Current status: 0.8.1-alpha
 
-Version `0.8.0-alpha` adds the Android VpnService runtime skeleton: the app requests Android VPN permission, establishes the existing safe TUN preview, reads packets from the ParcelFileDescriptor in the opt-in TEST-NET developer route mode, parses IPv4 headers locally, and shows TCP/UDP/ICMP counters in the UI. Packets are counted and dropped only; there is still no packet forwarding, no SOCKS5 forwarding, no VLESS, no default route capture, no payload logging, no telemetry, and no background upload.
+Version `0.8.1-alpha` adds a local in-memory packet inspector to the Android VpnService runtime skeleton. The app requests Android VPN permission, establishes the existing safe TUN preview, reads packets from the ParcelFileDescriptor in the opt-in TEST-NET developer route mode, parses IPv4 metadata locally, and shows the latest 50 packet summaries newest first in the VPN Runtime screen. Summaries contain timestamp, protocol, IPv4 source/destination addresses, TCP/UDP ports when present, and packet size. Packets are counted and dropped only; there is still no packet forwarding, no SOCKS5 forwarding, no VLESS, no DNS proxying, no default route capture, no payload capture, no payload logging, no PCAP export, no persistence, no telemetry, and no background upload.
 
 What exists now:
 
@@ -27,7 +27,7 @@ What exists now:
 - Foreground VPN preview service exists.
 - Safe TUN preview exists.
 - Optional TEST-NET route `203.0.113.0/24` remains for developer/local preview testing only and is hidden from normal user UI.
-- Flow Scanner can show local counters when developer diagnostics explicitly enable the TEST-NET preview.
+- Flow Scanner and VPN Runtime can show local counters/metadata summaries when developer diagnostics explicitly enable the TEST-NET preview.
 - The app has Compose screens for Networks, Routes, DNS, Flow Scanner, Tools, and Settings with Help collapsed by default.
 - GitHub Actions builds APK artifacts with dynamic version-based names.
 - Published releases contain friendly APK assets, such as `ViRouteFS-0.6.15-alpha.apk`, attached to GitHub Releases.
@@ -47,9 +47,9 @@ What is intentionally not implemented yet:
 - No Play Store or F-Droid release is claimed yet.
 - No background update checks, automatic APK downloads, silent install behavior, telemetry, analytics, tracking, ads, or cloud upload.
 
-## 0.8.0-alpha VpnService runtime skeleton
+## 0.8.1-alpha local packet inspector
 
-ViRouteFS 0.8.0-alpha keeps the safe local-first VPN boundary and adds runtime packet reading for the opt-in TEST-NET route preview. The foreground VpnService establishes a TUN interface, reads packets from the ParcelFileDescriptor, parses only IPv4 header metadata, increments local TCP/UDP/ICMP counters, and drops packets without forwarding them. The normal route-less TUN preview still adds no default route, and the developer TEST-NET route remains the only explicit packet-producing preview route.
+ViRouteFS 0.8.1-alpha keeps the safe local-first VPN boundary and adds a metadata-only packet inspector for the opt-in TEST-NET route preview. The foreground VpnService establishes a TUN interface, reads packets from the ParcelFileDescriptor, parses IPv4 source/destination addresses, protocol, TCP/UDP ports when present, and packet size, then keeps only the latest 50 summaries in memory. Packets are dropped without forwarding them. The normal route-less TUN preview still adds no default route, and the developer TEST-NET route remains the only explicit packet-producing preview route. No payload, hostname, DNS proxying, PCAP export, persistence, packet forwarding, SOCKS5 forwarding, VLESS, telemetry, or cloud upload is added.
 
 ## 0.7.7-alpha SOCKS5 outbound connector abstraction
 
