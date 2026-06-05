@@ -6,6 +6,12 @@ import dev.vifs.viroutefs.vless.protocol.buildVlessTcpRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLParameters
+import javax.net.ssl.SNIServerName
+import javax.net.ssl.SNIHostName
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 import java.net.ConnectException
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -13,8 +19,8 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import kotlin.system.measureTimeMillis
 
-const val VLESS_PROTOCOL_PROBE_NOTICE = "This sends a minimal VLESS request frame for diagnostics only. Runtime forwarding is not enabled."
-const val VLESS_TLS_REALITY_UNSUPPORTED_MESSAGE = "TLS/REALITY transport is not implemented yet."
+const val VLESS_PROTOCOL_PROBE_NOTICE = "TLS probe sends a minimal VLESS request over TLS for diagnostics only. Runtime forwarding is not enabled."
+const val VLESS_REALITY_UNSUPPORTED_MESSAGE = "REALITY transport is not implemented yet."
 private const val DEFAULT_PROBE_CONNECT_TIMEOUT_MS = 5_000
 private const val DEFAULT_PROBE_WAIT_TIMEOUT_MS = 750
 
@@ -22,6 +28,8 @@ sealed interface VlessProtocolProbeState {
     val label: String
 
     data object TcpConnected : VlessProtocolProbeState { override val label = "TCP connected" }
+    data object TlsHandshakeSuccess : VlessProtocolProbeState { override val label = "TLS handshake success" }
+    data object TlsHandshakeFailed : VlessProtocolProbeState { override val label = "TLS handshake failed" }
     data object VlessRequestSent : VlessProtocolProbeState { override val label = "VLESS request sent" }
     data object ServerKeptConnectionBriefly : VlessProtocolProbeState { override val label = "Server kept connection briefly" }
     data object ServerClosedConnection : VlessProtocolProbeState { override val label = "Server closed connection" }
@@ -42,6 +50,7 @@ data class VlessProtocolProbeResult(
     val message: String,
     val elapsedMs: Long? = null,
     val steps: List<VlessProtocolProbeState> = emptyList(),
+    val securityMode: VlessSecurityMode = VlessSecurityMode.NONE,
 ) {
     val displayMessage: String
         get() = buildString {
@@ -55,6 +64,9 @@ class VlessProtocolProber(
     private val connectTimeoutMs: Int = DEFAULT_PROBE_CONNECT_TIMEOUT_MS,
     private val waitTimeoutMs: Int = DEFAULT_PROBE_WAIT_TIMEOUT_MS,
     private val socketFactory: () -> Socket = { Socket() },
+    private val tlsSocketFactory: (Socket, String, Int, Boolean) -> SSLSocket = { socket, host, port, autoClose ->
+        SSLSocketFactory.getDefault().createSocket(socket, host, port, autoClose) as SSLSocket
+    },
     private val requestBuilder: (String, String, Int) -> ByteArray = ::buildVlessTcpRequest,
 ) {
     suspend fun probe(
@@ -73,7 +85,8 @@ class VlessProtocolProber(
         val now = System.currentTimeMillis()
         val cleanServerHost = profile.host.trim()
         val cleanTargetHost = targetHost.trim()
-        if (profile.securityMode != VlessSecurityMode.NONE) {
+        val securityMode = profile.securityMode
+        if (securityMode == VlessSecurityMode.REALITY) {
             return VlessProtocolProbeResult(
                 serverHost = cleanServerHost,
                 serverPort = profile.port,
@@ -81,7 +94,8 @@ class VlessProtocolProber(
                 targetPort = targetPort,
                 timestamp = now,
                 state = VlessProtocolProbeState.UnsupportedSecurityMode,
-                message = VLESS_TLS_REALITY_UNSUPPORTED_MESSAGE,
+                message = VLESS_REALITY_UNSUPPORTED_MESSAGE,
+                securityMode = securityMode,
             )
         }
 
@@ -95,6 +109,7 @@ class VlessProtocolProber(
                 timestamp = now,
                 state = VlessProtocolProbeState.ValidationError,
                 message = validationErrors.joinToString(" ").sanitizeVlessReachabilityMessage(),
+                securityMode = securityMode,
             )
         }
 
@@ -107,18 +122,27 @@ class VlessProtocolProber(
                 socketFactory().use { socket ->
                     socket.connect(InetSocketAddress(cleanServerHost, profile.port), connectTimeoutMs)
                     steps += VlessProtocolProbeState.TcpConnected
-                    val frame = requestBuilder(profile.uuid, cleanTargetHost, targetPort)
-                    socket.getOutputStream().write(frame)
-                    socket.getOutputStream().flush()
-                    steps += VlessProtocolProbeState.VlessRequestSent
-                    socket.soTimeout = waitTimeoutMs
-                    val read = socket.getInputStream().read()
-                    if (read == -1) {
-                        finalState = VlessProtocolProbeState.ServerClosedConnection
-                        finalMessage = "Server closed the connection after receiving the minimal VLESS request frame."
-                    } else {
-                        finalState = VlessProtocolProbeState.ServerKeptConnectionBriefly
-                        finalMessage = "Server kept the connection open briefly after receiving the minimal VLESS request frame."
+                    val probeSocket = when (securityMode) {
+                        VlessSecurityMode.NONE -> socket
+                        VlessSecurityMode.TLS -> wrapTlsSocket(socket, profile, steps)
+                        VlessSecurityMode.REALITY -> error(VLESS_REALITY_UNSUPPORTED_MESSAGE)
+                    }
+                    try {
+                        val frame = requestBuilder(profile.uuid, cleanTargetHost, targetPort)
+                        probeSocket.getOutputStream().write(frame)
+                        probeSocket.getOutputStream().flush()
+                        steps += VlessProtocolProbeState.VlessRequestSent
+                        probeSocket.soTimeout = waitTimeoutMs
+                        val read = probeSocket.getInputStream().read()
+                        if (read == -1) {
+                            finalState = VlessProtocolProbeState.ServerClosedConnection
+                            finalMessage = "Server closed the connection after receiving the minimal VLESS request frame."
+                        } else {
+                            finalState = VlessProtocolProbeState.ServerKeptConnectionBriefly
+                            finalMessage = "Server kept the connection open briefly after receiving the minimal VLESS request frame."
+                        }
+                    } finally {
+                        if (probeSocket !== socket) probeSocket.close()
                     }
                 }
             }
@@ -132,6 +156,7 @@ class VlessProtocolProber(
                 message = finalMessage,
                 elapsedMs = elapsedMs,
                 steps = steps + finalState,
+                securityMode = securityMode,
             )
         }
         return outcome.getOrElse { error ->
@@ -141,6 +166,7 @@ class VlessProtocolProber(
                 } else {
                     VlessProtocolProbeState.Timeout
                 }
+                is SSLException -> VlessProtocolProbeState.TlsHandshakeFailed
                 is ConnectException -> VlessProtocolProbeState.Refused
                 is UnknownHostException -> VlessProtocolProbeState.HostDnsError
                 is SecurityException, is IllegalArgumentException -> VlessProtocolProbeState.ValidationError
@@ -153,6 +179,7 @@ class VlessProtocolProber(
             }
             val message = when (state) {
                 VlessProtocolProbeState.ServerKeptConnectionBriefly -> "Server kept the connection open for the brief probe wait window."
+                VlessProtocolProbeState.TlsHandshakeFailed -> "TLS handshake failed: ${error.message ?: state.label}"
                 else -> error.message ?: state.label
             }
             VlessProtocolProbeResult(
@@ -165,10 +192,28 @@ class VlessProtocolProber(
                 message = message.sanitizeVlessReachabilityMessage(),
                 elapsedMs = elapsedMs,
                 steps = if (steps.isEmpty()) listOf(state) else steps + state,
+                securityMode = securityMode,
             )
         }
     }
+
+    private fun wrapTlsSocket(socket: Socket, profile: VlessProfileConfig, steps: MutableList<VlessProtocolProbeState>): SSLSocket {
+        val sniHost = profile.vlessProbeSniHost()
+        return tlsSocketFactory(socket, profile.host.trim(), profile.port, true).also { tlsSocket ->
+            tlsSocket.useClientMode = true
+            tlsSocket.sslParameters = tlsSocket.sslParameters.withServerName(sniHost)
+            tlsSocket.startHandshake()
+            steps += VlessProtocolProbeState.TlsHandshakeSuccess
+        }
+    }
 }
+
+fun VlessProfileConfig.vlessProbeSniHost(): String = sni?.trim()?.takeIf { it.isNotBlank() } ?: host.trim()
+
+private fun SSLParameters.withServerName(host: String): SSLParameters = apply {
+    serverNames = listOf<SNIServerName>(SNIHostName(host))
+}
+
 
 fun validateVlessProtocolProbeTarget(host: String, port: Int): List<String> = buildList {
     addAll(validateVlessTcpReachabilityTarget(host, port).map { it.replace("VLESS host", "VLESS probe target host").replace("VLESS port", "VLESS probe target port") })
