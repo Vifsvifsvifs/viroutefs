@@ -84,3 +84,16 @@ Boundaries for this release:
 ## SOCKS5 readiness summaries
 
 SOCKS5 readiness in 0.7.6-alpha is a local, read-only summary of manual diagnostic history stored in app-private no-backup storage. It must not trigger network checks, run at startup, auto-connect profiles, change DNS, upload history, export history automatically, or expose credentials. The route explanation may show the last manual diagnostic result, but it must continue to warn that SOCKS5 runtime forwarding is not enabled and must not imply Android traffic is routed through SOCKS5.
+
+## 0.7.7-alpha SOCKS5 outbound connector abstraction
+
+ViRouteFS 0.7.7-alpha adds an internal SOCKS5 outbound connector abstraction for manual diagnostics and future routing-engine preparation. The connector performs SOCKS5 greeting/authentication and CONNECT only, closes the socket after a successful manual CONNECT, and does not send HTTP requests, application payloads, packet payloads, or real Android device traffic.
+
+Safety boundaries remain unchanged:
+- Runtime TUN-to-SOCKS forwarding is not implemented.
+- Android default-route capture is not enabled for SOCKS5.
+- VpnService packet forwarding behavior is unchanged.
+- Manual diagnostics run only after explicit user action; there are no background checks, startup checks, periodic tests, or auto-connect behavior.
+- DNS is not silently changed.
+- SOCKS5 credentials are not written to routing exports, diagnostic history, result messages, logs, telemetry, or cloud storage.
+- Telemetry, tracking, ads, analytics SDKs, and cloud upload remain out of scope.

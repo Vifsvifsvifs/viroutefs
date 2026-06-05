@@ -2,6 +2,10 @@
 
 package dev.vifs.viroutefs.socks5
 
+import dev.vifs.viroutefs.outbound.OutboundConnectRequest
+import dev.vifs.viroutefs.outbound.OutboundTarget
+import dev.vifs.viroutefs.outbound.Socks5OutboundConnector
+import dev.vifs.viroutefs.outbound.toSocks5DiagnosticResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.EOFException
@@ -32,7 +36,7 @@ class Socks5HandshakeTester(
             socketFactory().use { socket ->
                 socket.soTimeout = timeoutMillis
                 socket.connect(InetSocketAddress(profile.host.trim(), profile.port), timeoutMillis)
-                performGreeting(socket, profile).toHandshakeDiagnostic()
+                performSocks5Greeting(socket, profile).toHandshakeDiagnostic()
             }
         }
     }
@@ -53,13 +57,14 @@ class Socks5HandshakeTester(
         }
 
         timedDiagnostic(Socks5DiagnosticTestType.Connect) {
-            socketFactory().use { socket ->
-                socket.soTimeout = timeoutMillis
-                socket.connect(InetSocketAddress(profile.host.trim(), profile.port), timeoutMillis)
-                when (val greeting = performGreeting(socket, profile)) {
-                    Socks5TestResult.Reachable -> performConnect(socket, targetHost.trim(), targetPort)
-                    is Socks5TestResult.Failed -> greeting.toHandshakeDiagnostic()
-                }
+            kotlinx.coroutines.runBlocking {
+                Socks5OutboundConnector(profile, socketFactory).connect(
+                    OutboundConnectRequest(
+                        profileId = profile.name.ifBlank { profile.host },
+                        target = OutboundTarget(targetHost.trim(), targetPort),
+                        timeoutMs = timeoutMillis,
+                    ),
+                ).toSocks5DiagnosticResult()
             }
         }
     }
@@ -78,75 +83,6 @@ class Socks5HandshakeTester(
         return result!!.copy(elapsedMs = elapsed)
     }
 
-    private fun performConnect(socket: Socket, targetHost: String, targetPort: Int): Socks5DiagnosticResult {
-        val input = socket.getInputStream()
-        val output = socket.getOutputStream()
-        output.write(encodeSocks5ConnectRequest(targetHost, targetPort))
-        output.flush()
-        return parseSocks5ConnectResponse(input.readSocks5ConnectResponseBytes())
-    }
-
-    private fun performGreeting(socket: Socket, profile: Socks5ProfileConfig): Socks5TestResult {
-        val input = socket.getInputStream()
-        val output = socket.getOutputStream()
-        val method = if (profile.credentialsProvided) USERNAME_PASSWORD_METHOD else NO_AUTH_METHOD
-        output.write(byteArrayOf(SOCKS_VERSION, 1, method))
-        output.flush()
-
-        val version = input.readRequiredByte()
-        val selectedMethod = input.readRequiredByte()
-        if (version != SOCKS_VERSION.toInt()) return Socks5TestResult.Failed.InvalidResponse("Invalid SOCKS version in greeting response.")
-        if (selectedMethod == NO_ACCEPTABLE_METHOD.toInt()) return Socks5TestResult.Failed.UnsupportedMethod
-        if (selectedMethod != method.toInt()) return Socks5TestResult.Failed.UnsupportedMethod
-        if (selectedMethod == NO_AUTH_METHOD.toInt()) return Socks5TestResult.Reachable
-
-        val username = profile.username.orEmpty().encodeToByteArray()
-        val password = profile.password.orEmpty().encodeToByteArray()
-        if (username.size > 255 || password.size > 255) return Socks5TestResult.Failed.InvalidResponse("SOCKS5 username/password fields must be 255 bytes or shorter.")
-
-        output.write(byteArrayOf(AUTH_VERSION, username.size.toByte()))
-        output.write(username)
-        output.write(password.size)
-        output.write(password)
-        output.flush()
-
-        val authVersion = input.readRequiredByte()
-        val authStatus = input.readRequiredByte()
-        if (authVersion != AUTH_VERSION.toInt()) return Socks5TestResult.Failed.InvalidResponse("Invalid SOCKS5 authentication response.")
-        return if (authStatus == 0) Socks5TestResult.Reachable else Socks5TestResult.Failed.AuthenticationRejected
-    }
-
-    private fun java.io.InputStream.readRequiredByte(): Int {
-        val value = read()
-        if (value < 0) throw EOFException("SOCKS5 server closed the connection before the handshake completed.")
-        return value
-    }
-
-    private fun java.io.InputStream.readSocks5ConnectResponseBytes(): ByteArray {
-        val header = ByteArray(4)
-        readFully(header)
-        val addressLength = when (header[3].toInt() and 0xFF) {
-            ADDRESS_TYPE_IPV4 -> 4
-            ADDRESS_TYPE_DOMAIN -> readRequiredByte()
-            ADDRESS_TYPE_IPV6 -> 16
-            else -> throw EOFException("Invalid SOCKS5 address type in CONNECT response.")
-        }
-        val address = ByteArray(addressLength)
-        readFully(address)
-        val port = ByteArray(2)
-        readFully(port)
-        return if ((header[3].toInt() and 0xFF) == ADDRESS_TYPE_DOMAIN) header + byteArrayOf(addressLength.toByte()) + address + port else header + address + port
-    }
-
-    private fun java.io.InputStream.readFully(buffer: ByteArray) {
-        var offset = 0
-        while (offset < buffer.size) {
-            val count = read(buffer, offset, buffer.size - offset)
-            if (count < 0) throw EOFException("SOCKS5 server closed the connection before the response completed.")
-            offset += count
-        }
-    }
-
     companion object {
         const val DEFAULT_TIMEOUT_MILLIS = 5_000
         const val SOCKS_VERSION: Byte = 0x05
@@ -159,6 +95,75 @@ class Socks5HandshakeTester(
         const val ADDRESS_TYPE_IPV4 = 0x01
         const val ADDRESS_TYPE_DOMAIN = 0x03
         const val ADDRESS_TYPE_IPV6 = 0x04
+    }
+}
+
+internal fun performSocks5Greeting(socket: Socket, profile: Socks5ProfileConfig): Socks5TestResult {
+    val input = socket.getInputStream()
+    val output = socket.getOutputStream()
+    val method = if (profile.credentialsProvided) Socks5HandshakeTester.USERNAME_PASSWORD_METHOD else Socks5HandshakeTester.NO_AUTH_METHOD
+    output.write(byteArrayOf(Socks5HandshakeTester.SOCKS_VERSION, 1, method))
+    output.flush()
+
+    val version = input.readRequiredByte()
+    val selectedMethod = input.readRequiredByte()
+    if (version != Socks5HandshakeTester.SOCKS_VERSION.toInt()) return Socks5TestResult.Failed.InvalidResponse("Invalid SOCKS version in greeting response.")
+    if (selectedMethod == Socks5HandshakeTester.NO_ACCEPTABLE_METHOD.toInt()) return Socks5TestResult.Failed.UnsupportedMethod
+    if (selectedMethod != method.toInt()) return Socks5TestResult.Failed.UnsupportedMethod
+    if (selectedMethod == Socks5HandshakeTester.NO_AUTH_METHOD.toInt()) return Socks5TestResult.Reachable
+
+    val username = profile.username.orEmpty().encodeToByteArray()
+    val password = profile.password.orEmpty().encodeToByteArray()
+    if (username.size > 255 || password.size > 255) return Socks5TestResult.Failed.InvalidResponse("SOCKS5 username/password fields must be 255 bytes or shorter.")
+
+    output.write(byteArrayOf(Socks5HandshakeTester.AUTH_VERSION, username.size.toByte()))
+    output.write(username)
+    output.write(password.size)
+    output.write(password)
+    output.flush()
+
+    val authVersion = input.readRequiredByte()
+    val authStatus = input.readRequiredByte()
+    if (authVersion != Socks5HandshakeTester.AUTH_VERSION.toInt()) return Socks5TestResult.Failed.InvalidResponse("Invalid SOCKS5 authentication response.")
+    return if (authStatus == 0) Socks5TestResult.Reachable else Socks5TestResult.Failed.AuthenticationRejected
+}
+
+internal fun performSocks5Connect(socket: Socket, targetHost: String, targetPort: Int): Socks5DiagnosticResult {
+    val input = socket.getInputStream()
+    val output = socket.getOutputStream()
+    output.write(encodeSocks5ConnectRequest(targetHost, targetPort))
+    output.flush()
+    return parseSocks5ConnectResponse(input.readSocks5ConnectResponseBytes())
+}
+
+private fun java.io.InputStream.readRequiredByte(): Int {
+    val value = read()
+    if (value < 0) throw EOFException("SOCKS5 server closed the connection before the handshake completed.")
+    return value
+}
+
+private fun java.io.InputStream.readSocks5ConnectResponseBytes(): ByteArray {
+    val header = ByteArray(4)
+    readFully(header)
+    val addressLength = when (header[3].toInt() and 0xFF) {
+        Socks5HandshakeTester.ADDRESS_TYPE_IPV4 -> 4
+        Socks5HandshakeTester.ADDRESS_TYPE_DOMAIN -> readRequiredByte()
+        Socks5HandshakeTester.ADDRESS_TYPE_IPV6 -> 16
+        else -> throw EOFException("Invalid SOCKS5 address type in CONNECT response.")
+    }
+    val address = ByteArray(addressLength)
+    readFully(address)
+    val port = ByteArray(2)
+    readFully(port)
+    return if ((header[3].toInt() and 0xFF) == Socks5HandshakeTester.ADDRESS_TYPE_DOMAIN) header + byteArrayOf(addressLength.toByte()) + address + port else header + address + port
+}
+
+private fun java.io.InputStream.readFully(buffer: ByteArray) {
+    var offset = 0
+    while (offset < buffer.size) {
+        val count = read(buffer, offset, buffer.size - offset)
+        if (count < 0) throw EOFException("SOCKS5 server closed the connection before the response completed.")
+        offset += count
     }
 }
 
@@ -200,6 +205,7 @@ data class Socks5DiagnosticResult(
 fun validateSocks5ConnectTarget(targetHost: String, targetPort: Int): List<String> = buildList {
     val host = targetHost.trim()
     if (host.isBlank()) add("Target host must not be blank.")
+    if (host.any { it.isISOControl() || it.isWhitespace() }) add("Target host must not contain whitespace or control characters.")
     if (host.encodeToByteArray().size > 255) add("Target host must be 255 bytes or shorter for SOCKS5 domain-name CONNECT.")
     if (targetPort !in 1..65535) add("Target port must be in range 1..65535.")
 }

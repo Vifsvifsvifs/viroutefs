@@ -47,6 +47,12 @@ Focus: start carefully testing route decisions while keeping full runtime enforc
 - No runtime full-device enforcement until safe packet handling exists.
 - No hidden interception or payload logging.
 
+## 0.7.7-alpha SOCKS5 outbound connector abstraction
+
+- Add an internal SOCKS5 outbound connector abstraction for explicit manual diagnostics and future runtime routing preparation.
+- Reuse the connector/shared SOCKS5 CONNECT path from the manual CONNECT diagnostic.
+- Keep runtime VPN behavior unchanged: no TUN-to-SOCKS forwarding, no Android default-route capture, no device traffic forwarding, no background checks, no auto-connect, no silent DNS changes, and no credential exposure.
+
 ## 0.8.x: expanded outbound experiments
 
 Focus: expand explicitly enabled outbound experiments after safe route handling is designed.
@@ -130,6 +136,12 @@ Boundaries for this release:
 - Test history is stored locally in app-private no-backup storage (`socks5_test_history.json`) and is not automatically exported or uploaded.
 - SOCKS5 credentials are not logged, exported, or stored in diagnostic history.
 - No telemetry, ads, analytics, tracking SDKs, or cloud upload are added.
+
+## 0.7.7-alpha
+
+- Add an internal SOCKS5 outbound connector abstraction for explicit manual diagnostics and future runtime routing preparation.
+- Reuse the connector/shared SOCKS5 CONNECT path from the manual CONNECT diagnostic.
+- Keep runtime VPN behavior unchanged: no TUN-to-SOCKS forwarding, no Android default-route capture, no device traffic forwarding, no background checks, no auto-connect, no silent DNS changes, and no credential exposure.
 
 ## 0.7.6-alpha — SOCKS5 readiness summaries
 
