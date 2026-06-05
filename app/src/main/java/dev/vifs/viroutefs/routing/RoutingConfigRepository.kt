@@ -244,12 +244,18 @@ object RoutingConfigJson {
             VlessProfileStatus.NotTested -> "NotTested"
             VlessProfileStatus.Invalid -> "Invalid"
             VlessProfileStatus.ConfigReady -> "ConfigReady"
+            VlessProfileStatus.Testing -> "Testing"
+            VlessProfileStatus.TcpReachable -> "TcpReachable"
+            VlessProfileStatus.LastTestFailed -> "LastTestFailed"
         })
     }
 
     private fun JSONObject.toVlessProfileStatus(): VlessProfileStatus = when (optString("state")) {
         "Invalid" -> VlessProfileStatus.Invalid
         "ConfigReady" -> VlessProfileStatus.ConfigReady
+        "Testing" -> VlessProfileStatus.Testing
+        "TcpReachable" -> VlessProfileStatus.TcpReachable
+        "LastTestFailed" -> VlessProfileStatus.LastTestFailed
         else -> VlessProfileStatus.NotTested
     }
 

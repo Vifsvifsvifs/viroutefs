@@ -54,8 +54,12 @@
 
 Each network profile may reference a DNS policy. DNS is configured primarily on the DNS page; the Networks page only shows compact profile details.
 
-## VLESS profile model in 0.8.5-alpha
+## VLESS profile model in 0.8.6-alpha
 
-VLESS profiles are configuration-only in 0.8.5-alpha. The app can store and validate local profile fields for route decision preview, including UUID, transport placeholders (`tcp`, `ws`, or `grpc`), and placeholder TLS/REALITY metadata. It can also import and explicitly export usable `vless://` URIs as documented in [`VLESS_URI_IMPORT_EXPORT.md`](VLESS_URI_IMPORT_EXPORT.md). It does not connect to VLESS servers, forward packets, write packets back to TUN, implement REALITY/XTLS runtime, or proxy DNS. Route decision preview must warn: "Selected profile is VLESS. Runtime forwarding is not enabled yet."
+VLESS profiles are configuration-only in 0.8.6-alpha. The app can store and validate local profile fields for route decision preview, including UUID, transport placeholders (`tcp`, `ws`, or `grpc`), and placeholder TLS/REALITY metadata. It can also import and explicitly export usable `vless://` URIs as documented in [`VLESS_URI_IMPORT_EXPORT.md`](VLESS_URI_IMPORT_EXPORT.md).
+
+0.8.6-alpha adds an explicit, manual TCP reachability probe for a VLESS profile host and port. The probe opens a plain TCP socket with a timeout, closes it immediately after successful connect, and shows reachable, timeout, refused, DNS/host error, or validation error. It is not automatic and is not a VLESS protocol implementation: no UUID or credentials are sent, no TLS/REALITY setup is performed, no VLESS handshake is performed, no packets are forwarded, no packets are written back to TUN, and no DNS proxying is added. Local no-backup test history is capped at 20 entries per profile and does not store UUID.
+
+The app does not connect using VLESS, forward packets, write packets back to TUN, implement REALITY/XTLS runtime, or proxy DNS. Route decision preview must warn: "Selected profile is VLESS. Runtime forwarding is not enabled yet."
 
 `routing_config.json`, routing exports, and explicit VLESS URI exports may contain VLESS connection identifiers such as UUID, host, SNI, and placeholder key metadata. Treat exported routing configs and VLESS URIs as sensitive local files. UUID values must not appear in summaries, diagnostics text, logs, route-preview text, or masked import previews. No telemetry, cloud upload, analytics, ads, background validation, startup tests, or auto-connect behavior is added.

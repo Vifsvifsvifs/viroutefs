@@ -56,11 +56,19 @@ import dev.vifs.viroutefs.socks5.Socks5TestHistoryStore
 import dev.vifs.viroutefs.socks5.deriveSocks5ReadinessSummary
 import dev.vifs.viroutefs.socks5.toProfileStatus
 import dev.vifs.viroutefs.socks5.validateSocks5Profile
+import dev.vifs.viroutefs.vless.VLESS_NO_HANDSHAKE_NOTICE
 import dev.vifs.viroutefs.vless.VLESS_ROUTE_PREVIEW_ONLY
 import dev.vifs.viroutefs.vless.VLESS_RUNTIME_LIMITATION
+import dev.vifs.viroutefs.vless.VLESS_TCP_REACHABILITY_NOTICE
 import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.VlessProfileStatus
 import dev.vifs.viroutefs.vless.VlessSecurityMode
+import dev.vifs.viroutefs.vless.VlessTcpReachabilityHistoryItem
+import dev.vifs.viroutefs.vless.VlessTcpReachabilityHistoryStore
+import dev.vifs.viroutefs.vless.VlessTcpReachabilityResult
+import dev.vifs.viroutefs.vless.VlessTcpReachabilityState
+import dev.vifs.viroutefs.vless.VlessTcpReachabilityTester
+import dev.vifs.viroutefs.vless.toProfileStatus
 import dev.vifs.viroutefs.vless.VlessUriParseResult
 import dev.vifs.viroutefs.vless.exportVlessUri
 import dev.vifs.viroutefs.vless.parseVlessUri
@@ -435,6 +443,9 @@ private fun VlessProfileEditorScreen(
     onConfig: (RoutingConfig, String?) -> Unit,
 ) {
     val vless = profile?.vless
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val historyStore = remember(context) { VlessTcpReachabilityHistoryStore(context) }
     val clipboardManager = LocalClipboardManager.current
     var name by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.name ?: profile?.name ?: "") }
     var host by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.host ?: "") }
@@ -457,6 +468,8 @@ private fun VlessProfileEditorScreen(
     var pendingImport by remember(profile?.id ?: "new-vless") { mutableStateOf<VlessProfileConfig?>(null) }
     var importPreview by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf<String?>(null) }
     var exportUri by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf<String?>(null) }
+    var currentReachability by remember(profile?.id ?: "new-vless") { mutableStateOf<VlessTcpReachabilityResult?>(null) }
+    var history by remember(profile?.id ?: "new-vless") { mutableStateOf<List<VlessTcpReachabilityHistoryItem>>(emptyList()) }
     var errors by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf<List<String>>(emptyList()) }
 
     fun draft(nextStatus: VlessProfileStatus = vless?.status ?: VlessProfileStatus.NotTested): VlessProfileConfig = VlessProfileConfig(
@@ -480,6 +493,10 @@ private fun VlessProfileEditorScreen(
         status = nextStatus,
     )
 
+    LaunchedEffect(profile?.id) {
+        if (profile != null) history = historyStore.recentForProfile(profile.id)
+    }
+
     fun applyVlessProfile(parsed: VlessProfileConfig) {
         name = parsed.name
         host = parsed.host
@@ -502,6 +519,35 @@ private fun VlessProfileEditorScreen(
         exportUri = null
     }
 
+    fun saveVlessStatus(nextStatus: VlessProfileStatus) {
+        if (profile == null) return
+        val updatedVless = draft(nextStatus)
+        val updatedProfile = profile.copy(
+            name = updatedVless.name,
+            description = vlessDescription(updatedVless),
+            enabled = updatedVless.enabled,
+            vless = updatedVless,
+        )
+        onConfig(config.copy(profiles = config.profiles.map { if (it.id == profile.id) updatedProfile else it }), null)
+    }
+
+    suspend fun recordReachabilityHistory(result: VlessTcpReachabilityResult) {
+        if (profile == null) return
+        historyStore.add(
+            VlessTcpReachabilityHistoryItem(
+                profileId = profile.id,
+                profileNameSnapshot = name.trim(),
+                host = result.host,
+                port = result.port,
+                timestamp = result.timestamp,
+                state = result.state,
+                message = result.message,
+                elapsedMs = result.elapsedMs,
+            ),
+        )
+        history = historyStore.recentForProfile(profile.id)
+    }
+
     ScreenList(padding) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -513,6 +559,8 @@ private fun VlessProfileEditorScreen(
             CardBlock {
                 Text(VLESS_RUNTIME_LIMITATION, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                 Text(VLESS_ROUTE_PREVIEW_ONLY, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(VLESS_NO_HANDSHAKE_NOTICE, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(VLESS_TCP_REACHABILITY_NOTICE, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 WarningText("UUID is stored locally in routing_config.json and is hidden from summaries, logs, and diagnostics text.")
                 Text("Security mode supports none/tls/reality as configuration placeholders only. REALITY/XTLS runtime is not implemented.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -557,6 +605,55 @@ private fun VlessProfileEditorScreen(
                 }
             }
         }
+        item {
+            CardBlock {
+                Text("Readiness: ${vlessReadinessLabel(vless?.status ?: VlessProfileStatus.NotTested, history)}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Text("Test TCP reachability opens a plain TCP socket to host:port, closes it immediately after connect, and sends no bytes or UUID.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(
+                    enabled = profile != null && vless?.status != VlessProfileStatus.Testing,
+                    onClick = {
+                        val testDraft = draft(VlessProfileStatus.Testing)
+                        errors = validateVlessProfile(testDraft)
+                        if (errors.isEmpty()) {
+                            saveVlessStatus(VlessProfileStatus.Testing)
+                            scope.launch {
+                                val result = VlessTcpReachabilityTester().test(testDraft.host, testDraft.port)
+                                currentReachability = result
+                                saveVlessStatus(result.toProfileStatus())
+                                recordReachabilityHistory(result)
+                            }
+                        }
+                    },
+                ) { Text("Test TCP reachability") }
+                currentReachability?.let { Text("Current result: ${it.displayMessage}", style = MaterialTheme.typography.bodySmall) }
+                if (profile == null) {
+                    Text("Save the VLESS profile first so the manual result can be stored in local no-backup history.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("TCP reachability only: no VLESS handshake, no TLS, no REALITY, no runtime forwarding, and no packets are written back to TUN.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (profile != null) {
+            item {
+                CardBlock {
+                    Text("Recent local VLESS TCP reachability history", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+                    Text("Stored locally in app no-backup storage; newest first, last 20 per profile. UUID is never stored in this history.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (history.isEmpty()) {
+                        Text(text.none, style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        history.forEach { item ->
+                            Text(item.historyLabel(), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    OutlinedButton(onClick = {
+                        scope.launch {
+                            historyStore.clearProfile(profile.id)
+                            history = emptyList()
+                        }
+                    }) { Text("Clear local VLESS TCP history for this profile") }
+                }
+            }
+        }
+
         item {
             CardBlock {
                 OutlinedTextField(name, { name = it }, label = { Text(text.name) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
@@ -650,7 +747,19 @@ private fun String.toVlessSecurityMode(): VlessSecurityMode = VlessSecurityMode.
 } ?: VlessSecurityMode.NONE
 
 private fun vlessDescription(profile: VlessProfileConfig): String =
-    "VLESS ${profile.host}:${profile.port} (${profile.securityMode.wireName}). Runtime forwarding is not implemented yet; route decision preview only. UUID is hidden from summaries and diagnostics."
+    "VLESS ${profile.host}:${profile.port} (${profile.securityMode.wireName}). Manual TCP reachability only; no VLESS handshake, TLS/REALITY runtime, DNS proxying, or forwarding is implemented. UUID is hidden from summaries and diagnostics."
+
+private fun vlessReadinessLabel(status: VlessProfileStatus, history: List<VlessTcpReachabilityHistoryItem>): String = when {
+    status == VlessProfileStatus.TcpReachable || history.firstOrNull()?.state == VlessTcpReachabilityState.Reachable -> "TCP reachable"
+    status == VlessProfileStatus.LastTestFailed || history.isNotEmpty() -> "Last test failed"
+    else -> "Not tested"
+}
+
+private fun VlessTcpReachabilityHistoryItem.historyLabel(): String {
+    val time = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(timestamp))
+    val latency = elapsedMs?.let { " (${it} ms)" }.orEmpty()
+    return "$time • $host:$port • ${state.label}$latency • ${message.sanitizeForHistoryLabel()}"
+}
 
 @Composable
 private fun Socks5ProfileEditorScreen(
