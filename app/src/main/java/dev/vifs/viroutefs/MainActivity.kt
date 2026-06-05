@@ -982,7 +982,16 @@ private fun SettingsScreen(
                         }
                         Switch(checked = tunTestRoutePreviewEnabled, onCheckedChange = onTunTestRoutePreview)
                     }
-                    Details(text.details, "${text.vpnPacketsRead}: ${vpnState.packetsRead}\n${text.vpnBytesRead}: ${vpnState.bytesRead}\n${text.vpnHowToTestTun}")
+                    Details(
+                        text.details,
+                        "${text.vpnPacketsRead}: ${vpnState.packetsRead}\n" +
+                            "${text.vpnBytesRead}: ${vpnState.bytesRead}\n" +
+                            "${text.vpnIpv4PacketsRead}: ${vpnState.ipv4PacketsRead}\n" +
+                            "${text.vpnTcpPacketsRead}: ${vpnState.tcpPacketsRead}\n" +
+                            "${text.vpnUdpPacketsRead}: ${vpnState.udpPacketsRead}\n" +
+                            "${text.vpnIcmpPacketsRead}: ${vpnState.icmpPacketsRead}\n" +
+                            text.vpnHowToTestTun,
+                    )
                 }
             }
         }
@@ -1273,11 +1282,15 @@ internal class UiText(private val language: AppLanguage) {
     val networkControlSummary = vpnNoTrafficRoutingYet
     val vpnNoHiddenInterception = t("Нет скрытого перехвата", "No hidden interception", "没有隐藏拦截")
     val vpnPacketProcessingLater = t("Интернет должен остаться без изменений.", "Internet should remain unchanged.", "互联网应保持不变。")
-    val vpnLifecycleOnlyDetails = t("0.6.6-alpha по умолчанию создаёт минимальный route-less TUN с адресом 10.250.0.2/32 только для проверки VpnService. В режиме тестового маршрута явно добавляется только 203.0.113.0/24 (TEST-NET-3); runtime default-route enforcement, DNS-серверов, логирования payload, пересылки, прокси и VPN-движков нет.", "0.6.6-alpha creates a minimal route-less TUN with address 10.250.0.2/32 by default only to verify VpnService. Test-route mode explicitly adds only 203.0.113.0/24 (TEST-NET-3); there is no runtime default-route enforcement, DNS servers, payload logging, forwarding, proxying, or VPN engines.", "0.6.6-alpha 默认仅创建地址为 10.250.0.2/32 的最小无路由 TUN 来验证 VpnService。测试路由模式仅显式添加 203.0.113.0/24 (TEST-NET-3)；没有运行时默认路由执行、DNS 服务器、payload 日志、转发、代理或 VPN 引擎。")
+    val vpnLifecycleOnlyDetails = t("0.8.0-alpha по умолчанию создаёт минимальный route-less TUN с адресом 10.250.0.2/32 только для проверки VpnService. В режиме тестового маршрута явно добавляется только 203.0.113.0/24 (TEST-NET-3); runtime default-route enforcement, DNS-серверов, логирования payload, пересылки, прокси и VPN-движков нет.", "0.8.0-alpha creates a minimal route-less TUN with address 10.250.0.2/32 by default only to verify VpnService. Test-route mode explicitly adds only 203.0.113.0/24 (TEST-NET-3); there is no runtime default-route enforcement, DNS servers, payload logging, forwarding, proxying, or VPN engines.", "0.8.0-alpha 默认仅创建地址为 10.250.0.2/32 的最小无路由 TUN 来验证 VpnService。测试路由模式仅显式添加 203.0.113.0/24 (TEST-NET-3)；没有运行时默认路由执行、DNS 服务器、payload 日志、转发、代理或 VPN 引擎。")
     val vpnTestRoutePreview = t("Тестовый маршрут", "Test route preview", "测试路由预览")
     val vpnTestRoute = t("Тестовый маршрут: 203.0.113.0/24", "Test route: 203.0.113.0/24", "测试路由：203.0.113.0/24")
     val vpnPacketsRead = t("Прочитано пакетов", "Packets read", "已读取数据包")
     val vpnBytesRead = t("Прочитано байт", "Bytes read", "已读取字节")
+    val vpnIpv4PacketsRead = t("IPv4 пакеты", "IPv4 packets", "IPv4 数据包")
+    val vpnTcpPacketsRead = "TCP"
+    val vpnUdpPacketsRead = "UDP"
+    val vpnIcmpPacketsRead = "ICMP"
     val vpnNormalInternetUnchanged = t("Обычный интернет должен остаться без изменений", "Normal internet should remain unchanged", "正常互联网应保持不变")
     val vpnHowToTestTun = t("Откройте http://203.0.113.1 в браузере или выполните тестовое подключение к 203.0.113.1. Пакеты могут появиться здесь и будут отброшены.", "Open http://203.0.113.1 in a browser or run a test connection to 203.0.113.1. Packets may appear here and will be dropped.", "在浏览器中打开 http://203.0.113.1，或对 203.0.113.1 运行测试连接。数据包可能会显示在这里，并将被丢弃。")
     val vpnPermissionRequired = t("Требуется разрешение", "Permission required", "需要权限")

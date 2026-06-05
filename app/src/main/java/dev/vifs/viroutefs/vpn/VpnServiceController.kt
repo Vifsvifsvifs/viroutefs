@@ -30,6 +30,10 @@ internal data class VpnServiceUiState(
     val tunTestRouteActive: Boolean = false,
     val packetsRead: Long = 0L,
     val bytesRead: Long = 0L,
+    val ipv4PacketsRead: Long = 0L,
+    val tcpPacketsRead: Long = 0L,
+    val udpPacketsRead: Long = 0L,
+    val icmpPacketsRead: Long = 0L,
     val lastPacketAt: Long? = null,
 )
 
@@ -83,6 +87,10 @@ internal class VpnServiceController(context: Context) {
                         tunTestRouteActive = intent.getBooleanExtra(EXTRA_TEST_ROUTE_ACTIVE, false),
                         packetsRead = intent.getLongExtra(EXTRA_PACKETS_READ, 0L),
                         bytesRead = intent.getLongExtra(EXTRA_BYTES_READ, 0L),
+                        ipv4PacketsRead = intent.getLongExtra(EXTRA_IPV4_PACKETS_READ, 0L),
+                        tcpPacketsRead = intent.getLongExtra(EXTRA_TCP_PACKETS_READ, 0L),
+                        udpPacketsRead = intent.getLongExtra(EXTRA_UDP_PACKETS_READ, 0L),
+                        icmpPacketsRead = intent.getLongExtra(EXTRA_ICMP_PACKETS_READ, 0L),
                         lastPacketAt = intent.getLongExtra(EXTRA_LAST_PACKET_AT, NO_PACKET_TIME)
                             .takeUnless { it == NO_PACKET_TIME },
                     ),
@@ -108,9 +116,24 @@ internal class VpnServiceController(context: Context) {
         tunTestRouteActive: Boolean = false,
         packetsRead: Long = 0L,
         bytesRead: Long = 0L,
+        ipv4PacketsRead: Long = 0L,
+        tcpPacketsRead: Long = 0L,
+        udpPacketsRead: Long = 0L,
+        icmpPacketsRead: Long = 0L,
         lastPacketAt: Long? = null,
     ) {
-        val state = VpnServiceUiState(status, detail, tunTestRouteActive, packetsRead, bytesRead, lastPacketAt)
+        val state = VpnServiceUiState(
+            status = status,
+            detail = detail,
+            tunTestRouteActive = tunTestRouteActive,
+            packetsRead = packetsRead,
+            bytesRead = bytesRead,
+            ipv4PacketsRead = ipv4PacketsRead,
+            tcpPacketsRead = tcpPacketsRead,
+            udpPacketsRead = udpPacketsRead,
+            icmpPacketsRead = icmpPacketsRead,
+            lastPacketAt = lastPacketAt,
+        )
         ViRouteVpnService.rememberState(state)
         val intent = Intent(ACTION_STATE_CHANGED)
             .setPackage(appContext.packageName)
@@ -119,6 +142,10 @@ internal class VpnServiceController(context: Context) {
             .putExtra(EXTRA_TEST_ROUTE_ACTIVE, tunTestRouteActive)
             .putExtra(EXTRA_PACKETS_READ, packetsRead)
             .putExtra(EXTRA_BYTES_READ, bytesRead)
+            .putExtra(EXTRA_IPV4_PACKETS_READ, ipv4PacketsRead)
+            .putExtra(EXTRA_TCP_PACKETS_READ, tcpPacketsRead)
+            .putExtra(EXTRA_UDP_PACKETS_READ, udpPacketsRead)
+            .putExtra(EXTRA_ICMP_PACKETS_READ, icmpPacketsRead)
             .putExtra(EXTRA_LAST_PACKET_AT, lastPacketAt ?: NO_PACKET_TIME)
         appContext.sendBroadcast(intent)
     }
@@ -133,6 +160,10 @@ internal class VpnServiceController(context: Context) {
         internal const val EXTRA_TEST_ROUTE_ACTIVE = "test_route_active"
         internal const val EXTRA_PACKETS_READ = "packets_read"
         internal const val EXTRA_BYTES_READ = "bytes_read"
+        internal const val EXTRA_IPV4_PACKETS_READ = "ipv4_packets_read"
+        internal const val EXTRA_TCP_PACKETS_READ = "tcp_packets_read"
+        internal const val EXTRA_UDP_PACKETS_READ = "udp_packets_read"
+        internal const val EXTRA_ICMP_PACKETS_READ = "icmp_packets_read"
         internal const val EXTRA_LAST_PACKET_AT = "last_packet_at"
         internal const val NO_PACKET_TIME = -1L
     }

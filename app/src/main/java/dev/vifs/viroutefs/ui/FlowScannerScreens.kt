@@ -138,7 +138,7 @@ private fun FlowTunTestRouteRow(text: UiText, vpnState: VpnServiceUiState, onCli
             }
             Text("${text.flowRoute}: $TEST_ROUTE_CIDR", style = MaterialTheme.typography.bodySmall, maxLines = 1)
             Text(
-                "${text.flowPacketsRead}: ${vpnState.packetsRead} • ${text.flowBytesRead}: ${vpnState.bytesRead}",
+                "${text.flowPacketsRead}: ${vpnState.packetsRead} • ${text.vpnTcpPacketsRead}: ${vpnState.tcpPacketsRead} • ${text.vpnUdpPacketsRead}: ${vpnState.udpPacketsRead} • ${text.vpnIcmpPacketsRead}: ${vpnState.icmpPacketsRead}",
                 style = MaterialTheme.typography.labelSmall,
                 maxLines = 1,
             )
@@ -194,6 +194,10 @@ private fun FlowTunTestRouteDetailsScreen(
             FlowField(text.flowVpnMode, TEST_ROUTE_MODE)
             FlowField(text.flowPacketsRead, vpnState.packetsRead.toString())
             FlowField(text.flowBytesRead, vpnState.bytesRead.toString())
+            FlowField(text.vpnIpv4PacketsRead, vpnState.ipv4PacketsRead.toString())
+            FlowField(text.vpnTcpPacketsRead, vpnState.tcpPacketsRead.toString())
+            FlowField(text.vpnUdpPacketsRead, vpnState.udpPacketsRead.toString())
+            FlowField(text.vpnIcmpPacketsRead, vpnState.icmpPacketsRead.toString())
             FlowField(text.flowLastPacket, vpnState.lastPacketAt.formatPacketTime(text))
             FlowField(text.flowStatus, if (vpnState.isTunTestRouteActive) text.flowActive else text.flowInactive)
         }

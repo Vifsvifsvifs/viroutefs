@@ -123,6 +123,18 @@ internal fun VpnScreen(
                 vpnState.detail?.let { WarningText(it) }
             }
         }
+
+        item {
+            CardBlock {
+                Text(text.vpnPacketsRead, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                CounterLine(text.vpnPacketsRead, vpnState.packetsRead)
+                CounterLine(text.vpnBytesRead, vpnState.bytesRead)
+                CounterLine(text.vpnIpv4PacketsRead, vpnState.ipv4PacketsRead)
+                CounterLine(text.vpnTcpPacketsRead, vpnState.tcpPacketsRead)
+                CounterLine(text.vpnUdpPacketsRead, vpnState.udpPacketsRead)
+                CounterLine(text.vpnIcmpPacketsRead, vpnState.icmpPacketsRead)
+            }
+        }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 AssistChip(onClick = {}, label = { Text(text.profileCount(visibleProfiles.size)) })
@@ -144,6 +156,16 @@ internal fun VpnScreen(
             )
         }
     }
+}
+
+@Composable
+private fun CounterLine(label: String, value: Long) = Row(
+    modifier = Modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.SpaceBetween,
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    Text(label, style = MaterialTheme.typography.bodySmall)
+    Text(value.toString(), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
 }
 
 @Composable
