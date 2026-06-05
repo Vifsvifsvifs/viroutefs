@@ -30,3 +30,16 @@ The developer TEST-NET route is `203.0.113.0/24`. Packets routed into that previ
 ## 0.8.0-alpha packet counters
 
 The Android VpnService runtime skeleton now reads packets from the TUN ParcelFileDescriptor when the opt-in TEST-NET developer route is active. It parses IPv4 header metadata only and updates local counters for total packets, bytes, IPv4 packets, TCP, UDP, and ICMP. Packets are dropped after counting. There is no packet forwarding, SOCKS5 forwarding, VLESS, default-route capture, payload logging, telemetry, or background upload.
+
+## 0.8.2-alpha live route decision preview
+
+When the safe TUN preview observes IPv4 packets, FS can show a live route decision preview derived from packet header metadata only. Each in-memory summary includes protocol, source endpoint, destination endpoint, matched rule name when a non-default rule matches, selected profile name, selected profile type, and a warning when a SOCKS5 or VLESS-like profile is selected even though runtime forwarding is not enabled.
+
+Safety and privacy boundaries remain unchanged:
+
+- Observation only: packets are inspected locally and dropped.
+- The live list keeps only the last 50 summaries in memory.
+- No persistence of packet summaries.
+- No payload capture or payload display.
+- No packet forwarding, no SOCKS5 forwarding, no VLESS runtime, no TUN writes, and no DNS proxying.
+- No telemetry, cloud upload, analytics SDKs, ad SDKs, or tracking SDKs.

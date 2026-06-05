@@ -11,6 +11,8 @@ import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
 import androidx.core.content.ContextCompat
+import dev.vifs.viroutefs.routing.LiveRouteDecisionPreview
+import org.json.JSONObject
 
 internal enum class VpnServiceStatus {
     Off,
@@ -35,6 +37,7 @@ internal data class VpnServiceUiState(
     val udpPacketsRead: Long = 0L,
     val icmpPacketsRead: Long = 0L,
     val lastPacketAt: Long? = null,
+    val packetRoutePreviews: List<LiveRouteDecisionPreview> = emptyList(),
 )
 
 internal class VpnServiceController(context: Context) {
@@ -93,6 +96,9 @@ internal class VpnServiceController(context: Context) {
                         icmpPacketsRead = intent.getLongExtra(EXTRA_ICMP_PACKETS_READ, 0L),
                         lastPacketAt = intent.getLongExtra(EXTRA_LAST_PACKET_AT, NO_PACKET_TIME)
                             .takeUnless { it == NO_PACKET_TIME },
+                        packetRoutePreviews = intent.getStringArrayListExtra(EXTRA_PACKET_ROUTE_PREVIEWS)
+                            ?.mapNotNull { decodeRoutePreview(it) }
+                            ?: emptyList(),
                     ),
                 )
             }
@@ -121,6 +127,7 @@ internal class VpnServiceController(context: Context) {
         udpPacketsRead: Long = 0L,
         icmpPacketsRead: Long = 0L,
         lastPacketAt: Long? = null,
+        packetRoutePreviews: List<LiveRouteDecisionPreview> = emptyList(),
     ) {
         val state = VpnServiceUiState(
             status = status,
@@ -133,6 +140,7 @@ internal class VpnServiceController(context: Context) {
             udpPacketsRead = udpPacketsRead,
             icmpPacketsRead = icmpPacketsRead,
             lastPacketAt = lastPacketAt,
+            packetRoutePreviews = packetRoutePreviews,
         )
         ViRouteVpnService.rememberState(state)
         val intent = Intent(ACTION_STATE_CHANGED)
@@ -147,6 +155,10 @@ internal class VpnServiceController(context: Context) {
             .putExtra(EXTRA_UDP_PACKETS_READ, udpPacketsRead)
             .putExtra(EXTRA_ICMP_PACKETS_READ, icmpPacketsRead)
             .putExtra(EXTRA_LAST_PACKET_AT, lastPacketAt ?: NO_PACKET_TIME)
+            .putStringArrayListExtra(
+                EXTRA_PACKET_ROUTE_PREVIEWS,
+                ArrayList(packetRoutePreviews.map { encodeRoutePreview(it) }),
+            )
         appContext.sendBroadcast(intent)
     }
 
@@ -165,6 +177,34 @@ internal class VpnServiceController(context: Context) {
         internal const val EXTRA_UDP_PACKETS_READ = "udp_packets_read"
         internal const val EXTRA_ICMP_PACKETS_READ = "icmp_packets_read"
         internal const val EXTRA_LAST_PACKET_AT = "last_packet_at"
+        internal const val EXTRA_PACKET_ROUTE_PREVIEWS = "packet_route_previews"
         internal const val NO_PACKET_TIME = -1L
+
+        internal fun encodeRoutePreview(preview: LiveRouteDecisionPreview): String = JSONObject()
+            .put("observedAt", preview.observedAt)
+            .put("protocol", preview.protocol)
+            .put("source", preview.source)
+            .put("destination", preview.destination)
+            .put("matchedRuleName", preview.matchedRuleName)
+            .put("selectedProfileName", preview.selectedProfileName)
+            .put("selectedProfileType", preview.selectedProfileType)
+            .put("warning", preview.warning)
+            .put("decisionText", preview.decisionText)
+            .toString()
+
+        internal fun decodeRoutePreview(encoded: String): LiveRouteDecisionPreview? = runCatching {
+            val json = JSONObject(encoded)
+            LiveRouteDecisionPreview(
+                observedAt = json.optLong("observedAt"),
+                protocol = json.optString("protocol"),
+                source = json.optString("source"),
+                destination = json.optString("destination"),
+                matchedRuleName = json.optString("matchedRuleName").takeUnless { it.isBlank() || json.isNull("matchedRuleName") },
+                selectedProfileName = json.optString("selectedProfileName"),
+                selectedProfileType = json.optString("selectedProfileType"),
+                warning = json.optString("warning").takeUnless { it.isBlank() || json.isNull("warning") },
+                decisionText = json.optString("decisionText"),
+            )
+        }.getOrNull()
     }
 }

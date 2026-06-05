@@ -25,6 +25,7 @@ import dev.vifs.viroutefs.ScreenList
 import dev.vifs.viroutefs.StatusChip
 import dev.vifs.viroutefs.UiText
 import dev.vifs.viroutefs.WarningText
+import dev.vifs.viroutefs.routing.LiveRouteDecisionPreview
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
 import java.text.DateFormat
@@ -59,8 +60,11 @@ internal data class FlowEventUi(
 internal fun FlowScannerScreen(padding: PaddingValues, text: UiText, vpnState: VpnServiceUiState) {
     var selectedEventIndex by rememberSaveable { mutableStateOf<Int?>(null) }
     var liveDetailsOpen by rememberSaveable { mutableStateOf(false) }
+    var selectedPreviewIndex by rememberSaveable { mutableStateOf<Int?>(null) }
     val events = emptyList<FlowEventUi>()
+    val livePreviews = vpnState.packetRoutePreviews
     val selectedEvent = selectedEventIndex?.let { events.getOrNull(it) }
+    val selectedPreview = selectedPreviewIndex?.let { livePreviews.getOrNull(it) }
     val showLiveTestRoute = vpnState.tunTestRouteActive || vpnState.packetsRead > 0L || vpnState.bytesRead > 0L
 
     when {
@@ -69,6 +73,12 @@ internal fun FlowScannerScreen(padding: PaddingValues, text: UiText, vpnState: V
             text = text,
             vpnState = vpnState,
             onBack = { liveDetailsOpen = false },
+        )
+        selectedPreview != null -> LiveRoutePreviewDetailsScreen(
+            padding = padding,
+            text = text,
+            preview = selectedPreview,
+            onBack = { selectedPreviewIndex = null },
         )
         selectedEvent != null -> FlowEventDetailsScreen(
             padding = padding,
@@ -82,7 +92,9 @@ internal fun FlowScannerScreen(padding: PaddingValues, text: UiText, vpnState: V
             vpnState = vpnState,
             showLiveTestRoute = showLiveTestRoute,
             events = events,
+            livePreviews = livePreviews,
             onLiveEvent = { liveDetailsOpen = true },
+            onPreview = { selectedPreviewIndex = it },
             onEvent = { selectedEventIndex = it },
         )
     }
@@ -95,7 +107,9 @@ private fun FlowScannerListScreen(
     vpnState: VpnServiceUiState,
     showLiveTestRoute: Boolean,
     events: List<FlowEventUi>,
+    livePreviews: List<LiveRouteDecisionPreview>,
     onLiveEvent: () -> Unit,
+    onPreview: (Int) -> Unit,
     onEvent: (Int) -> Unit,
 ) = ScreenList(padding) {
     item { Header(text.flowScannerTitle, text.flowScannerSubtitle) }
@@ -103,9 +117,12 @@ private fun FlowScannerListScreen(
     if (showLiveTestRoute) {
         item { FlowTunTestRouteRow(text = text, vpnState = vpnState, onClick = onLiveEvent) }
     }
-    if (events.isEmpty() && !showLiveTestRoute) {
+    if (events.isEmpty() && livePreviews.isEmpty() && !showLiveTestRoute) {
         item { CardBlock { Text(text.flowEmptyState, style = MaterialTheme.typography.bodySmall) } }
     } else {
+        items(livePreviews.size) { index ->
+            LiveRoutePreviewRow(text = text, preview = livePreviews[index], onClick = { onPreview(index) })
+        }
         items(events.size) { index ->
             FlowEventRow(text = text, event = events[index], onClick = { onEvent(index) })
         }
@@ -147,6 +164,31 @@ private fun FlowTunTestRouteRow(text: UiText, vpnState: VpnServiceUiState, onCli
             Text(text.flowLastPacket, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall, maxLines = 1)
             Text(vpnState.lastPacketAt.formatPacketTime(text), style = MaterialTheme.typography.labelSmall, maxLines = 1)
             StatusChip(if (vpnState.isTunTestRouteActive) text.flowActive else text.flowInactive)
+        }
+    }
+}
+
+
+@Composable
+private fun LiveRoutePreviewRow(text: UiText, preview: LiveRouteDecisionPreview, onClick: () -> Unit) = CardBlock {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("${preview.protocol} ${preview.destination}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                StatusChip(text.flowLiveLocalTestData)
+            }
+            Text("${text.flowSource}: ${preview.source}", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            Text("${text.flowReason}: ${preview.matchedRuleName ?: "default rule fallback"}", style = MaterialTheme.typography.labelSmall, maxLines = 1)
+        }
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(0.9f)) {
+            Text(preview.selectedProfileName, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            StatusChip(preview.selectedProfileType)
         }
     }
 }
@@ -208,6 +250,43 @@ private fun FlowTunTestRouteDetailsScreen(
             Details(text.details, text.flowTunSafetyDetails)
             Text(text.flowHowToTest, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
             Text(text.flowTunHowToTest, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+    item { FlowLimitCard(text) }
+}
+
+
+@Composable
+private fun LiveRoutePreviewDetailsScreen(
+    padding: PaddingValues,
+    text: UiText,
+    preview: LiveRouteDecisionPreview,
+    onBack: () -> Unit,
+) = ScreenList(padding) {
+    item {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = onBack) { Text(text.back) }
+            Header("Live route decision", preview.destination)
+        }
+    }
+    item {
+        CardBlock {
+            FlowField(text.flowSource, preview.source)
+            FlowField(text.flowResolvedIp, preview.destination)
+            FlowField(text.flowPortProtocol, preview.protocol)
+            FlowField("Matched rule", preview.matchedRuleName ?: "Default rule fallback")
+            FlowField(text.flowSelectedRoute, preview.selectedProfileName)
+            FlowField("Profile type", preview.selectedProfileType)
+            FlowField(text.flowLastPacket, preview.observedAt.formatPacketTime(text))
+        }
+    }
+    item {
+        CardBlock {
+            Text(text.flowReason, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+            Text(preview.decisionText, style = MaterialTheme.typography.bodySmall)
+            preview.warning?.let { WarningText(it) }
+            Text(text.flowSafety, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+            Text("Observation-only preview. No packet forwarding, no TUN writes, no DNS proxying, no payload capture, and no traffic leaves the device through ViRouteFS.", style = MaterialTheme.typography.bodySmall)
         }
     }
     item { FlowLimitCard(text) }
