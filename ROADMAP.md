@@ -64,6 +64,14 @@ Focus: expand explicitly enabled outbound experiments after safe route handling 
 
 
 
+## 0.8.12-alpha TCP bridge architecture preparation
+
+- Add local TCP session identity, metadata, lifecycle states, and session-manager operations for future bridge work.
+- Add TCP bridge interfaces only; no runtime forwarding implementation is included.
+- Extend packet route preview with the observation-only line "Would create TCP session" for TCP metadata without creating sessions.
+- Show empty TCP session runtime statistics in the VPN Runtime screen.
+- Keep safety boundaries: no Android traffic proxying, no TUN writes, no REALITY, no UDP, no DNS proxying, no telemetry, and no cloud upload.
+
 ## 0.8.11-alpha VLESS response parser and diagnostics cleanup
 
 - Add a metadata-only VLESS response parser for user-triggered manual protocol probes.

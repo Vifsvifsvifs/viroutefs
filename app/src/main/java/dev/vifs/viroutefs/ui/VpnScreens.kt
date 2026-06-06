@@ -44,6 +44,7 @@ import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
+import dev.vifs.viroutefs.runtime.tcp.TcpSessionState
 import dev.vifs.viroutefs.socks5.Socks5DiagnosticResult
 import dev.vifs.viroutefs.socks5.Socks5DiagnosticState
 import dev.vifs.viroutefs.socks5.Socks5DiagnosticTestType
@@ -184,6 +185,9 @@ internal fun VpnScreen(
             }
         }
         item {
+            TcpSessionRuntimeCard(vpnState)
+        }
+        item {
             CardBlock {
                 Text(text.vpnPacketInspector, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 Text(text.vpnPacketInspectorPrivacy, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -243,6 +247,26 @@ internal fun VpnScreen(
 }
 
 @Composable
+private fun TcpSessionRuntimeCard(vpnState: VpnServiceUiState) {
+    CardBlock {
+        Text("TCP bridge preparation", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            "Observation-only architecture for future VLESS TCP sessions. Runtime forwarding is not enabled yet.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        CounterLine("Active sessions count", vpnState.activeTcpSessions.toLong())
+        Text("Session state statistics", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+        TcpSessionState.entries.forEach { state ->
+            CounterLine(state.name, (vpnState.tcpSessionStateStats[state] ?: 0).toLong())
+        }
+        if (vpnState.activeTcpSessions == 0) {
+            Text("No TCP sessions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
 private fun CounterLine(label: String, value: Long) = Row(
     modifier = Modifier.fillMaxWidth(),
     horizontalArrangement = Arrangement.SpaceBetween,
@@ -264,6 +288,9 @@ private fun PacketSummaryLine(summary: PacketSummary, routeDecisionPreview: Live
         Text(time, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(routeDecisionPreview.decisionLine, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(routeDecisionPreview.safetyLine, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        routeDecisionPreview.tcpSessionObservationLine?.let { observation ->
+            Text(observation, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         routeDecisionPreview.warnings.forEach { warning ->
             WarningText(warning)
         }
