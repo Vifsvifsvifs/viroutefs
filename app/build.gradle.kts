@@ -1,6 +1,7 @@
-import java.net.URI
 import java.io.BufferedInputStream
+import java.io.File
 import java.io.FileOutputStream
+import java.net.URI
 
 plugins {
     id("com.android.application")
@@ -87,38 +88,83 @@ android {
     }
 }
 
-val libXrayVersion = "v26.5.9"
-val libXrayFile = file("libs/libv2ray.aar")
+val libV2rayVersion = "v26.6.1"
+val libV2rayFile = file("libs/libv2ray.aar")
+val libV2rayDownloadUrls = listOf(
+    "https://github.com/2dust/AndroidLibXrayLite/releases/latest/download/libv2ray.aar",
+    "https://github.com/2dust/AndroidLibXrayLite/releases/download/$libV2rayVersion/libv2ray.aar",
+    "https://sourceforge.net/projects/androidlibxraylite.mirror/files/$libV2rayVersion/libv2ray.aar/download",
+)
 
-tasks.register("downloadLibXray") {
-    doLast {
-        if (!libXrayFile.exists()) {
-            libXrayFile.parentFile.mkdirs()
-            println("Downloading libv2ray.aar $libXrayVersion...")
-            val url = URI.create(
-                "https://github.com/2dust/AndroidLibXrayLite" +
-                    "/releases/download/$libXrayVersion/libv2ray.aar"
-            ).toURL()
-            BufferedInputStream(url.openStream()).use { input ->
-                FileOutputStream(libXrayFile).use { output ->
-                    input.copyTo(output)
-                }
-            }
-            println("Done.")
-        }
+repositories {
+    google()
+    mavenCentral()
+    flatDir {
+        dirs("libs")
     }
 }
 
+tasks.register("downloadLibv2ray") {
+    outputs.file(libV2rayFile)
+
+    doLast {
+        if (libV2rayFile.exists() && libV2rayFile.length() > 0L) {
+            println("libv2ray.aar already exists at ${libV2rayFile.relativeTo(projectDir)}.")
+            return@doLast
+        }
+
+        libV2rayFile.parentFile.mkdirs()
+        val temporaryFile = File(libV2rayFile.parentFile, "${libV2rayFile.name}.download")
+        var lastError: Throwable? = null
+
+        for (downloadUrl in libV2rayDownloadUrls) {
+            println("Downloading libv2ray.aar $libV2rayVersion from $downloadUrl ...")
+            runCatching {
+                temporaryFile.delete()
+                val connection = URI.create(downloadUrl).toURL().openConnection().apply {
+                    connectTimeout = 30_000
+                    readTimeout = 120_000
+                    setRequestProperty("User-Agent", "ViRouteFS Gradle libv2ray downloader")
+                }
+                BufferedInputStream(connection.getInputStream()).use { input ->
+                    FileOutputStream(temporaryFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                check(temporaryFile.length() > 0L) { "Downloaded libv2ray.aar is empty." }
+                check(temporaryFile.renameTo(libV2rayFile)) { "Could not move downloaded libv2ray.aar into app/libs." }
+                println("Downloaded libv2ray.aar to ${libV2rayFile.relativeTo(projectDir)}.")
+                return@doLast
+            }.onFailure { error ->
+                lastError = error
+                println("libv2ray.aar download failed from $downloadUrl: ${error.message ?: error::class.java.simpleName}")
+            }
+        }
+
+        temporaryFile.delete()
+        throw GradleException(
+            "Unable to download libv2ray.aar $libV2rayVersion. " +
+                "Create app/libs manually and place libv2ray.aar there, then run Gradle again.",
+            lastError,
+        )
+    }
+}
+
+tasks.register("downloadLibXray") {
+    dependsOn("downloadLibv2ray")
+}
+
 tasks.named("preBuild") {
-    dependsOn("downloadLibXray")
+    dependsOn("downloadLibv2ray")
 }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
 
+    implementation(files("libs/libv2ray.aar"))
     implementation(fileTree(mapOf(
         "dir" to "libs",
-        "include" to listOf("*.aar", "*.jar")
+        "include" to listOf("*.jar")
     )))
     implementation(composeBom)
     androidTestImplementation(composeBom)
@@ -130,6 +176,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
