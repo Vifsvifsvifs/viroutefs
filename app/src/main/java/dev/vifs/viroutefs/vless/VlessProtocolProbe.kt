@@ -5,8 +5,6 @@ package dev.vifs.viroutefs.vless
 import dev.vifs.viroutefs.vless.protocol.buildVlessTcpRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.IOException
-import javax.net.ssl.SSLException
 import javax.net.ssl.SSLParameters
 import javax.net.ssl.SNIServerName
 import javax.net.ssl.SNIHostName
@@ -21,7 +19,7 @@ import kotlin.system.measureTimeMillis
 
 const val VLESS_PROTOCOL_PROBE_NOTICE = "Manual VLESS probe sends a minimal VLESS request over plain TCP or TLS, then reads response metadata only. Runtime forwarding is not enabled."
 const val VLESS_RESPONSE_PROBE_METADATA_NOTICE = "Response probe reads metadata only. Payload bytes are not shown or stored."
-const val VLESS_REALITY_UNSUPPORTED_MESSAGE = "REALITY transport is not implemented yet."
+const val VLESS_REALITY_UNSUPPORTED_MESSAGE = "Security mode not supported"
 private const val DEFAULT_PROBE_CONNECT_TIMEOUT_MS = 5_000
 private const val DEFAULT_PROBE_WAIT_TIMEOUT_MS = 750
 private const val RESPONSE_PROBE_BUFFER_BYTES = 256
@@ -57,11 +55,20 @@ data class VlessProtocolProbeResult(
     val steps: List<VlessProtocolProbeState> = emptyList(),
     val securityMode: VlessSecurityMode = VlessSecurityMode.NONE,
     val responseBytes: Int = 0,
+    val classification: VlessResponseClassification = state.toVlessResponseClassification(),
 ) {
+    val responseMetadata: VlessResponseMetadata
+        get() = VlessResponseMetadata(
+            classification = classification,
+            byteCount = responseBytes,
+            elapsedMs = elapsedMs,
+            securityMode = securityMode,
+        )
+
     val displayMessage: String
         get() = buildString {
-            append(state.label)
-            if (message.isNotBlank()) append(": ${message.sanitizeVlessReachabilityMessage()}")
+            append(responseMetadata.safeMessage)
+            if (message.isNotBlank()) append(" • ${message.sanitizeVlessReachabilityMessage()}")
             if (responseBytes > 0) append(" • response bytes: $responseBytes")
             elapsedMs?.let { append(" (${it} ms)") }
         }
@@ -93,16 +100,18 @@ class VlessProtocolProber(
         val cleanServerHost = profile.host.trim()
         val cleanTargetHost = targetHost.trim()
         val securityMode = profile.securityMode
-        if (securityMode == VlessSecurityMode.REALITY) {
+        if (securityMode == VlessSecurityMode.REALITY || !profile.transportType.isVlessManualProbeTransportSupported()) {
+            val metadata = VlessResponseParser.unsupportedTransport(securityMode)
             return VlessProtocolProbeResult(
                 serverHost = cleanServerHost,
                 serverPort = profile.port,
                 targetHost = cleanTargetHost,
                 targetPort = targetPort,
                 timestamp = now,
-                state = VlessProtocolProbeState.UnsupportedSecurityMode,
-                message = VLESS_REALITY_UNSUPPORTED_MESSAGE,
+                state = metadata.classification.toProbeState(),
+                message = metadata.safeMessage,
                 securityMode = securityMode,
+                classification = metadata.classification,
             )
         }
 
@@ -117,15 +126,17 @@ class VlessProtocolProber(
                 state = VlessProtocolProbeState.ValidationError,
                 message = validationErrors.joinToString(" ").sanitizeVlessReachabilityMessage(),
                 securityMode = securityMode,
+                classification = VlessResponseClassification.ValidationError,
             )
         }
 
         val steps = mutableListOf<VlessProtocolProbeState>()
         var elapsedMs: Long? = null
         val outcome = runCatching {
-            var finalState: VlessProtocolProbeState = VlessProtocolProbeState.Timeout
-            var finalMessage = "Timed out while waiting for the server response."
-            var finalResponseBytes = 0
+            var finalMetadata = VlessResponseMetadata(
+                classification = VlessResponseClassification.Timeout,
+                securityMode = securityMode,
+            )
             elapsedMs = measureTimeMillis {
                 socketFactory().use { socket ->
                     socket.connect(InetSocketAddress(cleanServerHost, profile.port), connectTimeoutMs)
@@ -143,21 +154,11 @@ class VlessProtocolProber(
                         probeSocket.soTimeout = waitTimeoutMs
                         val responseBuffer = ByteArray(RESPONSE_PROBE_BUFFER_BYTES)
                         val responseByteCount = probeSocket.getInputStream().read(responseBuffer)
-                        when {
-                            responseByteCount > 0 -> {
-                                finalState = VlessProtocolProbeState.ResponseReceived
-                                finalMessage = "Response metadata received after the minimal VLESS request frame. Payload bytes were not shown or stored."
-                                finalResponseBytes = responseByteCount
-                            }
-                            responseByteCount == -1 -> {
-                                finalState = VlessProtocolProbeState.ServerClosedConnection
-                                finalMessage = "Server closed the connection after receiving the minimal VLESS request frame."
-                            }
-                            else -> {
-                                finalState = VlessProtocolProbeState.InvalidEmptyResponse
-                                finalMessage = "Read returned an empty response after the minimal VLESS request frame. No payload bytes were stored."
-                            }
-                        }
+                        finalMetadata = VlessResponseParser.fromReadResult(
+                            readByteCount = responseByteCount,
+                            elapsedMs = null,
+                            securityMode = securityMode,
+                        )
                     } finally {
                         if (probeSocket !== socket) probeSocket.close()
                     }
@@ -169,37 +170,38 @@ class VlessProtocolProber(
                 targetHost = cleanTargetHost,
                 targetPort = targetPort,
                 timestamp = System.currentTimeMillis(),
-                state = finalState,
-                message = finalMessage,
+                state = finalMetadata.classification.toProbeState(),
+                message = finalMetadata.safeMessage,
                 elapsedMs = elapsedMs,
-                steps = steps + finalState,
+                steps = steps + finalMetadata.classification.toProbeState(),
                 securityMode = securityMode,
-                responseBytes = finalResponseBytes,
+                responseBytes = finalMetadata.byteCount,
+                classification = finalMetadata.classification,
             )
         }
         return outcome.getOrElse { error ->
+            val metadata = when (error) {
+                is ConnectException, is UnknownHostException -> VlessResponseMetadata(
+                    classification = VlessResponseClassification.InvalidResponse,
+                    elapsedMs = elapsedMs,
+                    securityMode = securityMode,
+                )
+                else -> VlessResponseParser.fromFailure(
+                    error = error,
+                    elapsedMs = elapsedMs,
+                    securityMode = securityMode,
+                    requestSent = steps.contains(VlessProtocolProbeState.VlessRequestSent),
+                )
+            }
             val state = when (error) {
+                is ConnectException -> VlessProtocolProbeState.Refused
+                is UnknownHostException -> VlessProtocolProbeState.HostDnsError
                 is SocketTimeoutException -> if (steps.contains(VlessProtocolProbeState.VlessRequestSent)) {
-                    VlessProtocolProbeState.RequestSentNoImmediateResponse
+                    metadata.classification.toProbeState()
                 } else {
                     VlessProtocolProbeState.Timeout
                 }
-                is SSLException -> VlessProtocolProbeState.TlsHandshakeFailed
-                is ConnectException -> VlessProtocolProbeState.Refused
-                is UnknownHostException -> VlessProtocolProbeState.HostDnsError
-                is SecurityException, is IllegalArgumentException -> VlessProtocolProbeState.ValidationError
-                is IOException -> if (steps.contains(VlessProtocolProbeState.VlessRequestSent)) {
-                    VlessProtocolProbeState.ServerClosedConnection
-                } else {
-                    VlessProtocolProbeState.HostDnsError
-                }
-                else -> VlessProtocolProbeState.HostDnsError
-            }
-            val message = when (state) {
-                VlessProtocolProbeState.RequestSentNoImmediateResponse -> "Minimal VLESS request was sent; no immediate response arrived during the short metadata-only wait window."
-                VlessProtocolProbeState.ServerKeptConnectionBriefly -> "Server kept the connection open for the brief probe wait window."
-                VlessProtocolProbeState.TlsHandshakeFailed -> "TLS handshake failed: ${error.message ?: state.label}"
-                else -> error.message ?: state.label
+                else -> metadata.classification.toProbeState()
             }
             VlessProtocolProbeResult(
                 serverHost = cleanServerHost,
@@ -208,10 +210,12 @@ class VlessProtocolProber(
                 targetPort = targetPort,
                 timestamp = System.currentTimeMillis(),
                 state = state,
-                message = message.sanitizeVlessReachabilityMessage(),
+                message = metadata.safeMessage.sanitizeVlessReachabilityMessage(),
                 elapsedMs = elapsedMs,
                 steps = if (steps.isEmpty()) listOf(state) else steps + state,
                 securityMode = securityMode,
+                responseBytes = metadata.byteCount,
+                classification = metadata.classification,
             )
         }
     }
@@ -228,6 +232,8 @@ class VlessProtocolProber(
 }
 
 fun VlessProfileConfig.vlessProbeSniHost(): String = sni?.trim()?.takeIf { it.isNotBlank() } ?: host.trim()
+
+fun String?.isVlessManualProbeTransportSupported(): Boolean = this?.trim().isNullOrBlank() || this?.trim().equals("tcp", ignoreCase = true)
 
 private fun SSLParameters.withServerName(host: String): SSLParameters = apply {
     serverNames = listOf<SNIServerName>(SNIHostName(host))

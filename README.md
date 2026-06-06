@@ -17,9 +17,9 @@ ViRouteFS is **free software** licensed under **GPL-3.0-or-later**. The project 
 - No hidden interception of third-party traffic.
 - No offensive security features.
 
-## Current status: 0.8.8-alpha
+## Current status: 0.8.11-alpha
 
-Version `0.8.8-alpha` adds a user-triggered manual plain-TCP VLESS protocol probe for saved VLESS profiles. It connects to the configured VLESS server, sends one minimal locally built VLESS TCP request frame to a user-selected target, stores privacy-safe local no-backup history, and still does not enable runtime forwarding, Android traffic forwarding, TUN writes, DNS proxying, TLS/REALITY/XTLS, auto-testing, telemetry, or cloud upload. Version `0.8.7-alpha` added pure/local VLESS TCP request encoding for later manual handshake diagnostics without runtime forwarding, TLS/REALITY/XTLS, or UUID logging. Version `0.8.5-alpha` added explicit VLESS URI import/export for local configuration only and keeps the 0.8.x local packet-inspection safety boundary. Version `0.8.1-alpha` added a local in-memory packet inspector to the Android VpnService runtime skeleton. The app requests Android VPN permission, establishes the existing safe TUN preview, reads packets from the ParcelFileDescriptor in the opt-in TEST-NET developer route mode, parses IPv4 metadata locally, and shows the latest 50 packet summaries newest first in the VPN Runtime screen. Summaries contain timestamp, protocol, IPv4 source/destination addresses, TCP/UDP ports when present, and packet size. Packets are counted and dropped only; there is still no packet forwarding, no SOCKS5 forwarding, no VLESS runtime forwarding, no DNS proxying, no default route capture, no payload capture, no payload logging, no PCAP export, no persistence, no telemetry, and no background upload.
+Version `0.8.11-alpha` adds a metadata-only VLESS response parser and diagnostics cleanup for manual probes. VLESS remains config-only: no runtime forwarding, no Android traffic forwarding, no TUN writes, no DNS proxying, no REALITY/XTLS implementation, no auto-testing, and no telemetry/cloud upload. Version `0.8.8-alpha` adds a user-triggered manual plain-TCP VLESS protocol probe for saved VLESS profiles. It connects to the configured VLESS server, sends one minimal locally built VLESS TCP request frame to a user-selected target, stores privacy-safe local no-backup history, and still does not enable runtime forwarding, Android traffic forwarding, TUN writes, DNS proxying, TLS/REALITY/XTLS, auto-testing, telemetry, or cloud upload. Version `0.8.7-alpha` added pure/local VLESS TCP request encoding for later manual handshake diagnostics without runtime forwarding, TLS/REALITY/XTLS, or UUID logging. Version `0.8.5-alpha` added explicit VLESS URI import/export for local configuration only and keeps the 0.8.x local packet-inspection safety boundary. Version `0.8.1-alpha` added a local in-memory packet inspector to the Android VpnService runtime skeleton. The app requests Android VPN permission, establishes the existing safe TUN preview, reads packets from the ParcelFileDescriptor in the opt-in TEST-NET developer route mode, parses IPv4 metadata locally, and shows the latest 50 packet summaries newest first in the VPN Runtime screen. Summaries contain timestamp, protocol, IPv4 source/destination addresses, TCP/UDP ports when present, and packet size. Packets are counted and dropped only; there is still no packet forwarding, no SOCKS5 forwarding, no VLESS runtime forwarding, no DNS proxying, no default route capture, no payload capture, no payload logging, no PCAP export, no persistence, no telemetry, and no background upload.
 
 What exists now:
 
@@ -47,6 +47,12 @@ What is intentionally not implemented yet:
 - No Play Store or F-Droid release is claimed yet.
 - No background update checks, automatic APK downloads, silent install behavior, telemetry, analytics, tracking, ads, or cloud upload.
 
+
+## 0.8.11-alpha VLESS response parser and diagnostics cleanup
+
+ViRouteFS 0.8.11-alpha adds a metadata-only parser for manual VLESS protocol probe responses. The parser classifies manual probe results as response received, empty response, timeout, server closed, invalid response, TLS handshake failed, unsupported transport, or validation error. It extracts only byte count, elapsed milliseconds, and security mode. Raw response payloads and UUID values are not displayed or stored. Local no-backup history remains capped at 20 entries per profile. Route decision previews now include the latest safe VLESS diagnostic classification while continuing to state that VLESS is config-only and runtime forwarding is not enabled.
+
+VLESS remains config-only in 0.8.11-alpha: no runtime VLESS forwarding, no Android traffic forwarding, no packets written back to TUN, no DNS proxying, no REALITY/XTLS, no automatic tests, no telemetry, and no cloud upload are implemented.
 
 ## 0.8.8-alpha manual VLESS protocol probe
 

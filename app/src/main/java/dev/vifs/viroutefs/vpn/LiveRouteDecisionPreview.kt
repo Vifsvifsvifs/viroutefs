@@ -12,6 +12,8 @@ internal const val SOCKS5_RUNTIME_FORWARDING_NOT_ENABLED =
     "Selected profile is SOCKS5. Runtime forwarding is not enabled yet."
 internal const val VLESS_RUNTIME_FORWARDING_NOT_ENABLED =
     "Selected profile is VLESS. Runtime forwarding is not enabled yet."
+internal const val VLESS_ROUTE_PREVIEW_RESPONSE_UNTESTED =
+    "Latest manual VLESS response classification: not tested."
 internal const val REMOTE_RUNTIME_FORWARDING_NOT_ENABLED =
     "Selected profile requires runtime forwarding, which is not enabled yet."
 internal const val OBSERVATION_ONLY_NO_FORWARDING =
@@ -60,7 +62,10 @@ internal class LiveRouteDecisionPreviewer(config: RoutingConfig) {
     private fun TunnelProfile.runtimeForwardingWarnings(): List<String> = when (type) {
         TunnelType.Socks5,
         TunnelType.Socks5Mock -> listOf(SOCKS5_RUNTIME_FORWARDING_NOT_ENABLED)
-        TunnelType.VLESS -> listOf(VLESS_RUNTIME_FORWARDING_NOT_ENABLED)
+        TunnelType.VLESS -> buildList {
+            add(VLESS_RUNTIME_FORWARDING_NOT_ENABLED)
+            add(vless?.status.toVlessRoutePreviewClassificationLine())
+        }
         TunnelType.Direct,
         TunnelType.Block -> emptyList()
         else -> if (mockOnly || type.remoteRuntimeForwardingRequired()) {
@@ -68,6 +73,16 @@ internal class LiveRouteDecisionPreviewer(config: RoutingConfig) {
         } else {
             emptyList()
         }
+    }
+
+    private fun dev.vifs.viroutefs.vless.VlessProfileStatus?.toVlessRoutePreviewClassificationLine(): String = when (this) {
+        dev.vifs.viroutefs.vless.VlessProfileStatus.TcpReachable -> "Latest manual VLESS response classification: response received or server reachable."
+        dev.vifs.viroutefs.vless.VlessProfileStatus.LastTestFailed -> "Latest manual VLESS response classification: needs attention."
+        dev.vifs.viroutefs.vless.VlessProfileStatus.Invalid -> "Latest manual VLESS response classification: validation error."
+        dev.vifs.viroutefs.vless.VlessProfileStatus.Testing -> "Latest manual VLESS response classification: testing."
+        dev.vifs.viroutefs.vless.VlessProfileStatus.ConfigReady -> "Latest manual VLESS response classification: config ready, not probed."
+        dev.vifs.viroutefs.vless.VlessProfileStatus.NotTested,
+        null -> VLESS_ROUTE_PREVIEW_RESPONSE_UNTESTED
     }
 
     private fun TunnelType.remoteRuntimeForwardingRequired(): Boolean = when (this) {

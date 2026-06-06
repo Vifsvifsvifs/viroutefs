@@ -6,7 +6,7 @@ ViRouteFS `0.8.8-alpha` added an explicit manual plain-TCP VLESS protocol probe 
 
 ViRouteFS `0.8.9-alpha` extends the same user-triggered manual VLESS protocol probe for `security=tls`. TLS probes validate the profile, open TCP to the VLESS server, wrap the connection in TLS, set SNI from the profile SNI or default to the profile host, complete the TLS handshake, send the existing minimal VLESS TCP request frame over TLS, wait briefly for close/error/timeout, and close the socket. The TLS probe sends no HTTP payload and stores only privacy-safe local no-backup history.
 
-ViRouteFS `0.8.10-alpha` adds response classification to the manual probe. After sending the minimal VLESS TCP request frame over the existing plain-TCP or TLS path, the probe reads a small response buffer with a short timeout and records only metadata: classification, elapsed time, response byte count, target, and security mode. Response payload bytes are discarded immediately, never displayed, and never stored.
+ViRouteFS `0.8.11-alpha` cleans up response classification through a metadata-only parser. ViRouteFS `0.8.10-alpha` adds response classification to the manual probe. After sending the minimal VLESS TCP request frame over the existing plain-TCP or TLS path, the probe reads a small response buffer with a short timeout and records only metadata: classification, elapsed time, response byte count, target, and security mode. Response payload bytes are discarded immediately, never displayed, and never stored.
 
 ## What is included in 0.8.7-alpha
 
@@ -21,7 +21,7 @@ ViRouteFS `0.8.10-alpha` adds response classification to the manual probe. After
 - Local validation for UUID, host, port, and unsupported address types.
 - A safe debug summary helper for tests/developer diagnostics that reports frame length and metadata without printing the UUID or full raw frame bytes.
 
-## What is included through 0.8.10-alpha
+## What is included through 0.8.11-alpha
 
 - Manual plain-TCP VLESS protocol probe from the VLESS profile screen.
 - Manual TLS VLESS protocol probe from the VLESS profile screen for `security=tls`.

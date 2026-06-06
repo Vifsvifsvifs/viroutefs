@@ -580,6 +580,7 @@ private fun VlessProfileEditorScreen(
                 elapsedMs = result.elapsedMs,
                 securityMode = result.securityMode,
                 responseBytes = result.responseBytes,
+                classification = result.classification,
             ),
         )
         protocolProbeHistory = protocolProbeHistoryStore.recentForProfile(profile.id)
@@ -702,7 +703,7 @@ private fun VlessProfileEditorScreen(
                     },
                 ) { Text("Run VLESS probe") }
                 currentProtocolProbe?.let { result ->
-                    Text("Response classification: ${result.state.label}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                    Text("Response classification: ${result.classification.label}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                     Text("Result: ${result.displayMessage}", style = MaterialTheme.typography.bodySmall)
                     Text("Response bytes: ${result.responseBytes}", style = MaterialTheme.typography.bodySmall)
                     result.elapsedMs?.let { Text("Elapsed: $it ms", style = MaterialTheme.typography.bodySmall) }
@@ -865,7 +866,7 @@ private fun VlessTcpReachabilityHistoryItem.historyLabel(): String {
 private fun VlessProtocolProbeHistoryItem.historyLabel(): String {
     val time = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(timestamp))
     val latency = elapsedMs?.let { " (${it} ms)" }.orEmpty()
-    return "$time • $serverHost:$serverPort → $targetHost:$targetPort • security=${securityMode.wireName} • ${state.label} • responseBytes=$responseBytes$latency • ${message.sanitizeForHistoryLabel()}"
+    return "$time • $serverHost:$serverPort → $targetHost:$targetPort • security=${securityMode.wireName} • ${classification.label} • responseBytes=$responseBytes$latency • ${message.sanitizeForHistoryLabel()}"
 }
 
 @Composable
