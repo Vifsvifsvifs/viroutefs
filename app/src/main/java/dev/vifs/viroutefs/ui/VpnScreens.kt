@@ -59,6 +59,7 @@ import dev.vifs.viroutefs.socks5.validateSocks5Profile
 import dev.vifs.viroutefs.vless.VLESS_NO_HANDSHAKE_NOTICE
 import dev.vifs.viroutefs.vless.VLESS_PROTOCOL_PROBE_NOTICE
 import dev.vifs.viroutefs.vless.VLESS_REALITY_UNSUPPORTED_MESSAGE
+import dev.vifs.viroutefs.vless.VLESS_RESPONSE_PROBE_METADATA_NOTICE
 import dev.vifs.viroutefs.vless.VlessProtocolProbeHistoryItem
 import dev.vifs.viroutefs.vless.VlessProtocolProbeHistoryStore
 import dev.vifs.viroutefs.vless.VlessProtocolProbeResult
@@ -578,6 +579,7 @@ private fun VlessProfileEditorScreen(
                 message = result.message,
                 elapsedMs = result.elapsedMs,
                 securityMode = result.securityMode,
+                responseBytes = result.responseBytes,
             ),
         )
         protocolProbeHistory = protocolProbeHistoryStore.recentForProfile(profile.id)
@@ -679,6 +681,7 @@ private fun VlessProfileEditorScreen(
                     Text("SNI used for TLS: ${probeDraft.vlessProbeSniHost()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Text("security=none uses the existing plain TCP probe path. security=tls opens TLS first, sends the same minimal VLESS request frame, and sends no HTTP payload. REALITY reports: $VLESS_REALITY_UNSUPPORTED_MESSAGE", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                WarningText(VLESS_RESPONSE_PROBE_METADATA_NOTICE)
                 OutlinedTextField(probeTargetHost, { probeTargetHost = it }, label = { Text("Target host") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(probeTargetPortText, { probeTargetPortText = it }, label = { Text("Target port") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Button(
@@ -699,7 +702,9 @@ private fun VlessProfileEditorScreen(
                     },
                 ) { Text("Run VLESS probe") }
                 currentProtocolProbe?.let { result ->
+                    Text("Response classification: ${result.state.label}", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                     Text("Result: ${result.displayMessage}", style = MaterialTheme.typography.bodySmall)
+                    Text("Response bytes: ${result.responseBytes}", style = MaterialTheme.typography.bodySmall)
                     result.elapsedMs?.let { Text("Elapsed: $it ms", style = MaterialTheme.typography.bodySmall) }
                     if (result.steps.isNotEmpty()) {
                         Text("States: ${result.steps.joinToString(" → ") { it.label }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -709,13 +714,14 @@ private fun VlessProfileEditorScreen(
                     Text("Save the VLESS profile first so the manual protocol probe result can be stored in local no-backup history.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Text("The probe sends only the locally built VLESS TCP request frame and no HTTP payload, Android traffic, DNS proxy traffic, or packets back to TUN.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Only elapsed time, response classification, response byte count, target, and security mode are stored; response payload bytes are discarded immediately.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         if (profile != null) {
             item {
                 CardBlock {
                     Text("Last manual VLESS protocol probe history", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
-                    Text("Stored locally in app no-backup storage; newest first, last 20 per profile. UUID and raw frame bytes are never stored in this history.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Stored locally in app no-backup storage; newest first, last 20 per profile. UUID, raw frame bytes, and response payload bytes are never stored in this history.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (protocolProbeHistory.isEmpty()) {
                         Text(text.none, style = MaterialTheme.typography.bodySmall)
                     } else {
@@ -859,7 +865,7 @@ private fun VlessTcpReachabilityHistoryItem.historyLabel(): String {
 private fun VlessProtocolProbeHistoryItem.historyLabel(): String {
     val time = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(timestamp))
     val latency = elapsedMs?.let { " (${it} ms)" }.orEmpty()
-    return "$time • $serverHost:$serverPort → $targetHost:$targetPort • security=${securityMode.wireName} • ${state.label}$latency • ${message.sanitizeForHistoryLabel()}"
+    return "$time • $serverHost:$serverPort → $targetHost:$targetPort • security=${securityMode.wireName} • ${state.label} • responseBytes=$responseBytes$latency • ${message.sanitizeForHistoryLabel()}"
 }
 
 @Composable

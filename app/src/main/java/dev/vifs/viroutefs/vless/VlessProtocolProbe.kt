@@ -19,10 +19,12 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import kotlin.system.measureTimeMillis
 
-const val VLESS_PROTOCOL_PROBE_NOTICE = "TLS probe sends a minimal VLESS request over TLS for diagnostics only. Runtime forwarding is not enabled."
+const val VLESS_PROTOCOL_PROBE_NOTICE = "Manual VLESS probe sends a minimal VLESS request over plain TCP or TLS, then reads response metadata only. Runtime forwarding is not enabled."
+const val VLESS_RESPONSE_PROBE_METADATA_NOTICE = "Response probe reads metadata only. Payload bytes are not shown or stored."
 const val VLESS_REALITY_UNSUPPORTED_MESSAGE = "REALITY transport is not implemented yet."
 private const val DEFAULT_PROBE_CONNECT_TIMEOUT_MS = 5_000
 private const val DEFAULT_PROBE_WAIT_TIMEOUT_MS = 750
+private const val RESPONSE_PROBE_BUFFER_BYTES = 256
 
 sealed interface VlessProtocolProbeState {
     val label: String
@@ -31,8 +33,11 @@ sealed interface VlessProtocolProbeState {
     data object TlsHandshakeSuccess : VlessProtocolProbeState { override val label = "TLS handshake success" }
     data object TlsHandshakeFailed : VlessProtocolProbeState { override val label = "TLS handshake failed" }
     data object VlessRequestSent : VlessProtocolProbeState { override val label = "VLESS request sent" }
+    data object RequestSentNoImmediateResponse : VlessProtocolProbeState { override val label = "Request sent, no immediate response" }
+    data object ResponseReceived : VlessProtocolProbeState { override val label = "Response received" }
     data object ServerKeptConnectionBriefly : VlessProtocolProbeState { override val label = "Server kept connection briefly" }
     data object ServerClosedConnection : VlessProtocolProbeState { override val label = "Server closed connection" }
+    data object InvalidEmptyResponse : VlessProtocolProbeState { override val label = "Invalid/empty response" }
     data object Timeout : VlessProtocolProbeState { override val label = "Timeout" }
     data object Refused : VlessProtocolProbeState { override val label = "Refused" }
     data object HostDnsError : VlessProtocolProbeState { override val label = "Host/DNS error" }
@@ -51,11 +56,13 @@ data class VlessProtocolProbeResult(
     val elapsedMs: Long? = null,
     val steps: List<VlessProtocolProbeState> = emptyList(),
     val securityMode: VlessSecurityMode = VlessSecurityMode.NONE,
+    val responseBytes: Int = 0,
 ) {
     val displayMessage: String
         get() = buildString {
             append(state.label)
             if (message.isNotBlank()) append(": ${message.sanitizeVlessReachabilityMessage()}")
+            if (responseBytes > 0) append(" • response bytes: $responseBytes")
             elapsedMs?.let { append(" (${it} ms)") }
         }
 }
@@ -118,6 +125,7 @@ class VlessProtocolProber(
         val outcome = runCatching {
             var finalState: VlessProtocolProbeState = VlessProtocolProbeState.Timeout
             var finalMessage = "Timed out while waiting for the server response."
+            var finalResponseBytes = 0
             elapsedMs = measureTimeMillis {
                 socketFactory().use { socket ->
                     socket.connect(InetSocketAddress(cleanServerHost, profile.port), connectTimeoutMs)
@@ -133,13 +141,22 @@ class VlessProtocolProber(
                         probeSocket.getOutputStream().flush()
                         steps += VlessProtocolProbeState.VlessRequestSent
                         probeSocket.soTimeout = waitTimeoutMs
-                        val read = probeSocket.getInputStream().read()
-                        if (read == -1) {
-                            finalState = VlessProtocolProbeState.ServerClosedConnection
-                            finalMessage = "Server closed the connection after receiving the minimal VLESS request frame."
-                        } else {
-                            finalState = VlessProtocolProbeState.ServerKeptConnectionBriefly
-                            finalMessage = "Server kept the connection open briefly after receiving the minimal VLESS request frame."
+                        val responseBuffer = ByteArray(RESPONSE_PROBE_BUFFER_BYTES)
+                        val responseByteCount = probeSocket.getInputStream().read(responseBuffer)
+                        when {
+                            responseByteCount > 0 -> {
+                                finalState = VlessProtocolProbeState.ResponseReceived
+                                finalMessage = "Response metadata received after the minimal VLESS request frame. Payload bytes were not shown or stored."
+                                finalResponseBytes = responseByteCount
+                            }
+                            responseByteCount == -1 -> {
+                                finalState = VlessProtocolProbeState.ServerClosedConnection
+                                finalMessage = "Server closed the connection after receiving the minimal VLESS request frame."
+                            }
+                            else -> {
+                                finalState = VlessProtocolProbeState.InvalidEmptyResponse
+                                finalMessage = "Read returned an empty response after the minimal VLESS request frame. No payload bytes were stored."
+                            }
                         }
                     } finally {
                         if (probeSocket !== socket) probeSocket.close()
@@ -157,12 +174,13 @@ class VlessProtocolProber(
                 elapsedMs = elapsedMs,
                 steps = steps + finalState,
                 securityMode = securityMode,
+                responseBytes = finalResponseBytes,
             )
         }
         return outcome.getOrElse { error ->
             val state = when (error) {
                 is SocketTimeoutException -> if (steps.contains(VlessProtocolProbeState.VlessRequestSent)) {
-                    VlessProtocolProbeState.ServerKeptConnectionBriefly
+                    VlessProtocolProbeState.RequestSentNoImmediateResponse
                 } else {
                     VlessProtocolProbeState.Timeout
                 }
@@ -178,6 +196,7 @@ class VlessProtocolProber(
                 else -> VlessProtocolProbeState.HostDnsError
             }
             val message = when (state) {
+                VlessProtocolProbeState.RequestSentNoImmediateResponse -> "Minimal VLESS request was sent; no immediate response arrived during the short metadata-only wait window."
                 VlessProtocolProbeState.ServerKeptConnectionBriefly -> "Server kept the connection open for the brief probe wait window."
                 VlessProtocolProbeState.TlsHandshakeFailed -> "TLS handshake failed: ${error.message ?: state.label}"
                 else -> error.message ?: state.label
@@ -222,6 +241,8 @@ fun validateVlessProtocolProbeTarget(host: String, port: Int): List<String> = bu
 }
 
 fun VlessProtocolProbeResult.toProfileStatus(): VlessProfileStatus = when (state) {
+    VlessProtocolProbeState.ResponseReceived,
+    VlessProtocolProbeState.RequestSentNoImmediateResponse,
     VlessProtocolProbeState.ServerKeptConnectionBriefly,
     VlessProtocolProbeState.ServerClosedConnection,
     VlessProtocolProbeState.VlessRequestSent,
