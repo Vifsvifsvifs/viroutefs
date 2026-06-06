@@ -58,7 +58,7 @@ import dev.vifs.viroutefs.socks5.toProfileStatus
 import dev.vifs.viroutefs.socks5.validateSocks5Profile
 import dev.vifs.viroutefs.vless.VLESS_NO_HANDSHAKE_NOTICE
 import dev.vifs.viroutefs.vless.VLESS_PROTOCOL_PROBE_NOTICE
-import dev.vifs.viroutefs.vless.VLESS_TLS_REALITY_UNSUPPORTED_MESSAGE
+import dev.vifs.viroutefs.vless.VLESS_REALITY_UNSUPPORTED_MESSAGE
 import dev.vifs.viroutefs.vless.VlessProtocolProbeHistoryItem
 import dev.vifs.viroutefs.vless.VlessProtocolProbeHistoryStore
 import dev.vifs.viroutefs.vless.VlessProtocolProbeResult
@@ -69,6 +69,7 @@ import dev.vifs.viroutefs.vless.VLESS_TCP_REACHABILITY_NOTICE
 import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.VlessProfileStatus
 import dev.vifs.viroutefs.vless.VlessSecurityMode
+import dev.vifs.viroutefs.vless.vlessProbeSniHost
 import dev.vifs.viroutefs.vless.VlessTcpReachabilityHistoryItem
 import dev.vifs.viroutefs.vless.VlessTcpReachabilityHistoryStore
 import dev.vifs.viroutefs.vless.VlessTcpReachabilityResult
@@ -576,6 +577,7 @@ private fun VlessProfileEditorScreen(
                 state = result.state,
                 message = result.message,
                 elapsedMs = result.elapsedMs,
+                securityMode = result.securityMode,
             ),
         )
         protocolProbeHistory = protocolProbeHistoryStore.recentForProfile(profile.id)
@@ -670,7 +672,13 @@ private fun VlessProfileEditorScreen(
             CardBlock {
                 Text("Manual VLESS protocol probe", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 WarningText(VLESS_PROTOCOL_PROBE_NOTICE)
-                Text("Only plain TCP VLESS profiles with security=none are supported. TLS/REALITY profiles report: $VLESS_TLS_REALITY_UNSUPPORTED_MESSAGE", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val probeDraft = draft()
+                val probeSecurityMode = probeDraft.securityMode
+                Text("Current security mode: ${probeSecurityMode.wireName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (probeSecurityMode == VlessSecurityMode.TLS) {
+                    Text("SNI used for TLS: ${probeDraft.vlessProbeSniHost()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("security=none uses the existing plain TCP probe path. security=tls opens TLS first, sends the same minimal VLESS request frame, and sends no HTTP payload. REALITY reports: $VLESS_REALITY_UNSUPPORTED_MESSAGE", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(probeTargetHost, { probeTargetHost = it }, label = { Text("Target host") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(probeTargetPortText, { probeTargetPortText = it }, label = { Text("Target port") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Button(
@@ -834,7 +842,7 @@ private fun String.toVlessSecurityMode(): VlessSecurityMode = VlessSecurityMode.
 } ?: VlessSecurityMode.NONE
 
 private fun vlessDescription(profile: VlessProfileConfig): String =
-    "VLESS ${profile.host}:${profile.port} (${profile.securityMode.wireName}). Manual diagnostics only: TCP reachability and plain-TCP VLESS probe for security=none; no TLS/REALITY runtime, DNS proxying, Android traffic forwarding, TUN writes, or runtime forwarding is implemented. UUID is hidden from summaries and diagnostics."
+    "VLESS ${profile.host}:${profile.port} (${profile.securityMode.wireName}). Manual diagnostics only: TCP reachability and plain-TCP VLESS probe for security=none and manual TLS probe for security=tls; no REALITY/XTLS runtime, DNS proxying, Android traffic forwarding, TUN writes, or runtime forwarding is implemented. UUID is hidden from summaries and diagnostics."
 
 private fun vlessReadinessLabel(status: VlessProfileStatus, history: List<VlessTcpReachabilityHistoryItem>): String = when {
     status == VlessProfileStatus.TcpReachable || history.firstOrNull()?.state == VlessTcpReachabilityState.Reachable -> "TCP reachable"
@@ -851,7 +859,7 @@ private fun VlessTcpReachabilityHistoryItem.historyLabel(): String {
 private fun VlessProtocolProbeHistoryItem.historyLabel(): String {
     val time = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(timestamp))
     val latency = elapsedMs?.let { " (${it} ms)" }.orEmpty()
-    return "$time • $serverHost:$serverPort → $targetHost:$targetPort • ${state.label}$latency • ${message.sanitizeForHistoryLabel()}"
+    return "$time • $serverHost:$serverPort → $targetHost:$targetPort • security=${securityMode.wireName} • ${state.label}$latency • ${message.sanitizeForHistoryLabel()}"
 }
 
 @Composable
