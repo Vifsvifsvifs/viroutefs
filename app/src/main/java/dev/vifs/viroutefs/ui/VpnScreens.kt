@@ -44,7 +44,12 @@ import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
+import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_NOTICE
+import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_SECRET_NOTICE
+import dev.vifs.viroutefs.runtime.tcp.DevTcpBridgeSnapshot
+import dev.vifs.viroutefs.runtime.tcp.TcpSessionId
 import dev.vifs.viroutefs.runtime.tcp.TcpSessionState
+import dev.vifs.viroutefs.runtime.tcp.VlessDevTcpBridge
 import dev.vifs.viroutefs.socks5.Socks5DiagnosticResult
 import dev.vifs.viroutefs.socks5.Socks5DiagnosticState
 import dev.vifs.viroutefs.socks5.Socks5DiagnosticTestType
@@ -88,7 +93,9 @@ import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreviewer
 import dev.vifs.viroutefs.vpn.PacketSummary
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 import java.util.UUID
@@ -112,6 +119,18 @@ internal fun VpnScreen(
     val selectedProfile = selectedProfileId?.let { id -> config.profiles.firstOrNull { it.id == id } }
     val visibleProfiles = config.profiles.filter { !it.mockOnly || it.type == TunnelType.Socks5 || it.type == TunnelType.VLESS }
     val routeDecisionPreviewer = remember(config) { LiveRouteDecisionPreviewer(config) }
+    val scope = rememberCoroutineScope()
+    val devTcpBridge = remember(config.profiles) {
+        VlessDevTcpBridge(
+            profiles = {
+                config.profiles
+                    .filter { it.type == TunnelType.VLESS && it.vless != null }
+                    .associate { it.id to it.vless!! }
+            },
+        )
+    }
+    var devBridgeSnapshot by remember { mutableStateOf(devTcpBridge.snapshot()) }
+    var devBridgeMessage by rememberSaveable { mutableStateOf<String?>(null) }
 
     if (addSocks5) {
         Socks5ProfileEditorScreen(
@@ -185,7 +204,49 @@ internal fun VpnScreen(
             }
         }
         item {
-            TcpSessionRuntimeCard(vpnState)
+            TcpSessionRuntimeCard(
+                config = config,
+                vpnState = vpnState,
+                devSnapshot = devBridgeSnapshot,
+                message = devBridgeMessage,
+                onOpenDevSession = { profileId, targetHost, targetPort ->
+                    scope.launch {
+                        devBridgeMessage = "Opening dev TCP session…"
+                        runCatching {
+                            withContext(Dispatchers.IO) { devTcpBridge.openDevSession(profileId, targetHost, targetPort) }
+                        }.onSuccess {
+                            devBridgeSnapshot = devTcpBridge.snapshot()
+                            devBridgeMessage = "Dev TCP session open."
+                        }.onFailure { error ->
+                            devBridgeSnapshot = devTcpBridge.snapshot()
+                            devBridgeMessage = error.localizedMessage ?: "Could not open dev TCP session."
+                        }
+                    }
+                },
+                onCloseDevSession = { sessionId ->
+                    scope.launch {
+                        withContext(Dispatchers.IO) { devTcpBridge.closeDevSession(sessionId) }
+                        devBridgeSnapshot = devTcpBridge.snapshot()
+                        devBridgeMessage = "Dev TCP session closed."
+                    }
+                },
+                onSendTestData = { sessionId ->
+                    scope.launch {
+                        runCatching {
+                            withContext(Dispatchers.IO) {
+                                devTcpBridge.sendTestData(sessionId, "ViRouteFS dev TCP test".encodeToByteArray())
+                                devTcpBridge.receiveTestData(sessionId)
+                            }
+                        }.onSuccess { received ->
+                            devBridgeSnapshot = devTcpBridge.snapshot()
+                            devBridgeMessage = "Received ${received.size} bytes."
+                        }.onFailure { error ->
+                            devBridgeSnapshot = devTcpBridge.snapshot()
+                            devBridgeMessage = error.localizedMessage ?: "Dev TCP send/read failed."
+                        }
+                    }
+                },
+            )
         }
         item {
             CardBlock {
@@ -247,21 +308,58 @@ internal fun VpnScreen(
 }
 
 @Composable
-private fun TcpSessionRuntimeCard(vpnState: VpnServiceUiState) {
+private fun TcpSessionRuntimeCard(
+    config: RoutingConfig,
+    vpnState: VpnServiceUiState,
+    devSnapshot: DevTcpBridgeSnapshot,
+    message: String?,
+    onOpenDevSession: (String, String, Int) -> Unit,
+    onCloseDevSession: (TcpSessionId) -> Unit,
+    onSendTestData: (TcpSessionId) -> Unit,
+) {
+    val vlessProfiles = config.profiles.filter { it.type == TunnelType.VLESS && it.vless != null && it.enabled }
+    val selectedVlessProfile = vlessProfiles.firstOrNull()
+    val targetHost = "example.com"
+    val targetPort = 80
     CardBlock {
-        Text("TCP bridge preparation", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+        Text("Dev VLESS TCP bridge", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
         Text(
-            "Observation-only architecture for future VLESS TCP sessions. Runtime forwarding is not enabled yet.",
+            "Safe dev-only TCP stream for validating one VLESS profile. Runtime forwarding is not enabled.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        WarningText(DEV_TCP_BRIDGE_NOTICE)
+        WarningText(DEV_TCP_BRIDGE_SECRET_NOTICE)
+        Text("State: ${devSnapshot.state.name}", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+        CounterLine("bytesIn", devSnapshot.bytesIn)
+        CounterLine("bytesOut", devSnapshot.bytesOut)
+        CounterLine("Received byte count", devSnapshot.bytesIn)
+        devSnapshot.lastEvent?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        Text(
+            "Test target: $targetHost:$targetPort • VLESS profile: ${selectedVlessProfile?.name ?: "none configured"}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(
+                enabled = selectedVlessProfile != null && !devSnapshot.hasOpenSession,
+                onClick = { selectedVlessProfile?.let { onOpenDevSession(it.id, targetHost, targetPort) } },
+            ) { Text("Open Dev TCP session") }
+            OutlinedButton(
+                enabled = devSnapshot.sessionId != null && devSnapshot.hasOpenSession,
+                onClick = { devSnapshot.sessionId?.let(onCloseDevSession) },
+            ) { Text("Close Dev TCP session") }
+        }
+        OutlinedButton(
+            enabled = devSnapshot.sessionId != null && devSnapshot.hasOpenSession,
+            onClick = { devSnapshot.sessionId?.let(onSendTestData) },
+        ) { Text("Send test data") }
+        message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        Text("Packet inspector remains metadata-only; Android traffic is not forwarded into this bridge.", style = MaterialTheme.typography.bodySmall)
+        Text("TCP session preparation counters", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
         CounterLine("Active sessions count", vpnState.activeTcpSessions.toLong())
-        Text("Session state statistics", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
         TcpSessionState.entries.forEach { state ->
             CounterLine(state.name, (vpnState.tcpSessionStateStats[state] ?: 0).toLong())
-        }
-        if (vpnState.activeTcpSessions == 0) {
-            Text("No TCP sessions", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
