@@ -64,6 +64,13 @@ Focus: expand explicitly enabled outbound experiments after safe route handling 
 
 
 
+## 0.8.10-alpha manual VLESS response probe
+
+- Extend the user-triggered manual VLESS protocol probe to classify the first response after sending the existing minimal VLESS TCP request frame.
+- Use the existing plain TCP and TLS probe paths; TLS continues to use SNI. REALITY, XTLS, UDP, HTTP payloads, DNS proxying, runtime forwarding, Android traffic forwarding, and TUN writes remain out of scope.
+- Record only metadata: elapsed time, response classification, response byte count, target, and security mode. Response payload bytes, raw frame bytes, and UUID values are not displayed, logged, or stored.
+- Keep local no-backup history capped at 20 entries per profile.
+
 ## 0.8.8-alpha manual VLESS protocol probe
 
 - Add a user-triggered manual plain-TCP VLESS protocol probe from the VLESS profile screen.

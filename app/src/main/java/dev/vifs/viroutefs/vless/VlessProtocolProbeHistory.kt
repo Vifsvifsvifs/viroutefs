@@ -23,6 +23,7 @@ data class VlessProtocolProbeHistoryItem(
     val message: String,
     val elapsedMs: Long? = null,
     val securityMode: VlessSecurityMode = VlessSecurityMode.NONE,
+    val responseBytes: Int = 0,
 )
 
 class VlessProtocolProbeHistoryStore(
@@ -41,6 +42,7 @@ class VlessProtocolProbeHistoryStore(
             targetHost = item.targetHost.trim().sanitizeVlessReachabilityMessage(),
             securityMode = item.securityMode,
             message = item.message.sanitizeVlessReachabilityMessage(),
+            responseBytes = item.responseBytes.coerceAtLeast(0),
         )
         val next = (loadAll() + sanitized)
             .groupBy { it.profileId }
@@ -75,6 +77,7 @@ class VlessProtocolProbeHistoryStore(
         put("timestamp", timestamp)
         put("state", state.wireName())
         put("message", message.sanitizeVlessReachabilityMessage())
+        put("responseBytes", responseBytes.coerceAtLeast(0))
         elapsedMs?.let { put("elapsedMs", it) }
     }
 
@@ -91,6 +94,7 @@ class VlessProtocolProbeHistoryStore(
             state = optString("state").toVlessProtocolProbeState(),
             message = optString("message").sanitizeVlessReachabilityMessage(),
             elapsedMs = if (has("elapsedMs")) optLong("elapsedMs") else null,
+            responseBytes = optInt("responseBytes", 0).coerceAtLeast(0),
         )
     }.getOrNull()
 
@@ -105,8 +109,11 @@ fun VlessProtocolProbeState.wireName(): String = when (this) {
     VlessProtocolProbeState.TlsHandshakeSuccess -> "tls_handshake_success"
     VlessProtocolProbeState.TlsHandshakeFailed -> "tls_handshake_failed"
     VlessProtocolProbeState.VlessRequestSent -> "vless_request_sent"
+    VlessProtocolProbeState.RequestSentNoImmediateResponse -> "request_sent_no_immediate_response"
+    VlessProtocolProbeState.ResponseReceived -> "response_received"
     VlessProtocolProbeState.ServerKeptConnectionBriefly -> "server_kept_connection_briefly"
     VlessProtocolProbeState.ServerClosedConnection -> "server_closed_connection"
+    VlessProtocolProbeState.InvalidEmptyResponse -> "invalid_empty_response"
     VlessProtocolProbeState.Timeout -> "timeout"
     VlessProtocolProbeState.Refused -> "refused"
     VlessProtocolProbeState.HostDnsError -> "host_dns_error"
@@ -119,8 +126,11 @@ fun String.toVlessProtocolProbeState(): VlessProtocolProbeState = when (lowercas
     "tls_handshake_success" -> VlessProtocolProbeState.TlsHandshakeSuccess
     "tls_handshake_failed" -> VlessProtocolProbeState.TlsHandshakeFailed
     "vless_request_sent" -> VlessProtocolProbeState.VlessRequestSent
+    "request_sent_no_immediate_response" -> VlessProtocolProbeState.RequestSentNoImmediateResponse
+    "response_received" -> VlessProtocolProbeState.ResponseReceived
     "server_kept_connection_briefly" -> VlessProtocolProbeState.ServerKeptConnectionBriefly
     "server_closed_connection" -> VlessProtocolProbeState.ServerClosedConnection
+    "invalid_empty_response" -> VlessProtocolProbeState.InvalidEmptyResponse
     "timeout" -> VlessProtocolProbeState.Timeout
     "refused" -> VlessProtocolProbeState.Refused
     "host_dns_error" -> VlessProtocolProbeState.HostDnsError
