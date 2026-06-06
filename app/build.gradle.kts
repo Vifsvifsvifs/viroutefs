@@ -15,6 +15,11 @@ val hasAlphaSigning = listOf(
     alphaKeyPassword,
 ).all { !it.isNullOrBlank() }
 
+val libXrayVersion = "v26.5.9"
+val libXrayUrl = "https://github.com/2dust/AndroidLibXrayLite" +
+    "/releases/download/$libXrayVersion/libv2ray.aar"
+val libXrayFile = file("libs/libv2ray.aar")
+
 android {
     namespace = "dev.vifs.viroutefs"
     compileSdk = 36
@@ -69,11 +74,32 @@ android {
 
 }
 
+tasks.register("downloadLibXray") {
+    doFirst {
+        if (!libXrayFile.exists()) {
+            libXrayFile.parentFile.mkdirs()
+            println("Downloading libv2ray.aar $libXrayVersion...")
+            java.net.URL(libXrayUrl).openStream().use { input ->
+                libXrayFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+        }
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn("downloadLibXray")
+}
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
 
     implementation(composeBom)
     androidTestImplementation(composeBom)
+
+    implementation(fileTree(mapOf("dir" to "libs",
+        "include" to listOf("*.aar", "*.jar"))))
 
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.compose.material3:material3")

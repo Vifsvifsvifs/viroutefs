@@ -34,3 +34,6 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Downloaded Xray library
+app/libs/libv2ray.aar
