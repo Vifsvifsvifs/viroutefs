@@ -69,6 +69,7 @@ import dev.vifs.viroutefs.diagnostics.DiagnosticResult
 import dev.vifs.viroutefs.diagnostics.HttpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TcpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TlsDiagnostic
+import dev.vifs.viroutefs.engine.XrayEngine
 import dev.vifs.viroutefs.routing.CURRENT_ROUTING_CONFIG_VERSION
 import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.routing.AppMatcher
@@ -779,6 +780,22 @@ private fun ToolsScreen(padding: PaddingValues, text: UiText, config: RoutingCon
     var tcp by remember { mutableStateOf<DiagnosticResult?>(null) }
     var tls by remember { mutableStateOf<DiagnosticResult?>(null) }
     var http by remember { mutableStateOf<DiagnosticResult?>(null) }
+    var xrayStatus by rememberSaveable { mutableStateOf("stopped") }
+    var xrayLog by rememberSaveable {
+        mutableStateOf(
+            listOf(
+                "Ready. This dev-only smoke test starts libv2ray locally without VPN/TUN traffic.",
+            ),
+        )
+    }
+    val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    val xrayEngine = remember(context) {
+        XrayEngine(context.applicationContext) { entry ->
+            mainHandler.post {
+                xrayLog = (xrayLog + entry).takeLast(40)
+            }
+        }
+    }
     ScreenList(padding) {
         item { Header(text.tools, text.toolsSubtitle) }
         item {
@@ -819,6 +836,48 @@ private fun ToolsScreen(padding: PaddingValues, text: UiText, config: RoutingCon
                     WarningText(VLESS_RUNTIME_FORWARDING_NOT_ENABLED)
                     Text("This profile can be used for route decision preview only.", style = MaterialTheme.typography.bodySmall)
                 }
+            }
+        }
+        item {
+            CardBlock {
+                Text("Xray Engine Smoke Test", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                WarningText("Experimental dev-only check. It starts libv2ray with a localhost-only smoke config, does not attach to VpnService/TUN, and must not be treated as real routing.")
+                Text("Status: $xrayStatus", style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                xrayEngine.startSmokeTest()
+                                xrayStatus = xrayEngine.getStatus()
+                            }
+                        },
+                    ) { Text("Run Xray Smoke Test") }
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                xrayEngine.stop()
+                                xrayStatus = xrayEngine.getStatus()
+                            }
+                        },
+                    ) { Text("Stop") }
+                }
+                OutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            xrayStatus = xrayEngine.getStatus()
+                            xrayLog = (xrayLog + "Manual status check: $xrayStatus").takeLast(40)
+                        }
+                    },
+                ) { Text("Refresh status") }
+                OutlinedTextField(
+                    value = xrayLog.joinToString("\n"),
+                    onValueChange = {},
+                    label = { Text("Local smoke log") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 6,
+                    maxLines = 10,
+                    readOnly = true,
+                )
             }
         }
         item { CompactCard(text, "MTU", text.mtuShort, text.mtuDetails) }
