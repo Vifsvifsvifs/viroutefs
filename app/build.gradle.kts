@@ -85,7 +85,7 @@ tasks.register("downloadLibXray") {
     doLast {
         if (!libXrayFile.exists()) {
             libXrayFile.parentFile.mkdirs()
-            println("Downloading libv2ray.aar...")
+            println("Downloading libv2ray.aar $libXrayVersion...")
             val url = URI.create(
                 "https://github.com/2dust/AndroidLibXrayLite" +
                     "/releases/download/$libXrayVersion/libv2ray.aar"
