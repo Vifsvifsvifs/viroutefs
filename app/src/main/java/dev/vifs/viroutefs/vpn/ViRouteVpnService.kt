@@ -10,11 +10,14 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import dev.vifs.viroutefs.MainActivity
 import dev.vifs.viroutefs.runtime.tcp.TcpSessionState
 import dev.vifs.viroutefs.R
+import dev.vifs.viroutefs.vless.VlessProfileConfig
+import dev.vifs.viroutefs.vless.VlessSecurityMode
 import java.io.FileInputStream
 import java.io.InterruptedIOException
 
@@ -32,6 +35,8 @@ class ViRouteVpnService : VpnService() {
     private var packetLoopThread: Thread? = null
     @Volatile private var packetLoopStopping: Boolean = false
     private var testRoutePreviewActive: Boolean = false
+    private var xrayModeActive: Boolean = false
+    private var xrayEngineRunner: XrayEngineRunner? = null
     private var packetsRead: Long = 0L
     private var bytesRead: Long = 0L
     private var ipv4PacketsRead: Long = 0L
@@ -61,6 +66,12 @@ class ViRouteVpnService : VpnService() {
                 stopPreview()
                 return START_NOT_STICKY
             }
+            ACTION_START_XRAY -> {
+                isRunning = true
+                if (tunDescriptor != null) closeTunDescriptor()
+                startXrayMode(intent)
+                return START_STICKY
+            }
             VpnServiceController.ACTION_CLEAR_PACKET_SUMMARIES -> {
                 packetHistory.clear()
                 publishActiveState(force = true)
@@ -87,7 +98,7 @@ class ViRouteVpnService : VpnService() {
             false,
         ) ?: false
 
-        if (tunDescriptor != null && testRoutePreviewActive == requestedTestRoute) {
+        if (tunDescriptor != null && !xrayModeActive && testRoutePreviewActive == requestedTestRoute) {
             publishActiveState()
             updateNotification(activeStatus())
             return START_STICKY
@@ -108,6 +119,49 @@ class ViRouteVpnService : VpnService() {
         isRunning = false
         if (lastState.status != VpnServiceStatus.Error) publishStoppedState()
         super.onDestroy()
+    }
+
+    private fun startXrayMode(intent: Intent) {
+        val profile = intent.vlessProfileExtra() ?: run {
+            failClosed("Missing VLESS REALITY profile for Xray mode.")
+            return
+        }
+        xrayModeActive = true
+        testRoutePreviewActive = false
+        resetCounters()
+        publishState(VpnServiceStatus.Starting, detail = "Starting VLESS REALITY engine.")
+        val descriptor = runCatching {
+            Builder()
+                .setSession(XRAY_TUN_SESSION_NAME)
+                .setMtu(TUN_MTU)
+                .addAddress(TUN_IPV4_ADDRESS, TUN_IPV4_PREFIX_LENGTH)
+                .addAddress(TUN_IPV6_ADDRESS, TUN_IPV6_PREFIX_LENGTH)
+                .addDnsServer(XRAY_DNS_SERVER)
+                .addRoute("0.0.0.0", 0)
+                .addRoute("::", 0)
+                .establish()
+        }.getOrElse { error ->
+            failClosed(error.localizedMessage ?: "Could not establish Xray VPN TUN.")
+            return
+        } ?: run {
+            failClosed("Android returned no TUN descriptor for Xray mode.")
+            return
+        }
+
+        tunDescriptor = descriptor
+        val config = runCatching { buildXrayConfig(profile) }.getOrElse { error ->
+            failClosed(error.localizedMessage ?: "Could not build Xray VLESS REALITY config.")
+            return
+        }
+        val runner = XrayEngineRunner(tunFd = descriptor.fd)
+        val result = runner.start(config)
+        if (result.isFailure) {
+            failClosed(result.exceptionOrNull()?.localizedMessage ?: "Xray engine failed to start.")
+            return
+        }
+        xrayEngineRunner = runner
+        publishActiveState(force = true)
+        updateNotification(activeStatus())
     }
 
     private fun establishTunPreview(enableTestRoute: Boolean) {
@@ -189,12 +243,23 @@ class ViRouteVpnService : VpnService() {
 
     private fun closeTunDescriptor() {
         packetLoopStopping = true
+        xrayEngineRunner?.stop()
+        xrayEngineRunner = null
         tunDescriptor?.let { descriptor ->
             runCatching { descriptor.close() }
         }
         tunDescriptor = null
         stopPacketLoop()
         testRoutePreviewActive = false
+        xrayModeActive = false
+    }
+
+    private fun failClosed(detail: String) {
+        closeTunDescriptor()
+        isRunning = false
+        publishState(VpnServiceStatus.Error, detail)
+        updateNotification(VpnServiceStatus.ServiceActiveNoTun)
+        stopSelf()
     }
 
     private fun stopPacketLoop() {
@@ -239,13 +304,13 @@ class ViRouteVpnService : VpnService() {
     }
 
     private fun activeStatus(): VpnServiceStatus =
-        if (testRoutePreviewActive) VpnServiceStatus.TunTestRouteActive else VpnServiceStatus.TunPreviewActive
+        if (testRoutePreviewActive || xrayModeActive) VpnServiceStatus.TunTestRouteActive else VpnServiceStatus.TunPreviewActive
 
     private fun publishActiveState(force: Boolean = false) {
         if (force) lastUiPublishAt = System.currentTimeMillis()
         publishState(
             status = activeStatus(),
-            tunTestRouteActive = testRoutePreviewActive,
+            tunTestRouteActive = testRoutePreviewActive || xrayModeActive,
             packetsRead = packetsRead,
             bytesRead = bytesRead,
             ipv4PacketsRead = ipv4PacketsRead,
@@ -290,7 +355,11 @@ class ViRouteVpnService : VpnService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val text = when (status) {
-            VpnServiceStatus.TunTestRouteActive -> "TEST-NET route preview active — packets are counted and dropped"
+            VpnServiceStatus.TunTestRouteActive -> if (xrayModeActive) {
+                "VLESS REALITY VPN active — traffic is routed through the local Xray engine"
+            } else {
+                "TEST-NET route preview active — packets are counted and dropped"
+            }
             VpnServiceStatus.TunPreviewActive -> "TUN preview active — no traffic routes installed"
             else -> "Local VPN preview — no traffic routing yet"
         }
@@ -301,7 +370,11 @@ class ViRouteVpnService : VpnService() {
             .setContentText(text)
             .setStyle(
                 NotificationCompat.BigTextStyle().bigText(
-                    "$text. No default route, DNS servers, payload logging, packet forwarding, proxying, or VPN engines are enabled.",
+                    if (xrayModeActive) {
+                        "$text. No payload logging or telemetry is enabled."
+                    } else {
+                        "$text. No default route, DNS servers, payload logging, packet forwarding, proxying, or VPN engines are enabled."
+                    },
                 ),
             )
             .setOngoing(true)
@@ -389,6 +462,43 @@ class ViRouteVpnService : VpnService() {
         sendBroadcast(intent)
     }
 
+    private fun Intent.vlessProfileExtra(): VlessProfileConfig? {
+        getBundleExtra(EXTRA_VLESS_PROFILE_BUNDLE)?.toVlessProfileConfig()?.let { return it }
+        val profileBundle = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            getParcelableExtra(EXTRA_VLESS_PROFILE, Bundle::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            getParcelableExtra(EXTRA_VLESS_PROFILE) as? Bundle
+        }
+        profileBundle?.toVlessProfileConfig()?.let { return it }
+        @Suppress("DEPRECATION")
+        val serializableProfile: Any? = getSerializableExtra(EXTRA_VLESS_PROFILE)
+        return serializableProfile as? VlessProfileConfig
+    }
+
+    private fun Bundle.toVlessProfileConfig(): VlessProfileConfig? {
+        val host = getString(EXTRA_VLESS_HOST)?.trim().orEmpty()
+        val uuid = getString(EXTRA_VLESS_UUID)?.trim().orEmpty()
+        val name = getString(EXTRA_VLESS_NAME)?.trim().orEmpty().ifBlank { host }
+        val port = getInt(EXTRA_VLESS_PORT, -1)
+        if (host.isBlank() || uuid.isBlank() || port !in 1..65535) return null
+        val security = getString(EXTRA_VLESS_SECURITY)?.trim()?.lowercase()
+        return VlessProfileConfig(
+            name = name,
+            host = host,
+            port = port,
+            uuid = uuid,
+            transportType = getString(EXTRA_VLESS_TRANSPORT),
+            securityMode = if (security == VlessSecurityMode.REALITY.wireName) VlessSecurityMode.REALITY else VlessSecurityMode.NONE,
+            encryption = getString(EXTRA_VLESS_ENCRYPTION),
+            flow = getString(EXTRA_VLESS_FLOW),
+            sni = getString(EXTRA_VLESS_SERVER_NAME),
+            publicKey = getString(EXTRA_VLESS_PUBLIC_KEY),
+            shortId = getString(EXTRA_VLESS_SHORT_ID),
+            fingerprint = getString(EXTRA_VLESS_FINGERPRINT),
+        )
+    }
+
     companion object {
         @Volatile
         internal var isRunning: Boolean = false
@@ -404,10 +514,29 @@ class ViRouteVpnService : VpnService() {
 
         private const val CHANNEL_ID = "viroutefs_vpn_preview"
         private const val NOTIFICATION_ID = 500
+        internal const val ACTION_START_XRAY = "dev.vifs.viroutefs.vpn.START_XRAY"
+        internal const val EXTRA_VLESS_PROFILE = "vless_profile"
+        internal const val EXTRA_VLESS_PROFILE_BUNDLE = "vless_profile_bundle"
+        internal const val EXTRA_VLESS_NAME = "vless_name"
+        internal const val EXTRA_VLESS_HOST = "vless_host"
+        internal const val EXTRA_VLESS_PORT = "vless_port"
+        internal const val EXTRA_VLESS_UUID = "vless_uuid"
+        internal const val EXTRA_VLESS_TRANSPORT = "vless_transport"
+        internal const val EXTRA_VLESS_SECURITY = "vless_security"
+        internal const val EXTRA_VLESS_ENCRYPTION = "vless_encryption"
+        internal const val EXTRA_VLESS_FLOW = "vless_flow"
+        internal const val EXTRA_VLESS_SERVER_NAME = "vless_server_name"
+        internal const val EXTRA_VLESS_PUBLIC_KEY = "vless_public_key"
+        internal const val EXTRA_VLESS_SHORT_ID = "vless_short_id"
+        internal const val EXTRA_VLESS_FINGERPRINT = "vless_fingerprint"
         private const val SAFE_TUN_PREVIEW_ENABLED = true
         private const val TUN_SESSION_NAME = "ViRouteFS TUN preview"
+        private const val XRAY_TUN_SESSION_NAME = "ViRouteFS VLESS REALITY"
         private const val TUN_IPV4_ADDRESS = "10.250.0.2"
         private const val TUN_IPV4_PREFIX_LENGTH = 32
+        private const val TUN_IPV6_ADDRESS = "fd00:250::2"
+        private const val TUN_IPV6_PREFIX_LENGTH = 128
+        private const val XRAY_DNS_SERVER = "1.1.1.1"
         private const val TEST_ROUTE_IPV4_NETWORK = "203.0.113.0"
         private const val TEST_ROUTE_IPV4_PREFIX_LENGTH = 24
         private const val TUN_MTU = 1500

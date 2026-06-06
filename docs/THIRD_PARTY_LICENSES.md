@@ -6,14 +6,15 @@ Every bundled engine, library, or binary must be recorded here before integratio
 
 ## Current state
 
-No external VPN/proxy/DPI engine binaries are bundled yet.
+AndroidLibXrayLite is now declared as an app build dependency for the VLESS REALITY engine path. Release packaging must preserve its LGPL-3.0 notice and the notices/source-offer obligations of the included Xray-core components.
 
-Do not claim a component is bundled unless it is actually shipped in the app, APK, source tree, or build inputs. Before any engine or binary is added, update this table with the exact license, source URL, bundled status, notices, source obligations, and any compatibility notes.
+Do not claim any other component is bundled unless it is actually shipped in the app, APK, source tree, or build inputs. Before any additional engine or binary is added, update this table with the exact license, source URL, bundled status, notices, source obligations, and any compatibility notes.
 
 ## Planned candidates
 
 | Component | Purpose | License | Bundled? yes/no | Source URL | Notes / obligations |
 | --- | --- | --- | --- | --- | --- |
+| AndroidLibXrayLite | Android Go Mobile wrapper for Xray-core used by the VLESS REALITY engine path | LGPL-3.0 | yes, via Gradle/JitPack dependency | https://github.com/2dust/AndroidLibXrayLite | Preserve LGPL notices, provide corresponding source for any modified library, and keep Xray-core notices/license material available in redistributed builds. |
 | OpenVPN3 Core | Planned OpenVPN-compatible engine candidate | To be audited; prefer MPL-2.0 path | no | TBD | Planned candidate, not bundled. Preserve MPL notices/source obligations if integrated. Do not embed OpenVPN 2.x GPLv2-only core into the GPL-3.0-or-later app. |
 | ByeDPI-style implementation | Planned local DPI bypass profile candidate | To be audited | no | TBD | Planned candidate, not bundled. Must remain local, explicit, and fail closed if selected but unavailable. |
 | SOCKS5 implementation | Planned first real outbound candidate | To be audited | no | TBD | Planned candidate, not bundled. Implementation license must be checked before embedding. |
