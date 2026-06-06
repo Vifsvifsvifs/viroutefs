@@ -2,7 +2,9 @@
 
 package dev.vifs.viroutefs.vpn
 
+import android.annotation.SuppressLint
 import android.content.Context
+import android.provider.Settings
 import go.Seq
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
@@ -21,7 +23,7 @@ class XrayEngineRunner(
         val assetPath = appContext.filesDir.absolutePath
         runCatching {
             Seq.setContext(appContext)
-            Libv2ray.initCoreEnv(assetPath, XUDP_BASE_KEY)
+            Libv2ray.initCoreEnv(assetPath, xudpBaseKey(appContext))
         }.onSuccess {
             onLog("Xray core environment initialized at $assetPath.")
             runCatching { Libv2ray.checkVersionX() }
@@ -85,9 +87,23 @@ class XrayEngineRunner(
         }
     }
 
+    @SuppressLint("HardwareIds")
+    private fun xudpBaseKey(context: Context): String {
+        val androidId = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ANDROID_ID,
+        )?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
+        val key = androidId.copyOf(32)
+        return android.util.Base64.encodeToString(
+            key,
+            android.util.Base64.NO_PADDING or
+                android.util.Base64.URL_SAFE or
+                android.util.Base64.NO_WRAP,
+        )
+    }
+
     private companion object {
         private const val NO_TUN_FD = -1
         private const val CALLBACK_SUCCESS = 0L
-        private const val XUDP_BASE_KEY = "viroutefs-dev-xray-smoke"
     }
 }
