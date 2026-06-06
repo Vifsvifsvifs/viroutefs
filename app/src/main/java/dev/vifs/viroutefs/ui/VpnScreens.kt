@@ -2,6 +2,36 @@
 
 package dev.vifs.viroutefs.ui
 
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Icon
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -100,6 +130,7 @@ import java.text.DateFormat
 import java.util.Date
 import java.util.UUID
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun VpnScreen(
     padding: PaddingValues,
@@ -107,7 +138,7 @@ internal fun VpnScreen(
     config: RoutingConfig,
     vpnState: VpnServiceUiState,
     @Suppress("UNUSED_PARAMETER") tunTestRoutePreviewEnabled: Boolean,
-    onVpnSwitch: (Boolean) -> Unit,
+    @Suppress("UNUSED_PARAMETER") onVpnSwitch: (Boolean) -> Unit,
     @Suppress("UNUSED_PARAMETER") onTunTestRoutePreview: (Boolean) -> Unit,
     onClearPacketList: () -> Unit,
     onPausePacketInspector: (Boolean) -> Unit,
@@ -171,27 +202,50 @@ internal fun VpnScreen(
         return
     }
 
+    var controlActive by remember { mutableStateOf(vpnState.switchChecked) }
+    var showAddVpnSheet by remember { mutableStateOf(false) }
+    val addVpnSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    if (showAddVpnSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showAddVpnSheet = false },
+            sheetState = addVpnSheetState,
+        ) {
+            AddVpnTypeSheet(
+                onClose = { showAddVpnSheet = false },
+                onAddSocks5 = {
+                    showAddVpnSheet = false
+                    addSocks5 = true
+                },
+                onAddVless = {
+                    showAddVpnSheet = false
+                    addVless = true
+                },
+            )
+        }
+    }
+
     ScreenList(padding) {
         item { Header(text.networks, text.networksSubtitle) }
         item {
-            CardBlock {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(text.activateNetworkControl, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                        StatusChip(vpnState.label(text))
-                        Text(text.networkControlSummary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Switch(checked = vpnState.switchChecked, onCheckedChange = onVpnSwitch)
-                }
-                Details(text.details, text.vpnLifecycleOnlyDetails)
-                vpnState.detail?.let { WarningText(it) }
-            }
+            // Redesigned hero: local UI state only, so this visual control does not mutate VpnService runtime behavior yet.
+            NetworkControlHero(
+                active = controlActive,
+                serviceLabel = vpnState.label(text),
+                serviceDetail = vpnState.detail,
+                onToggle = { controlActive = !controlActive },
+            )
         }
-
+        item {
+            // Default routes are always visible and intentionally less dominant than user VPN profiles.
+            DefaultRoutesSection()
+        }
+        item {
+            AddVpnCard(
+                profileCount = visibleProfiles.size,
+                onClick = { showAddVpnSheet = true },
+            )
+        }
         item {
             CardBlock {
                 Text(text.vpnPacketsRead, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
@@ -282,14 +336,8 @@ internal fun VpnScreen(
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                AssistChip(onClick = {}, label = { Text(text.profileCount(visibleProfiles.size)) })
-                OutlinedButton(onClick = { addSocks5 = true }) { Text("Add SOCKS5") }
-                OutlinedButton(onClick = { addVless = true }) { Text("Add VLESS") }
-            }
-        }
-        item {
             CardBlock {
+                Text("Runtime notes", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 Text("SOCKS5-профиль добавлен. Проверка подключения запускается только вручную. Полная маршрутизация трафика устройства через SOCKS5 будет добавлена позже.", style = MaterialTheme.typography.bodySmall)
                 Text("SOCKS5 profile added. Connectivity testing runs only manually. Full device traffic routing through SOCKS5 will be added later.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(VLESS_RUNTIME_LIMITATION, style = MaterialTheme.typography.bodySmall)
@@ -304,6 +352,286 @@ internal fun VpnScreen(
                 onOpen = { selectedProfileId = profile.id },
             )
         }
+    }
+}
+
+
+@Composable
+private fun NetworkControlHero(
+    active: Boolean,
+    serviceLabel: String,
+    serviceDetail: String?,
+    onToggle: () -> Unit,
+) {
+    val containerColor by animateColorAsState(
+        targetValue = if (active) Color(0xFF132A1D) else MaterialTheme.colorScheme.surfaceContainerHighest,
+        label = "network-control-container",
+    )
+    val accentColor by animateColorAsState(
+        targetValue = if (active) Color(0xFF40D97B) else MaterialTheme.colorScheme.onSurfaceVariant,
+        label = "network-control-accent",
+    )
+    val buttonColor by animateColorAsState(
+        targetValue = if (active) Color(0xFF8B1E23) else Color(0xFFB3261E),
+        label = "network-control-button",
+    )
+    val iconSize by animateDpAsState(targetValue = if (active) 64.dp else 56.dp, label = "network-control-icon-size")
+    val buttonScale by animateFloatAsState(targetValue = if (active) 1.02f else 1f, label = "network-control-button-scale")
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = if (active) "Контроль сети активен" else "Контроль сети выключен",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (active) Color(0xFFEAF6EE) else MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = if (active) {
+                            "Весь трафик проходит через приложение. Правила маршрутизации видны ниже."
+                        } else {
+                            "Приложения используют обычное подключение. Маршруты готовы к настройке."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (active) Color(0xFFC5D8CC) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(iconSize)
+                        .clip(CircleShape)
+                        .background(accentColor.copy(alpha = if (active) 0.22f else 0.12f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Security,
+                        contentDescription = null,
+                        tint = accentColor,
+                        modifier = Modifier.size(30.dp),
+                    )
+                }
+            }
+
+            Button(
+                onClick = onToggle,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(84.dp)
+                    .graphicsLayer {
+                        scaleX = buttonScale
+                        scaleY = buttonScale
+                    },
+                shape = RoundedCornerShape(24.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = buttonColor),
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Filled.PowerSettingsNew, contentDescription = null, modifier = Modifier.size(30.dp))
+                    Text(
+                        text = if (active) "Отключить контроль сети" else "Активировать контроль сети",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+
+            StatusStrip(
+                active = active,
+                serviceLabel = serviceLabel,
+                serviceDetail = serviceDetail,
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatusStrip(active: Boolean, serviceLabel: String, serviceDetail: String?) {
+    val stripColor = if (active) Color(0xFF244B33) else MaterialTheme.colorScheme.surfaceContainerLow
+    val labelColor = if (active) Color(0xFFBDEFCB) else MaterialTheme.colorScheme.onSurfaceVariant
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = stripColor),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = if (active) {
+                    "Статус: контроль активен • сервис: $serviceLabel"
+                } else {
+                    "Статус: обычное подключение • сервис: $serviceLabel"
+                },
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = labelColor,
+            )
+            serviceDetail?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = labelColor.copy(alpha = 0.82f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun DefaultRoutesSection() {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            "Дефолтные маршруты",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            "Эти варианты всегда доступны: отправить приложение напрямую через Android или полностью закрыть ему интернет.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        DefaultRouteCard(
+            title = "System / Система",
+            subtitle = "Приложения по умолчанию идут через системное подключение.",
+            detail = "Используйте для банков, госуслуг и сервисов, которым нужен прямой доступ без туннеля.",
+            icon = Icons.Filled.Public,
+            accent = MaterialTheme.colorScheme.primary,
+        )
+        DefaultRouteCard(
+            title = "Block / Блокировать",
+            subtitle = "Полная блокировка интернета для выбранных приложений.",
+            detail = "Безопасный способ запретить сеть приложению без скрытого перехвата трафика.",
+            icon = Icons.Filled.Block,
+            accent = Color(0xFFB3261E),
+        )
+    }
+}
+
+@Composable
+private fun DefaultRouteCard(
+    title: String,
+    subtitle: String,
+    detail: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    accent: Color,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(accent.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, contentDescription = null, tint = accent)
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall)
+                Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddVpnCard(profileCount: Int, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(50.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFB3261E).copy(alpha = 0.14f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = null, tint = Color(0xFFB3261E), modifier = Modifier.size(30.dp))
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Добавить VPN", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "OpenVPN, VLESS+REALITY, Hysteria2 и другие профили будут подключаться отсюда.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                AssistChip(onClick = {}, label = { Text("Профилей: $profileCount") })
+            }
+            Icon(Icons.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun AddVpnTypeSheet(
+    onClose: () -> Unit,
+    onAddSocks5: () -> Unit,
+    onAddVless: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Выбор типа VPN", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "OpenVPN, VLESS+REALITY, Hysteria2 и другие",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedButton(onClick = onClose) {
+                Icon(Icons.Filled.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(8.dp))
+                Text("Закрыть")
+            }
+        }
+        FilledTonalButton(onClick = onAddSocks5, modifier = Modifier.fillMaxWidth()) {
+            Text("SOCKS5 (ручная проверка подключения)")
+        }
+        Button(onClick = onAddVless, modifier = Modifier.fillMaxWidth()) {
+            Text("VLESS / REALITY")
+        }
+        Text(
+            "Остальные типы пока показаны как UI-заглушка. Добавление не запускает скрытую передачу логов или PCAP.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
