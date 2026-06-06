@@ -27,8 +27,13 @@ android {
         applicationId = "dev.vifs.viroutefs"
         minSdk = 26
         targetSdk = 36
-        versionCode = 48
-        versionName = "0.9.0-alpha"
+        val buildNumber = (project.findProperty("buildNumber") as String?)
+            ?.toIntOrNull() ?: 0
+        val baseVersionName = "0.9.1"
+
+        versionCode = 10000 + buildNumber
+        versionName = if (buildNumber > 0) "$baseVersionName.$buildNumber"
+            else baseVersionName
 
         ndk {
             abiFilters += "arm64-v8a"
