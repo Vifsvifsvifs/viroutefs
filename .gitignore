@@ -34,3 +34,4 @@ google-services.json
 
 # Android Profiling
 *.hprof
+app/libs/libv2ray.aar

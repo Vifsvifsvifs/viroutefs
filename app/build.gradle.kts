@@ -1,3 +1,7 @@
+import java.net.URI
+import java.io.BufferedInputStream
+import java.io.FileOutputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -67,11 +71,46 @@ android {
         buildConfig = true
     }
 
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+}
+
+val libXrayVersion = "v26.5.9"
+val libXrayFile = file("libs/libv2ray.aar")
+
+tasks.register("downloadLibXray") {
+    doLast {
+        if (!libXrayFile.exists()) {
+            libXrayFile.parentFile.mkdirs()
+            println("Downloading libv2ray.aar...")
+            val url = URI.create(
+                "https://github.com/2dust/AndroidLibXrayLite" +
+                    "/releases/download/$libXrayVersion/libv2ray.aar"
+            ).toURL()
+            BufferedInputStream(url.openStream()).use { input ->
+                FileOutputStream(libXrayFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            println("Done.")
+        }
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn("downloadLibXray")
 }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
 
+    implementation(fileTree(mapOf(
+        "dir" to "libs",
+        "include" to listOf("*.aar", "*.jar")
+    )))
     implementation(composeBom)
     androidTestImplementation(composeBom)
 
