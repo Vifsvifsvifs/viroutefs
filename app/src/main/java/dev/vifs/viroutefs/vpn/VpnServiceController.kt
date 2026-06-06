@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
 import androidx.core.content.ContextCompat
+import dev.vifs.viroutefs.runtime.tcp.TcpSessionState
 
 internal enum class VpnServiceStatus {
     Off,
@@ -38,6 +39,8 @@ internal data class VpnServiceUiState(
     val packetSummaryUpdatedAt: Long? = null,
     val packetInspectorPaused: Boolean = false,
     val packetSummaries: List<PacketSummary> = emptyList(),
+    val activeTcpSessions: Int = 0,
+    val tcpSessionStateStats: Map<TcpSessionState, Int> = emptyMap(),
 )
 
 internal class VpnServiceController(context: Context) {
@@ -128,6 +131,10 @@ internal class VpnServiceController(context: Context) {
                             .takeUnless { it == NO_PACKET_TIME },
                         packetInspectorPaused = intent.getBooleanExtra(EXTRA_PACKET_INSPECTOR_PAUSED, false),
                         packetSummaries = decodePacketSummaries(intent.getStringArrayListExtra(EXTRA_PACKET_SUMMARIES)),
+                        activeTcpSessions = intent.getIntExtra(EXTRA_ACTIVE_TCP_SESSIONS, 0),
+                        tcpSessionStateStats = decodeTcpSessionStateStats(
+                            intent.getStringArrayListExtra(EXTRA_TCP_SESSION_STATE_STATS),
+                        ),
                     ),
                 )
             }
@@ -159,6 +166,8 @@ internal class VpnServiceController(context: Context) {
         packetSummaryUpdatedAt: Long? = null,
         packetInspectorPaused: Boolean = false,
         packetSummaries: List<PacketSummary> = emptyList(),
+        activeTcpSessions: Int = 0,
+        tcpSessionStateStats: Map<TcpSessionState, Int> = emptyMap(),
     ) {
         val state = VpnServiceUiState(
             status = status,
@@ -174,6 +183,8 @@ internal class VpnServiceController(context: Context) {
             packetSummaryUpdatedAt = packetSummaryUpdatedAt,
             packetInspectorPaused = packetInspectorPaused,
             packetSummaries = packetSummaries,
+            activeTcpSessions = activeTcpSessions,
+            tcpSessionStateStats = tcpSessionStateStats,
         )
         ViRouteVpnService.rememberState(state)
         val intent = Intent(ACTION_STATE_CHANGED)
@@ -191,6 +202,8 @@ internal class VpnServiceController(context: Context) {
             .putExtra(EXTRA_PACKET_SUMMARY_UPDATED_AT, packetSummaryUpdatedAt ?: NO_PACKET_TIME)
             .putExtra(EXTRA_PACKET_INSPECTOR_PAUSED, packetInspectorPaused)
             .putStringArrayListExtra(EXTRA_PACKET_SUMMARIES, ArrayList(packetSummaries.map(::encodePacketSummary)))
+            .putExtra(EXTRA_ACTIVE_TCP_SESSIONS, activeTcpSessions)
+            .putStringArrayListExtra(EXTRA_TCP_SESSION_STATE_STATS, ArrayList(encodeTcpSessionStateStats(tcpSessionStateStats)))
         appContext.sendBroadcast(intent)
     }
 
@@ -209,6 +222,8 @@ internal class VpnServiceController(context: Context) {
             packetSummaryUpdatedAt = state.packetSummaryUpdatedAt,
             packetInspectorPaused = state.packetInspectorPaused,
             packetSummaries = state.packetSummaries,
+            activeTcpSessions = state.activeTcpSessions,
+            tcpSessionStateStats = state.tcpSessionStateStats,
         )
     }
 
@@ -232,6 +247,8 @@ internal class VpnServiceController(context: Context) {
         internal const val EXTRA_PACKET_SUMMARY_UPDATED_AT = "packet_summary_updated_at"
         internal const val EXTRA_PACKET_INSPECTOR_PAUSED = "packet_inspector_paused"
         internal const val EXTRA_PACKET_SUMMARIES = "packet_summaries"
+        internal const val EXTRA_ACTIVE_TCP_SESSIONS = "active_tcp_sessions"
+        internal const val EXTRA_TCP_SESSION_STATE_STATS = "tcp_session_state_stats"
         internal const val NO_PACKET_TIME = -1L
 
         internal fun encodePacketSummary(summary: PacketSummary): String = listOf(
@@ -264,8 +281,25 @@ internal class VpnServiceController(context: Context) {
             }.getOrNull()
         }
 
+        internal fun encodeTcpSessionStateStats(stats: Map<TcpSessionState, Int>): List<String> = stats.map { (state, count) ->
+            listOf(state.name, count.toString()).joinToString(TCP_SESSION_STATE_SEPARATOR)
+        }
+
+        internal fun decodeTcpSessionStateStats(encoded: ArrayList<String>?): Map<TcpSessionState, Int> = encoded
+            .orEmpty()
+            .mapNotNull { item ->
+                val parts = item.split(TCP_SESSION_STATE_SEPARATOR)
+                if (parts.size != TCP_SESSION_STATE_FIELD_COUNT) return@mapNotNull null
+                val state = runCatching { TcpSessionState.valueOf(parts[0]) }.getOrNull() ?: return@mapNotNull null
+                val count = parts[1].toIntOrNull() ?: return@mapNotNull null
+                state to count
+            }
+            .toMap()
+
         private const val PACKET_SUMMARY_SEPARATOR = "|"
         private const val PACKET_SUMMARY_FIELD_COUNT = 7
+        private const val TCP_SESSION_STATE_SEPARATOR = ":"
+        private const val TCP_SESSION_STATE_FIELD_COUNT = 2
 
     }
 }

@@ -18,12 +18,14 @@ internal const val REMOTE_RUNTIME_FORWARDING_NOT_ENABLED =
     "Selected profile requires runtime forwarding, which is not enabled yet."
 internal const val OBSERVATION_ONLY_NO_FORWARDING =
     "Observation only. Packets are not forwarded."
+internal const val WOULD_CREATE_TCP_SESSION = "Would create TCP session"
 
 internal data class LiveRouteDecisionPreview(
     val matchedRuleName: String?,
     val selectedProfileName: String,
     val selectedProfileType: String,
     val warnings: List<String>,
+    val tcpSessionObservationLine: String?,
 ) {
     val decisionLine: String = buildString {
         append("Route preview: ")
@@ -40,6 +42,7 @@ internal data class LiveRouteDecisionPreview(
     val displayLines: List<String> = buildList {
         add(decisionLine)
         add(safetyLine)
+        tcpSessionObservationLine?.let(::add)
         addAll(warnings)
     }
 }
@@ -56,8 +59,12 @@ internal class LiveRouteDecisionPreviewer(config: RoutingConfig) {
             selectedProfileName = selectedProfile.name,
             selectedProfileType = selectedProfile.type.label,
             warnings = selectedProfile.runtimeForwardingWarnings(),
+            tcpSessionObservationLine = summary.tcpSessionObservationLine(),
         )
     }
+
+    private fun PacketSummary.tcpSessionObservationLine(): String? =
+        if (protocol == Ipv4Protocol.Tcp && srcPort != null && dstPort != null) WOULD_CREATE_TCP_SESSION else null
 
     private fun TunnelProfile.runtimeForwardingWarnings(): List<String> = when (type) {
         TunnelType.Socks5,

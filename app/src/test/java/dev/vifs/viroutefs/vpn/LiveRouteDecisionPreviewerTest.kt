@@ -131,6 +131,16 @@ class LiveRouteDecisionPreviewerTest {
         assertFalse(decisionText.contains(uuid), "decision text must not include VLESS UUID")
     }
 
+
+    @Test
+    fun tcpRoutePreviewShowsWouldCreateSessionObservation() {
+        val preview = LiveRouteDecisionPreviewer(RoutingConfigDefaults.defaultConfig())
+            .preview(tcpSummary(dstIp = "198.51.100.10"))
+
+        assertEquals(WOULD_CREATE_TCP_SESSION, preview.tcpSessionObservationLine)
+        assertTrue(preview.displayLines.contains(WOULD_CREATE_TCP_SESSION))
+    }
+
     @Test
     fun noDuplicateParserOrSummaryModelIntroduced() {
         val sourceRoot = listOf(

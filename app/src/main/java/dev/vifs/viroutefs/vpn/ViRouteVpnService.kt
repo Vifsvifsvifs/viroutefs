@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import dev.vifs.viroutefs.MainActivity
+import dev.vifs.viroutefs.runtime.tcp.TcpSessionState
 import dev.vifs.viroutefs.R
 import java.io.FileInputStream
 import java.io.InterruptedIOException
@@ -341,6 +342,8 @@ class ViRouteVpnService : VpnService() {
         packetSummaryUpdatedAt: Long? = null,
         packetInspectorPaused: Boolean = false,
         packetSummaries: List<PacketSummary> = emptyList(),
+        activeTcpSessions: Int = 0,
+        tcpSessionStateStats: Map<TcpSessionState, Int> = emptyMap(),
     ) {
         val state = VpnServiceUiState(
             status = status,
@@ -356,6 +359,8 @@ class ViRouteVpnService : VpnService() {
             packetSummaryUpdatedAt = packetSummaryUpdatedAt,
             packetInspectorPaused = packetInspectorPaused,
             packetSummaries = packetSummaries,
+            activeTcpSessions = activeTcpSessions,
+            tcpSessionStateStats = tcpSessionStateStats,
         )
         rememberState(state)
         val intent = Intent(VpnServiceController.ACTION_STATE_CHANGED)
@@ -375,6 +380,11 @@ class ViRouteVpnService : VpnService() {
             .putStringArrayListExtra(
                 VpnServiceController.EXTRA_PACKET_SUMMARIES,
                 ArrayList(packetSummaries.map(VpnServiceController::encodePacketSummary)),
+            )
+            .putExtra(VpnServiceController.EXTRA_ACTIVE_TCP_SESSIONS, activeTcpSessions)
+            .putStringArrayListExtra(
+                VpnServiceController.EXTRA_TCP_SESSION_STATE_STATS,
+                ArrayList(VpnServiceController.encodeTcpSessionStateStats(tcpSessionStateStats)),
             )
         sendBroadcast(intent)
     }
