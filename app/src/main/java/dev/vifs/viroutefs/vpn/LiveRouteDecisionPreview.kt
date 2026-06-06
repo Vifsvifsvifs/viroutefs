@@ -7,6 +7,7 @@ import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
+import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_EVENT_OPEN
 
 internal const val SOCKS5_RUNTIME_FORWARDING_NOT_ENABLED =
     "Selected profile is SOCKS5. Runtime forwarding is not enabled yet."
@@ -26,6 +27,7 @@ internal data class LiveRouteDecisionPreview(
     val selectedProfileType: String,
     val warnings: List<String>,
     val tcpSessionObservationLine: String?,
+    val devSessionObservationLine: String? = null,
 ) {
     val decisionLine: String = buildString {
         append("Route preview: ")
@@ -43,6 +45,7 @@ internal data class LiveRouteDecisionPreview(
         add(decisionLine)
         add(safetyLine)
         tcpSessionObservationLine?.let(::add)
+        devSessionObservationLine?.let(::add)
         addAll(warnings)
     }
 }
@@ -50,7 +53,7 @@ internal data class LiveRouteDecisionPreview(
 internal class LiveRouteDecisionPreviewer(config: RoutingConfig) {
     private val routeEngine = RouteEngine(config)
 
-    fun preview(summary: PacketSummary): LiveRouteDecisionPreview {
+    fun preview(summary: PacketSummary, devSessionOpen: Boolean = false): LiveRouteDecisionPreview {
         val decision = routeEngine.simulate(summary.dstIp)
         val selectedProfile = decision.tunnelProfile
         return LiveRouteDecisionPreview(
@@ -60,6 +63,7 @@ internal class LiveRouteDecisionPreviewer(config: RoutingConfig) {
             selectedProfileType = selectedProfile.type.label,
             warnings = selectedProfile.runtimeForwardingWarnings(),
             tcpSessionObservationLine = summary.tcpSessionObservationLine(),
+            devSessionObservationLine = if (devSessionOpen) DEV_TCP_BRIDGE_EVENT_OPEN else null,
         )
     }
 
