@@ -1,0 +1,68 @@
+name: Release APK
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+
+      - name: Prepare optional alpha signing key
+        env:
+          VIROUTEFS_ALPHA_KEYSTORE_BASE64: ${{ secrets.VIROUTEFS_ALPHA_KEYSTORE_BASE64 }}
+          VIROUTEFS_ALPHA_KEYSTORE_PASSWORD: ${{ secrets.VIROUTEFS_ALPHA_KEYSTORE_PASSWORD }}
+          VIROUTEFS_ALPHA_KEY_ALIAS: ${{ secrets.VIROUTEFS_ALPHA_KEY_ALIAS }}
+          VIROUTEFS_ALPHA_KEY_PASSWORD: ${{ secrets.VIROUTEFS_ALPHA_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${VIROUTEFS_ALPHA_KEYSTORE_BASE64:-}" ]; then
+            ALPHA_KEYSTORE_PATH="$RUNNER_TEMP/viroutefs-alpha.jks"
+            printf '%s' "$VIROUTEFS_ALPHA_KEYSTORE_BASE64" | base64 --decode > "$ALPHA_KEYSTORE_PATH"
+            {
+              echo "VIROUTEFS_ALPHA_KEYSTORE_PATH=$ALPHA_KEYSTORE_PATH"
+              echo "VIROUTEFS_ALPHA_KEYSTORE_PASSWORD=$VIROUTEFS_ALPHA_KEYSTORE_PASSWORD"
+              echo "VIROUTEFS_ALPHA_KEY_ALIAS=$VIROUTEFS_ALPHA_KEY_ALIAS"
+              echo "VIROUTEFS_ALPHA_KEY_PASSWORD=$VIROUTEFS_ALPHA_KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "Alpha signing key decoded into RUNNER_TEMP."
+          else
+            echo "VIROUTEFS_ALPHA_KEYSTORE_BASE64 is not configured; building with default debug signing."
+          fi
+
+      - name: Build debug APK
+        run: gradle :app:assembleDebug -PbuildNumber=${{ github.run_number }} --stacktrace
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: ViRouteFS build ${{ github.run_number }}
+          prerelease: true
+          files: app/build/outputs/apk/debug/*.apk
