@@ -76,7 +76,8 @@ class VlessProtocolProbeTest {
         val result = VlessProtocolProber(socketFactory = { error("REALITY must not connect") }).probeBlocking(profile, "example.com", 80)
 
         assertEquals(VlessProtocolProbeState.UnsupportedSecurityMode, result.state)
-        assertEquals(VLESS_REALITY_UNSUPPORTED_MESSAGE, result.message)
+        assertEquals(VlessResponseClassification.UnsupportedTransport, result.classification)
+        assertEquals("Security mode not supported", result.message)
         assertEquals(VlessSecurityMode.REALITY, result.securityMode)
     }
 
@@ -155,8 +156,9 @@ class VlessProtocolProbeTest {
         ).probeBlocking(plainProfile(), "example.com", 80)
 
         assertEquals(VlessProtocolProbeState.ResponseReceived, result.state)
+        assertEquals(VlessResponseClassification.ResponseReceived, result.classification)
         assertEquals(response.size, result.responseBytes)
-        assertTrue(result.displayMessage.contains("response bytes: ${response.size}"))
+        assertTrue(result.displayMessage.contains("Response received: ${response.size} bytes"))
     }
 
     @Test
@@ -166,6 +168,7 @@ class VlessProtocolProbeTest {
         ).probeBlocking(plainProfile(), "example.com", 80)
 
         assertEquals(VlessProtocolProbeState.InvalidEmptyResponse, result.state)
+        assertEquals(VlessResponseClassification.EmptyResponse, result.classification)
         assertEquals(0, result.responseBytes)
         assertFalse(result.displayMessage.contains("0x"))
     }
@@ -177,6 +180,7 @@ class VlessProtocolProbeTest {
         ).probeBlocking(plainProfile(), "example.com", 80)
 
         assertEquals(VlessProtocolProbeState.RequestSentNoImmediateResponse, result.state)
+        assertEquals(VlessResponseClassification.Timeout, result.classification)
         assertEquals(0, result.responseBytes)
         assertTrue(result.steps.contains(VlessProtocolProbeState.VlessRequestSent))
     }
@@ -188,7 +192,45 @@ class VlessProtocolProbeTest {
         ).probeBlocking(plainProfile(), "example.com", 80)
 
         assertEquals(VlessProtocolProbeState.ServerClosedConnection, result.state)
+        assertEquals(VlessResponseClassification.ServerClosed, result.classification)
         assertEquals(0, result.responseBytes)
+    }
+
+    @Test
+    fun tlsResponseClassificationUsesParser() {
+        val profile = plainProfile().copy(securityMode = VlessSecurityMode.TLS)
+        val fakeTlsSocket = FakeSslSocket(response = byteArrayOf(0x01, 0x02, 0x03, 0x04))
+
+        val result = VlessProtocolProber(
+            socketFactory = { FakeTcpSocket() },
+            tlsSocketFactory = { _, _, _, _ -> fakeTlsSocket },
+        ).probeBlocking(profile, "example.com", 80)
+
+        assertEquals(VlessProtocolProbeState.ResponseReceived, result.state)
+        assertEquals(VlessResponseClassification.ResponseReceived, result.classification)
+        assertEquals(4, result.responseBytes)
+        assertEquals(VlessSecurityMode.TLS, result.responseMetadata.securityMode)
+        assertTrue(result.displayMessage.contains("Response received: 4 bytes"))
+    }
+
+    @Test
+    fun invalidTargetPortIsRejectedBeforeConnect() {
+        val result = VlessProtocolProber(socketFactory = { error("invalid target must not connect") })
+            .probeBlocking(plainProfile(), "example.com", 70000)
+
+        assertEquals(VlessProtocolProbeState.ValidationError, result.state)
+        assertEquals(VlessResponseClassification.ValidationError, result.classification)
+        assertTrue(result.message.contains("target port", ignoreCase = true))
+    }
+
+    @Test
+    fun unsupportedTransportWarnsBeforeConnect() {
+        val result = VlessProtocolProber(socketFactory = { error("unsupported transport must not connect") })
+            .probeBlocking(plainProfile().copy(transportType = "ws"), "example.com", 80)
+
+        assertEquals(VlessProtocolProbeState.UnsupportedSecurityMode, result.state)
+        assertEquals(VlessResponseClassification.UnsupportedTransport, result.classification)
+        assertEquals("Security mode not supported", result.displayMessage)
     }
 
     @Test
@@ -257,7 +299,9 @@ private class TimeoutInputStream : InputStream() {
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int = throw SocketTimeoutException("metadata read timed out")
 }
 
-private class FakeSslSocket : SSLSocket() {
+private class FakeSslSocket(
+    private val response: ByteArray = ByteArray(0),
+) : SSLSocket() {
     private val output = ByteArrayOutputStream()
     var wrapHost: String? = null
     var wrapPort: Int? = null
@@ -272,7 +316,7 @@ private class FakeSslSocket : SSLSocket() {
     }
 
     override fun getOutputStream(): OutputStream = output
-    override fun getInputStream(): InputStream = ByteArrayInputStream(ByteArray(0))
+    override fun getInputStream(): InputStream = ByteArrayInputStream(response)
     override fun setSSLParameters(params: SSLParameters) {
         appliedSslParameters = params
     }

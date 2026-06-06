@@ -99,6 +99,14 @@ Safety boundaries remain unchanged:
 - Telemetry, tracking, ads, analytics SDKs, and cloud upload remain out of scope.
 
 
+## 0.8.11-alpha VLESS response parser and diagnostics cleanup
+
+- Add a metadata-only VLESS response parser for user-triggered manual protocol probes.
+- Classify results as response received, empty response, timeout, server closed, invalid response, TLS handshake failed, unsupported transport, or validation error.
+- Extract and store only byte count, elapsed milliseconds, and security mode; raw payload bytes and UUID values are not displayed, logged, or stored.
+- Keep local no-backup probe history capped at 20 entries per profile and show the latest safe classification in route decision previews.
+- VLESS remains config-only: no runtime forwarding, Android traffic forwarding, TUN writes, DNS proxying, REALITY/XTLS, automatic testing, telemetry, or cloud upload.
+
 ## 0.8.10-alpha manual VLESS response probe
 
 - Extend the user-triggered manual VLESS protocol probe to classify the first response after sending the existing minimal VLESS TCP request frame.

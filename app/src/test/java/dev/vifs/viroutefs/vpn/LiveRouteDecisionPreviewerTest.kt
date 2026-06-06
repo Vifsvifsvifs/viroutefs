@@ -127,6 +127,7 @@ class LiveRouteDecisionPreviewerTest {
 
         assertTrue(preview.warnings.contains(VLESS_RUNTIME_FORWARDING_NOT_ENABLED))
         assertTrue(decisionText.contains("Selected profile is VLESS. Runtime forwarding is not enabled yet."))
+        assertTrue(decisionText.contains("Latest manual VLESS response classification:"))
         assertFalse(decisionText.contains(uuid), "decision text must not include VLESS UUID")
     }
 

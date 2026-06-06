@@ -24,6 +24,7 @@ data class VlessProtocolProbeHistoryItem(
     val elapsedMs: Long? = null,
     val securityMode: VlessSecurityMode = VlessSecurityMode.NONE,
     val responseBytes: Int = 0,
+    val classification: VlessResponseClassification = state.toVlessResponseClassification(),
 )
 
 class VlessProtocolProbeHistoryStore(
@@ -43,6 +44,7 @@ class VlessProtocolProbeHistoryStore(
             securityMode = item.securityMode,
             message = item.message.sanitizeVlessReachabilityMessage(),
             responseBytes = item.responseBytes.coerceAtLeast(0),
+            classification = item.classification,
         )
         val next = (loadAll() + sanitized)
             .groupBy { it.profileId }
@@ -78,6 +80,7 @@ class VlessProtocolProbeHistoryStore(
         put("state", state.wireName())
         put("message", message.sanitizeVlessReachabilityMessage())
         put("responseBytes", responseBytes.coerceAtLeast(0))
+        put("classification", classification.name)
         elapsedMs?.let { put("elapsedMs", it) }
     }
 
@@ -95,6 +98,7 @@ class VlessProtocolProbeHistoryStore(
             message = optString("message").sanitizeVlessReachabilityMessage(),
             elapsedMs = if (has("elapsedMs")) optLong("elapsedMs") else null,
             responseBytes = optInt("responseBytes", 0).coerceAtLeast(0),
+            classification = optString("classification").toVlessResponseClassification(optString("state").toVlessProtocolProbeState()),
         )
     }.getOrNull()
 
@@ -140,3 +144,6 @@ fun String.toVlessProtocolProbeState(): VlessProtocolProbeState = when (lowercas
 }
 
 private fun String.toVlessSecurityMode(): VlessSecurityMode = VlessSecurityMode.entries.firstOrNull { it.wireName.equals(this, ignoreCase = true) } ?: VlessSecurityMode.NONE
+
+private fun String.toVlessResponseClassification(fallbackState: VlessProtocolProbeState): VlessResponseClassification =
+    VlessResponseClassification.entries.firstOrNull { it.name.equals(this, ignoreCase = true) } ?: fallbackState.toVlessResponseClassification()
