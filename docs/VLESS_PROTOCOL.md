@@ -2,7 +2,9 @@
 
 ViRouteFS `0.8.7-alpha` added a pure/local VLESS TCP request encoder for future manual handshake diagnostics. The encoder constructs only the first VLESS TCP request frame in memory and returns it as a `ByteArray`.
 
-ViRouteFS `0.8.8-alpha` adds an explicit manual plain-TCP VLESS protocol probe that is run only when the user taps **Run VLESS probe** from a saved VLESS profile. The probe opens a TCP socket to the configured VLESS server, builds one minimal VLESS TCP request frame with the existing builder, sends that frame to a user-selected target, briefly observes whether the server closes or keeps the connection, and closes the socket. It sends no HTTP payload and stores only privacy-safe local no-backup history.
+ViRouteFS `0.8.8-alpha` added an explicit manual plain-TCP VLESS protocol probe that is run only when the user taps **Run VLESS probe** from a saved VLESS profile. The plain probe opens a TCP socket to the configured VLESS server, builds one minimal VLESS TCP request frame with the existing builder, sends that frame to a user-selected target, briefly observes whether the server closes or keeps the connection, and closes the socket.
+
+ViRouteFS `0.8.9-alpha` extends the same user-triggered manual VLESS protocol probe for `security=tls`. TLS probes validate the profile, open TCP to the VLESS server, wrap the connection in TLS, set SNI from the profile SNI or default to the profile host, complete the TLS handshake, send the existing minimal VLESS TCP request frame over TLS, wait briefly for close/error/timeout, and close the socket. The TLS probe sends no HTTP payload and stores only privacy-safe local no-backup history.
 
 ## What is included in 0.8.7-alpha
 
@@ -17,13 +19,14 @@ ViRouteFS `0.8.8-alpha` adds an explicit manual plain-TCP VLESS protocol probe t
 - Local validation for UUID, host, port, and unsupported address types.
 - A safe debug summary helper for tests/developer diagnostics that reports frame length and metadata without printing the UUID or full raw frame bytes.
 
-## What is included in 0.8.8-alpha
+## What is included through 0.8.9-alpha
 
 - Manual plain-TCP VLESS protocol probe from the VLESS profile screen.
+- Manual TLS VLESS protocol probe from the VLESS profile screen for `security=tls`.
 - Target host/port fields with safe defaults (`example.com` and `80`).
 - Validation of the VLESS profile and selected target before sending a frame.
-- Support only for `security=none` while TLS/REALITY transport is still pending.
-- Probe states for TCP connection, VLESS request send, brief keep-open, server close, timeout, refused connection, host/DNS error, validation error, and unsupported security mode.
+- Support for manual probes with `security=none` and `security=tls`; `security=reality` returns unsupported because REALITY is not implemented yet.
+- Probe states for TCP connection, TLS handshake success/failure, VLESS request send, brief keep-open, server close, timeout, refused connection, host/DNS error, validation error, and unsupported transport.
 - Local no-backup history capped at 20 entries per profile.
 - History and UI text that do not include UUID values or raw VLESS frame bytes.
 
@@ -38,10 +41,10 @@ The VLESS protocol builder remains pure protocol construction only:
 - No runtime forwarding.
 - No packets are written back to TUN.
 - No DNS proxying.
-- No TLS, REALITY, or XTLS handshake.
+- The pure builder performs no TLS, REALITY, or XTLS handshake. TLS is only applied by the separate manual `0.8.9-alpha` probe before it sends the builder output.
 - No WebSocket, gRPC, Mux, XUDP, or UDP forwarding.
 - No telemetry, analytics, tracking SDKs, cloud upload, or automatic export.
 
-The `0.8.8-alpha` manual probe is the only VLESS network diagnostic added in this milestone. It is user-triggered, plain TCP only, and does not enable runtime VLESS forwarding, Android traffic forwarding, TUN writes, DNS proxying, TLS/REALITY/XTLS, or automatic testing.
+The `0.8.9-alpha` manual probe is the only VLESS transport diagnostic added in this milestone. It is user-triggered only from the VLESS profile screen. `security=none` keeps the existing plain TCP behavior; `security=tls` opens TLS and sends the same minimal VLESS request frame over TLS. It does not enable runtime VLESS forwarding, Android traffic forwarding, TUN writes, DNS proxying, REALITY, XTLS, HTTP payload sending, or automatic testing.
 
 UUID values are used only to construct the local in-memory VLESS frame. The builder and probe do not log UUIDs, debug helpers redact UUID bytes by default, and validation/result/history text intentionally use safe messages without echoing sensitive input.

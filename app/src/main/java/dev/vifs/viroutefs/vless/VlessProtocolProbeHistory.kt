@@ -22,6 +22,7 @@ data class VlessProtocolProbeHistoryItem(
     val state: VlessProtocolProbeState,
     val message: String,
     val elapsedMs: Long? = null,
+    val securityMode: VlessSecurityMode = VlessSecurityMode.NONE,
 )
 
 class VlessProtocolProbeHistoryStore(
@@ -38,6 +39,7 @@ class VlessProtocolProbeHistoryStore(
             profileNameSnapshot = item.profileNameSnapshot.sanitizeVlessReachabilityMessage(),
             serverHost = item.serverHost.trim().sanitizeVlessReachabilityMessage(),
             targetHost = item.targetHost.trim().sanitizeVlessReachabilityMessage(),
+            securityMode = item.securityMode,
             message = item.message.sanitizeVlessReachabilityMessage(),
         )
         val next = (loadAll() + sanitized)
@@ -69,6 +71,7 @@ class VlessProtocolProbeHistoryStore(
         put("serverPort", serverPort)
         put("targetHost", targetHost.sanitizeVlessReachabilityMessage())
         put("targetPort", targetPort)
+        put("securityMode", securityMode.wireName)
         put("timestamp", timestamp)
         put("state", state.wireName())
         put("message", message.sanitizeVlessReachabilityMessage())
@@ -83,6 +86,7 @@ class VlessProtocolProbeHistoryStore(
             serverPort = optInt("serverPort"),
             targetHost = optString("targetHost").sanitizeVlessReachabilityMessage(),
             targetPort = optInt("targetPort"),
+            securityMode = optString("securityMode", VlessSecurityMode.NONE.wireName).toVlessSecurityMode(),
             timestamp = optLong("timestamp"),
             state = optString("state").toVlessProtocolProbeState(),
             message = optString("message").sanitizeVlessReachabilityMessage(),
@@ -98,6 +102,8 @@ class VlessProtocolProbeHistoryStore(
 
 fun VlessProtocolProbeState.wireName(): String = when (this) {
     VlessProtocolProbeState.TcpConnected -> "tcp_connected"
+    VlessProtocolProbeState.TlsHandshakeSuccess -> "tls_handshake_success"
+    VlessProtocolProbeState.TlsHandshakeFailed -> "tls_handshake_failed"
     VlessProtocolProbeState.VlessRequestSent -> "vless_request_sent"
     VlessProtocolProbeState.ServerKeptConnectionBriefly -> "server_kept_connection_briefly"
     VlessProtocolProbeState.ServerClosedConnection -> "server_closed_connection"
@@ -110,6 +116,8 @@ fun VlessProtocolProbeState.wireName(): String = when (this) {
 
 fun String.toVlessProtocolProbeState(): VlessProtocolProbeState = when (lowercase()) {
     "tcp_connected" -> VlessProtocolProbeState.TcpConnected
+    "tls_handshake_success" -> VlessProtocolProbeState.TlsHandshakeSuccess
+    "tls_handshake_failed" -> VlessProtocolProbeState.TlsHandshakeFailed
     "vless_request_sent" -> VlessProtocolProbeState.VlessRequestSent
     "server_kept_connection_briefly" -> VlessProtocolProbeState.ServerKeptConnectionBriefly
     "server_closed_connection" -> VlessProtocolProbeState.ServerClosedConnection
@@ -120,3 +128,5 @@ fun String.toVlessProtocolProbeState(): VlessProtocolProbeState = when (lowercas
     "unsupported_security_mode" -> VlessProtocolProbeState.UnsupportedSecurityMode
     else -> VlessProtocolProbeState.HostDnsError
 }
+
+private fun String.toVlessSecurityMode(): VlessSecurityMode = VlessSecurityMode.entries.firstOrNull { it.wireName.equals(this, ignoreCase = true) } ?: VlessSecurityMode.NONE
