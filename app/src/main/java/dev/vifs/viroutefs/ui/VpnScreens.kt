@@ -47,6 +47,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -55,6 +56,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
@@ -123,6 +126,8 @@ import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreviewer
 import dev.vifs.viroutefs.vpn.PacketSummary
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
+import dev.vifs.viroutefs.vpn.XrayEngineRunner
+import dev.vifs.viroutefs.vpn.minimalSmokeConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -151,6 +156,21 @@ internal fun VpnScreen(
     val visibleProfiles = config.profiles.filter { !it.mockOnly || it.type == TunnelType.Socks5 || it.type == TunnelType.VLESS }
     val routeDecisionPreviewer = remember(config) { LiveRouteDecisionPreviewer(config) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
+    var xrayLogs by remember { mutableStateOf(listOf("Xray smoke test idle. No VPN/TUN traffic is attached.")) }
+    var xrayRunning by remember { mutableStateOf(false) }
+    fun appendXrayLog(message: String) {
+        mainHandler.post {
+            xrayLogs = (xrayLogs + message).takeLast(6)
+        }
+    }
+    val xrayEngineRunner = remember(context.applicationContext) {
+        XrayEngineRunner(context.applicationContext) { message -> appendXrayLog(message) }
+    }
+    DisposableEffect(xrayEngineRunner) {
+        onDispose { xrayEngineRunner.stop() }
+    }
     val devTcpBridge = remember(config.profiles) {
         VlessDevTcpBridge(
             profiles = {
@@ -256,6 +276,28 @@ internal fun VpnScreen(
                 CounterLine(text.vpnUdpPacketsRead, vpnState.udpPacketsRead)
                 CounterLine(text.vpnIcmpPacketsRead, vpnState.icmpPacketsRead)
             }
+        }
+        item {
+            XrayEngineSmokeCard(
+                running = xrayRunning,
+                logs = xrayLogs,
+                onStart = {
+                    scope.launch {
+                        appendXrayLog("Starting dev smoke test…")
+                        val result = withContext(Dispatchers.IO) { xrayEngineRunner.start(minimalSmokeConfig()) }
+                        xrayRunning = xrayEngineRunner.isRunning()
+                        result.onFailure { error ->
+                            appendXrayLog(error.localizedMessage ?: "Xray smoke start failed.")
+                        }
+                    }
+                },
+                onStop = {
+                    scope.launch {
+                        withContext(Dispatchers.IO) { xrayEngineRunner.stop() }
+                        xrayRunning = xrayEngineRunner.isRunning()
+                    }
+                },
+            )
         }
         item {
             TcpSessionRuntimeCard(
@@ -632,6 +674,37 @@ private fun AddVpnTypeSheet(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+@Composable
+private fun XrayEngineSmokeCard(
+    running: Boolean,
+    logs: List<String>,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+) {
+    CardBlock {
+        Text("Xray engine smoke test", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            "Dev/diagnostic lifecycle test only. Starts a local SOCKS listener on 127.0.0.1:10808 and does not create VPN, TUN, or route device traffic.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        WarningText("Dev-only diagnostic: no payload logging, no VPN service, no Android traffic routing.")
+        Text(
+            "Status: ${if (running) "running" else "stopped"}",
+            fontWeight = FontWeight.SemiBold,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(enabled = !running, onClick = onStart) { Text("Start") }
+            OutlinedButton(enabled = running, onClick = onStop) { Text("Stop") }
+        }
+        Text("Recent engine logs", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+        logs.forEach { logLine ->
+            Text("• $logLine", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 
