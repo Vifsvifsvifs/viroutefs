@@ -1,6 +1,6 @@
 # Routing configuration
 
-ViRouteFS stores routing configuration locally in `routing_config.json`. The current schema version is 6.
+ViRouteFS stores routing configuration locally in `routing_config.json`. The current schema version is 7.
 
 Required built-in profiles are restored during migration:
 
@@ -8,7 +8,9 @@ Required built-in profiles are restored during migration:
 - `block` — fail-closed target;
 - `byedpi` — disabled by default.
 
-The default rule initially targets `Block` until the user selects a working provider tunnel. Network control refuses to start without that provider tunnel.
+The default rule targets `System`, which means the phone's normal mobile-data or Wi-Fi uplink. Network control can start without adding a VPN profile. Explicit app/domain/IP/CIDR rules may select a VPN/proxy, `Block`, ByeDPI or `System`.
+
+Schema 7 migrates older configurations with no default route, or with the old temporary `Block` default, back to `System`.
 
 ## Secrets
 

@@ -17,7 +17,7 @@ import dev.vifs.viroutefs.engine.SingBoxRoutingConfigCompiler
 import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
 import dev.vifs.viroutefs.routing.TunnelType
-import dev.vifs.viroutefs.routing.providerTunnelActivationError
+import dev.vifs.viroutefs.routing.defaultRouteActivationError
 import dev.vifs.viroutefs.runtime.tcp.TcpSessionState
 import dev.vifs.viroutefs.R
 import java.io.FileInputStream
@@ -192,7 +192,7 @@ class ViRouteVpnService : VpnService() {
         if (runtimeStopping) return
         val config = loadResult.config
         if (!config.emergencyBlockEnabled) {
-            providerTunnelActivationError(config)?.let { error ->
+            defaultRouteActivationError(config)?.let { error ->
                 failRuntime(error)
                 return
             }
@@ -224,7 +224,7 @@ class ViRouteVpnService : VpnService() {
         if (!config.emergencyBlockEnabled &&
             config.defaultProfileId !in compiled.runtimeProfileIds
         ) {
-            failRuntime("Туннель провайдера не прошёл проверку движка. Контроль сети остановлен без прямого подключения.")
+            failRuntime("Основной маршрут не прошёл проверку движка. Контроль сети остановлен без скрытого fallback.")
             return
         }
         val runner = SingBoxEngineRunner(

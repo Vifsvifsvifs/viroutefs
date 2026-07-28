@@ -15,9 +15,10 @@ Every rule selects one profile. The profile may be a VPN/proxy tunnel, `Direct`,
 `Block` or the built-in ByeDPI local proxy. Rules are ordered, and the first
 matching rule wins.
 
-When network control is enabled, a working provider tunnel is mandatory. Every
-flow without a more specific rule uses that provider tunnel. `Direct`, `Block`
-and ByeDPI are explicit exceptions and cannot become the provider tunnel.
+When network control is enabled, every flow without a more specific rule uses
+`System`: the phone's normal mobile-data or Wi-Fi uplink. A VPN profile is not
+required to start network control. Explicit rules send only selected traffic to
+a VPN/proxy tunnel, `Block`, ByeDPI or an explicit `System` route.
 
 ## DNS
 
@@ -50,4 +51,5 @@ disabled.
 
 Unsupported, disabled, invalid and failed targets compile to `Block`. ViRouteFS
 never falls back from a requested protected route to `Direct` without an
-explicit user rule.
+explicit user rule. This fail-closed rule applies to explicit VPN/proxy routes;
+the normal unmatched route is intentionally `System`.

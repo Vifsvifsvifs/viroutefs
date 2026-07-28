@@ -7,7 +7,7 @@ import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.validateVlessProfile
 import java.util.Locale
 
-const val CURRENT_ROUTING_CONFIG_VERSION = 6
+const val CURRENT_ROUTING_CONFIG_VERSION = 7
 const val MOCK_PROFILE_LIMITATION = "Профиль пока не подключает реальный тоннель. Он используется для симуляции маршрутов."
 const val SOCKS5_RUNTIME_STATUS = "SOCKS5 forwarding is available through the local sing-box TUN runtime."
 const val VLESS_ROUTE_DECISION_STATUS = "VLESS forwarding is available through the local sing-box TUN runtime."
@@ -25,21 +25,25 @@ data class RoutingConfig(
 )
 
 /**
- * Selects the provider tunnel used by every flow that has no more specific rule.
+ * Selects the default route used by every flow that has no more specific rule.
  *
  * Keeping the persisted DEFAULT rule in sync makes exported configurations
  * readable by older builds, while defaultProfileId remains authoritative.
  */
-fun RoutingConfig.withProviderTunnel(profileId: String): RoutingConfig = copy(
+fun RoutingConfig.withDefaultRoute(profileId: String): RoutingConfig = copy(
     defaultProfileId = profileId,
     rules = rules.map { rule ->
         if (rule.type == RouteRuleType.DEFAULT) {
             rule.copy(
                 targetProfileId = profileId,
-                name = "Provider tunnel",
-                reason = "Traffic without a more specific app, domain, IP, or CIDR rule uses the provider tunnel.",
-                technicalDetails = "DEFAULT, priority ${rule.priority}. Explicit rules override this route. An unavailable provider tunnel blocks activation.",
-                recommendedAction = "Create specific rules only for traffic that must use another tunnel, System, Block, or ByeDPI.",
+                name = if (profileId == RoutingConfigDefaults.SYSTEM_PROFILE_ID) {
+                    "Phone internet / System"
+                } else {
+                    "Custom default route"
+                },
+                reason = "Traffic without a more specific app, domain, IP, or CIDR rule uses the selected default route.",
+                technicalDetails = "DEFAULT, priority ${rule.priority}. Explicit rules override this route. An unavailable custom route blocks activation.",
+                recommendedAction = "Create rules only for traffic that must use a VPN, another tunnel, Block, or ByeDPI.",
             )
         } else {
             rule
@@ -47,18 +51,19 @@ fun RoutingConfig.withProviderTunnel(profileId: String): RoutingConfig = copy(
     },
 )
 
-fun providerTunnelActivationError(config: RoutingConfig): String? {
+fun defaultRouteActivationError(config: RoutingConfig): String? {
     val profileId = config.defaultProfileId
-        ?: return "Сначала выберите туннель провайдера. Без него контроль сети не запускается, чтобы трафик случайно не пошёл напрямую."
+        ?: return "Основной маршрут не задан. Выберите обычный интернет телефона System или другой полностью настроенный маршрут."
     val profile = config.profiles.firstOrNull { it.id == profileId }
-        ?: return "Выбранный туннель провайдера не найден. Выберите существующий VPN-профиль."
+        ?: return "Выбранный основной маршрут не найден. Верните System или выберите существующий профиль."
     if (!profile.enabled) {
-        return "Туннель провайдера «${profile.name}» выключен. Включите его или выберите другой."
+        return "Основной маршрут «${profile.name}» выключен. Включите его или верните System."
     }
-    if (profile.type in setOf(TunnelType.Direct, TunnelType.Block, TunnelType.ByeDpi)) {
-        return "Маршрут «${profile.name}» нельзя назначить туннелем провайдера. Выберите настоящий VPN или прокси-туннель."
+    if (profile.type in setOf(TunnelType.Block, TunnelType.ByeDpi)) {
+        return "Маршрут «${profile.name}» нельзя использовать как обычный интернет телефона. Назначьте его отдельному правилу."
     }
     val hasRuntimeConfiguration = when (profile.type) {
+        TunnelType.Direct -> true
         TunnelType.Socks5 -> profile.socks5 != null
         TunnelType.VLESS,
         TunnelType.XrayVlessReality -> profile.vless != null

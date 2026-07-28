@@ -14,7 +14,7 @@ object RoutingConfigDefaults {
         profiles = defaultProfiles(),
         dnsPolicies = defaultDnsPolicies(),
         rules = defaultRules(),
-        defaultProfileId = null,
+        defaultProfileId = SYSTEM_PROFILE_ID,
         hostOverrides = emptyList(),
     )
 
@@ -61,28 +61,32 @@ object RoutingConfigDefaults {
     fun ensureRequiredProfiles(config: RoutingConfig): RoutingConfig {
         val existingIds = config.profiles.mapTo(mutableSetOf()) { it.id }
         val required = defaultProfiles().filterNot { it.id in existingIds }
-        val providerProfileId = config.defaultProfileId?.takeUnless {
-            it == SYSTEM_PROFILE_ID || it == BLOCK_PROFILE_ID || it == BYEDPI_PROFILE_ID
+        val profileIds = config.profiles.mapTo(mutableSetOf()) { it.id }.apply {
+            addAll(required.map { it.id })
         }
+        val defaultRouteProfileId = config.defaultProfileId
+            ?.takeIf { it in profileIds }
+            ?.takeUnless { it == BLOCK_PROFILE_ID || it == BYEDPI_PROFILE_ID }
+            ?: SYSTEM_PROFILE_ID
         return config.copy(
             version = CURRENT_ROUTING_CONFIG_VERSION,
             profiles = config.profiles + required,
-            defaultProfileId = providerProfileId,
+            defaultProfileId = defaultRouteProfileId,
             rules = config.rules.map { rule ->
                 if (rule.type == RouteRuleType.DEFAULT) {
                     rule.copy(
-                        targetProfileId = providerProfileId ?: BLOCK_PROFILE_ID,
-                        name = if (providerProfileId == null) "Provider tunnel not selected" else "Provider tunnel",
-                        reason = if (providerProfileId == null) {
-                            "Traffic stays blocked until a provider tunnel is selected."
+                        targetProfileId = defaultRouteProfileId,
+                        name = if (defaultRouteProfileId == SYSTEM_PROFILE_ID) {
+                            "Phone internet / System"
                         } else {
-                            "Traffic without a more specific rule uses the provider tunnel."
+                            "Custom default route"
                         },
+                        reason = "Traffic without a more specific rule uses the selected default route.",
                         technicalDetails = "DEFAULT, priority ${rule.priority}. Explicit app, domain, IP, and CIDR rules override this route.",
-                        recommendedAction = if (providerProfileId == null) {
-                            "Add a working VPN profile and choose it as the provider tunnel."
+                        recommendedAction = if (defaultRouteProfileId == SYSTEM_PROFILE_ID) {
+                            "Add rules only for apps, domains, IPs, or networks that must use a VPN, Block, or ByeDPI."
                         } else {
-                            "Add specific rules only for traffic that needs another route."
+                            "Keep the custom default profile available or return the default route to System."
                         },
                     )
                 } else {
@@ -98,22 +102,22 @@ object RoutingConfigDefaults {
             name = "Android system DNS",
             type = DnsPolicyType.System,
             resolveThroughProfileId = null,
-            description = "Uses Android system DNS through the selected provider tunnel unless the user explicitly configures another DNS server.",
+            description = "Uses Android system DNS through the phone's current connection unless the user explicitly configures another DNS server.",
         ),
     )
 
     private fun defaultRules(): List<RouteRule> = listOf(
         RouteRule(
             id = "default_system",
-            name = "Provider tunnel not selected",
+            name = "Phone internet / System",
             type = RouteRuleType.DEFAULT,
-            targetProfileId = BLOCK_PROFILE_ID,
+            targetProfileId = SYSTEM_PROFILE_ID,
             dnsPolicyId = SYSTEM_DNS_ID,
             priority = 1000,
             matchers = emptyList(),
-            reason = "Traffic stays blocked until a provider tunnel is selected.",
-            technicalDetails = "DEFAULT, priority 1000. When network control is active, every unmatched flow must use the selected provider tunnel. Explicit app/domain/IP/CIDR rules override it.",
-            recommendedAction = "Add a working VPN profile and choose it as the provider tunnel.",
+            reason = "Traffic without a more specific rule uses the phone's normal mobile data or Wi-Fi connection.",
+            technicalDetails = "DEFAULT, priority 1000. Network control remains active, while explicit app/domain/IP/CIDR rules can override this route.",
+            recommendedAction = "Add rules only for traffic that must use a VPN, another tunnel, Block, or ByeDPI.",
         ),
     )
 }

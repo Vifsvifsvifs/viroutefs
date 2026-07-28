@@ -10,11 +10,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag, for example v0.6.11-alpha'
+        description: 'Release tag, for example v0.12.0-beta.1'
         required: true
         type: string
       release_name:
-        description: 'Release title, for example ViRouteFS 0.6.11-alpha'
+        description: 'Release title, for example ViRouteFS 0.12.0-beta.1'
         required: true
         type: string
       prerelease:
@@ -60,7 +60,7 @@ jobs:
       - name: Validate Gradle wrapper
         uses: gradle/actions/wrapper-validation@v4
 
-      - name: Prepare optional alpha signing key
+      - name: Prepare release signing key
         env:
           VIROUTEFS_ALPHA_KEYSTORE_BASE64: ${{ secrets.VIROUTEFS_ALPHA_KEYSTORE_BASE64 }}
           VIROUTEFS_ALPHA_KEYSTORE_PASSWORD: ${{ secrets.VIROUTEFS_ALPHA_KEYSTORE_PASSWORD }}
@@ -70,15 +70,15 @@ jobs:
           set -euo pipefail
 
           if [ -n "${VIROUTEFS_ALPHA_KEYSTORE_BASE64:-}" ]; then
-            ALPHA_KEYSTORE_PATH="$RUNNER_TEMP/viroutefs-alpha.jks"
-            printf '%s' "$VIROUTEFS_ALPHA_KEYSTORE_BASE64" | base64 --decode > "$ALPHA_KEYSTORE_PATH"
+            RELEASE_KEYSTORE_PATH="$RUNNER_TEMP/viroutefs-beta.jks"
+            printf '%s' "$VIROUTEFS_ALPHA_KEYSTORE_BASE64" | base64 --decode > "$RELEASE_KEYSTORE_PATH"
             {
-              echo "VIROUTEFS_ALPHA_KEYSTORE_PATH=$ALPHA_KEYSTORE_PATH"
+              echo "VIROUTEFS_ALPHA_KEYSTORE_PATH=$RELEASE_KEYSTORE_PATH"
               echo "VIROUTEFS_ALPHA_KEYSTORE_PASSWORD=$VIROUTEFS_ALPHA_KEYSTORE_PASSWORD"
               echo "VIROUTEFS_ALPHA_KEY_ALIAS=$VIROUTEFS_ALPHA_KEY_ALIAS"
               echo "VIROUTEFS_ALPHA_KEY_PASSWORD=$VIROUTEFS_ALPHA_KEY_PASSWORD"
             } >> "$GITHUB_ENV"
-            echo "Alpha signing key decoded into RUNNER_TEMP."
+            echo "Beta signing key decoded into RUNNER_TEMP."
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "A manual release requires VIROUTEFS_ALPHA_KEYSTORE_* repository secrets." >&2
             exit 1
@@ -212,9 +212,9 @@ jobs:
           - versionCode: ${VERSION_CODE}
           - SHA-256: \`${SHA256}\`
 
-          This is a manually approved, consistently signed alpha build from the tagged source.
+          This is a manually approved, consistently signed beta build from the tagged source.
 
-          Alpha update behavior:
+          Beta update behavior:
           - The app supports manual update checking from Settings.
           - APK download starts only after the user taps Download APK.
           - Install update opens Android's system package installer.

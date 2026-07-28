@@ -8,7 +8,7 @@ ViRouteFS uses one Android `VpnService` and one sing-box routing table.
 2. Rules are evaluated by priority.
 3. A matching rule selects exactly one outbound or endpoint.
 4. An unavailable target maps to `Block`; there is no silent fallback to another VPN or `System`.
-5. Unmatched traffic uses the explicit default rule.
+5. Unmatched traffic uses the explicit `System` default rule: the phone's normal uplink.
 6. The app’s own UID is excluded from TUN to prevent loops in sing-box and the ByeDPI child process.
 
 ## Matchers

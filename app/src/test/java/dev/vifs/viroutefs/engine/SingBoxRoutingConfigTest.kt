@@ -25,6 +25,20 @@ import kotlin.test.assertTrue
 
 class SingBoxRoutingConfigTest {
     @Test
+    fun freshConfigurationUsesPhoneInternetAsTheFinalRoute() {
+        val compiled = SingBoxRoutingConfigCompiler().compile(
+            RoutingConfigDefaults.defaultConfig(),
+        )
+        val route = JSONObject(compiled.json).getJSONObject("route")
+
+        assertEquals(SING_BOX_DIRECT_TAG, route.getString("final"))
+        assertEquals(
+            SING_BOX_DIRECT_TAG,
+            compiled.profileTags.getValue(RoutingConfigDefaults.SYSTEM_PROFILE_ID),
+        )
+    }
+
+    @Test
     fun emergencyBlockIsTheFirstAndFinalRoute() {
         val compiled = SingBoxRoutingConfigCompiler().compile(
             RoutingConfigDefaults.defaultConfig().copy(emergencyBlockEnabled = true),
@@ -210,7 +224,6 @@ class SingBoxRoutingConfigTest {
             profiles = base.profiles.map {
                 if (it.id == RoutingConfigDefaults.BYEDPI_PROFILE_ID) it.copy(enabled = true) else it
             },
-            defaultProfileId = RoutingConfigDefaults.BYEDPI_PROFILE_ID,
             rules = base.rules.map {
                 if (it.type == RouteRuleType.DEFAULT) {
                     it.copy(targetProfileId = RoutingConfigDefaults.BYEDPI_PROFILE_ID)
@@ -218,6 +231,7 @@ class SingBoxRoutingConfigTest {
                     it
                 }
             },
+            defaultProfileId = RoutingConfigDefaults.BYEDPI_PROFILE_ID,
         )
 
         val compiled = SingBoxRoutingConfigCompiler(byeDpiPort = 12080).compile(config)
@@ -249,6 +263,7 @@ class SingBoxRoutingConfigTest {
                     it
                 }
             },
+            defaultProfileId = RoutingConfigDefaults.BYEDPI_PROFILE_ID,
         )
 
         val compiled = SingBoxRoutingConfigCompiler().compile(config)

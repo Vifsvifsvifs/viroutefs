@@ -40,6 +40,9 @@ class RoutingConfigRepository internal constructor(
             val rawConfig = RoutingConfigJson.decode(file.readText())
             val requiresNormalization =
                 rawConfig.version != CURRENT_ROUTING_CONFIG_VERSION ||
+                    rawConfig.defaultProfileId == null ||
+                    rawConfig.defaultProfileId == RoutingConfigDefaults.BLOCK_PROFILE_ID ||
+                    rawConfig.defaultProfileId == RoutingConfigDefaults.BYEDPI_PROFILE_ID ||
                     listOf(
                         RoutingConfigDefaults.SYSTEM_PROFILE_ID,
                         RoutingConfigDefaults.BLOCK_PROFILE_ID,

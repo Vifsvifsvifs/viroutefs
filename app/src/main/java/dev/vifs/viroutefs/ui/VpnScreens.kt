@@ -68,6 +68,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.vifs.viroutefs.CardBlock
+import dev.vifs.viroutefs.BuildConfig
 import dev.vifs.viroutefs.Details
 import dev.vifs.viroutefs.Header
 import dev.vifs.viroutefs.ScreenList
@@ -77,6 +78,10 @@ import dev.vifs.viroutefs.WarningText
 import dev.vifs.viroutefs.engine.EngineCatalog
 import dev.vifs.viroutefs.engine.ProtocolAvailability
 import dev.vifs.viroutefs.engine.ProtocolDescriptor
+import dev.vifs.viroutefs.engine.ReadinessItem
+import dev.vifs.viroutefs.engine.ReadinessState
+import dev.vifs.viroutefs.engine.ReleaseReadinessReport
+import dev.vifs.viroutefs.engine.evaluateReleaseReadiness
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.RouteRuleType
@@ -84,11 +89,11 @@ import dev.vifs.viroutefs.routing.SingBoxProfileConfig
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.importOpenVpnProfile
-import dev.vifs.viroutefs.routing.providerTunnelActivationError
+import dev.vifs.viroutefs.routing.defaultRouteActivationError
 import dev.vifs.viroutefs.routing.singBoxProfileTemplate
 import dev.vifs.viroutefs.routing.singBoxProtocolSchema
 import dev.vifs.viroutefs.routing.validateSingBoxProfile
-import dev.vifs.viroutefs.routing.withProviderTunnel
+import dev.vifs.viroutefs.routing.withDefaultRoute
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_NOTICE
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_SECRET_NOTICE
 import dev.vifs.viroutefs.runtime.tcp.DevTcpBridgeSnapshot
@@ -174,6 +179,13 @@ internal fun VpnScreen(
     }
     val routeDecisionPreviewer = remember(config) { LiveRouteDecisionPreviewer(config) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val readinessReport = remember(config) { evaluateReleaseReadiness(config) }
+    var readinessExpanded by rememberSaveable { mutableStateOf(false) }
+    var nativeCheckRunning by remember { mutableStateOf(false) }
+    var nativeCheckMessage by remember(config) {
+        mutableStateOf("Полная нативная проверка этой конфигурации ещё не запускалась.")
+    }
     val devTcpBridge = remember(config.profiles) {
         VlessDevTcpBridge(
             profiles = {
@@ -267,10 +279,46 @@ internal fun VpnScreen(
     ScreenList(padding) {
         item { Header(text.networks, text.networksSubtitle) }
         item {
-            ProviderTunnelCard(
+            PrimaryInternetCard(
                 config = config,
-                activationError = providerTunnelActivationError(config),
+                activationError = defaultRouteActivationError(config),
                 onAddVpn = { showAddVpnSheet = true },
+                onUseSystem = {
+                    onConfig(
+                        config.withDefaultRoute(RoutingConfigDefaults.SYSTEM_PROFILE_ID),
+                        "Основной маршрут возвращён на обычный интернет телефона: System.",
+                    )
+                },
+            )
+        }
+        item {
+            ReleaseReadinessCard(
+                report = readinessReport,
+                expanded = readinessExpanded,
+                nativeCheckRunning = nativeCheckRunning,
+                nativeCheckMessage = nativeCheckMessage,
+                onToggleExpanded = { readinessExpanded = !readinessExpanded },
+                onRunNativeCheck = {
+                    nativeCheckRunning = true
+                    nativeCheckMessage = "Проверяем всю конфигурацию локальным движком…"
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            SingBoxRuntimeValidator.validate(context.applicationContext, config)
+                        }
+                        result
+                            .onSuccess { warnings ->
+                                nativeCheckMessage = if (warnings.isEmpty()) {
+                                    "Готово: нативный движок принял всю конфигурацию."
+                                } else {
+                                    "Движок принял конфигурацию с предупреждениями: ${warnings.size}. Недоступные цели остаются fail-closed."
+                                }
+                            }
+                            .onFailure {
+                                nativeCheckMessage = "Движок отклонил конфигурацию. Исправьте пункты со статусом «Нужно исправить» или проверьте обязательные поля изменённого профиля."
+                            }
+                        nativeCheckRunning = false
+                    }
+                },
             )
         }
         item {
@@ -667,10 +715,11 @@ private fun SecurityControlsCard(
 }
 
 @Composable
-private fun ProviderTunnelCard(
+private fun PrimaryInternetCard(
     config: RoutingConfig,
     activationError: String?,
     onAddVpn: () -> Unit,
+    onUseSystem: () -> Unit,
 ) {
     val profile = config.defaultProfileId?.let { id ->
         config.profiles.firstOrNull { it.id == id }
@@ -691,7 +740,7 @@ private fun ProviderTunnelCard(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                "Туннель провайдера",
+                "Основной интернет телефона",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
             )
@@ -702,13 +751,114 @@ private fun ProviderTunnelCard(
             )
             Text(
                 activationError
-                    ?: "Весь трафик без отдельного правила идёт через этот туннель. Правила приложений, доменов и сетей имеют приоритет.",
+                    ?: if (profile?.type == TunnelType.Direct) {
+                        "Контроль сети можно включать без VPN. Весь трафик идёт через обычный мобильный интернет или Wi‑Fi, пока отдельное правило не назначит VPN, Block или ByeDPI."
+                    } else {
+                        "Выбран пользовательский основной маршрут. Отдельные правила приложений, доменов и сетей имеют приоритет."
+                    },
                 style = MaterialTheme.typography.bodySmall,
             )
             if (activationError != null) {
-                FilledTonalButton(onClick = onAddVpn) {
-                    Text(if (profile == null) "Добавить VPN и выбрать его" else "Открыть список VPN")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(onClick = onUseSystem) {
+                        Text("Использовать System")
+                    }
+                    OutlinedButton(onClick = onAddVpn) {
+                        Text("Открыть VPN")
+                    }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReleaseReadinessCard(
+    report: ReleaseReadinessReport,
+    expanded: Boolean,
+    nativeCheckRunning: Boolean,
+    nativeCheckMessage: String,
+    onToggleExpanded: () -> Unit,
+    onRunNativeCheck: () -> Unit,
+) {
+    CardBlock {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onToggleExpanded),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text("Центр готовности", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "ViRouteFS ${BuildConfig.VERSION_NAME}: работает ${report.readyCount}, требует внимания ${report.attentionCount}, исправить ${report.blockingCount}.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            StatusChip("Beta")
+        }
+        Text(
+            "Здесь отдельно показаны возможности приложения и готовность текущих настроек. Статус «Работает» не заменяет тест конкретного VPN-сервера.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(
+                enabled = !nativeCheckRunning,
+                onClick = onRunNativeCheck,
+            ) {
+                Text(if (nativeCheckRunning) "Проверяем…" else "Проверить конфигурацию")
+            }
+            OutlinedButton(onClick = onToggleExpanded) {
+                Text(if (expanded) "Скрыть список" else "Что работает / осталось")
+            }
+        }
+        Text(nativeCheckMessage, style = MaterialTheme.typography.bodySmall)
+        if (expanded) {
+            report.items.forEach { item ->
+                ReadinessItemRow(item)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReadinessItemRow(item: ReadinessItem) {
+    val containerColor = when (item.state) {
+        ReadinessState.Ready -> MaterialTheme.colorScheme.surfaceContainer
+        ReadinessState.Attention,
+        ReadinessState.Planned -> MaterialTheme.colorScheme.secondaryContainer
+        ReadinessState.Blocked -> MaterialTheme.colorScheme.errorContainer
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        shape = RoundedCornerShape(14.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(item.title, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                StatusChip(item.state.userLabel)
+            }
+            Text(item.summary, style = MaterialTheme.typography.bodySmall)
+            item.recommendedAction?.let { action ->
+                Text(
+                    action,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -718,19 +868,19 @@ private fun ProviderTunnelCard(
 private fun DefaultRoutesSection() {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            "Служебные маршруты для отдельных правил",
+            "Встроенные маршруты",
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
         )
         Text(
-            "System и Block никогда не становятся туннелем провайдера. Их можно назначить только конкретному приложению, домену или диапазону сети.",
+            "System — обычное подключение телефона и безопасный маршрут по умолчанию. Block назначается только отдельным правилам или аварийному запрету.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         DefaultRouteCard(
             title = "System / Система",
-            subtitle = "Явный выход через обычную сеть Android.",
-            detail = "Используйте только как осознанное исключение: такой трафик не идёт через туннель провайдера.",
+            subtitle = "Обычный мобильный интернет или Wi‑Fi телефона.",
+            detail = "Работает как маршрут по умолчанию без обязательного VPN. Его также можно назначать отдельным правилам.",
             icon = Icons.Filled.Public,
             accent = MaterialTheme.colorScheme.primary,
         )
@@ -1174,7 +1324,7 @@ private fun NetworkProfileDetailsScreen(
                 if (config.defaultProfileId == profile.id) {
                     StatusChip(text.defaultProfile)
                 } else {
-                    OutlinedButton(onClick = { onConfig(config.withProviderTunnel(profile.id), text.defaultChanged) }) { Text(text.makeDefault) }
+                    OutlinedButton(onClick = { onConfig(config.withDefaultRoute(profile.id), text.defaultChanged) }) { Text(text.makeDefault) }
                 }
                 StatusChip("DNS: ${dns?.name ?: text.noDns}")
             }
@@ -1475,7 +1625,7 @@ private fun SingBoxProfileEditorScreen(
                     } else {
                         OutlinedButton(
                             onClick = {
-                                onConfig(config.withProviderTunnel(profile.id), text.defaultChanged)
+                                onConfig(config.withDefaultRoute(profile.id), text.defaultChanged)
                             },
                         ) { Text(text.makeDefault) }
                     }

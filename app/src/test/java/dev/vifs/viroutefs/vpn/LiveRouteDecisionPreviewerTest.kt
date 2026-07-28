@@ -41,9 +41,9 @@ class LiveRouteDecisionPreviewerTest {
         val preview = LiveRouteDecisionPreviewer(RoutingConfigDefaults.defaultConfig())
             .preview(tcpSummary(dstIp = "198.51.100.10"))
 
-        assertEquals("Provider tunnel not selected", preview.matchedRuleName)
-        assertEquals("Block", preview.selectedProfileName)
-        assertEquals("Block", preview.selectedProfileType)
+        assertEquals("Phone internet / System", preview.matchedRuleName)
+        assertEquals("System / Система", preview.selectedProfileName)
+        assertEquals("System", preview.selectedProfileType)
         assertTrue(preview.displayLines.contains(OBSERVATION_ONLY_NO_FORWARDING))
     }
 
@@ -53,9 +53,9 @@ class LiveRouteDecisionPreviewerTest {
 
         val preview = LiveRouteDecisionPreviewer(config).preview(tcpSummary(dstIp = "198.51.100.10"))
 
-        assertEquals("Provider tunnel not selected", preview.matchedRuleName)
-        assertEquals("Block", preview.selectedProfileName)
-        assertEquals("Block", preview.selectedProfileType)
+        assertEquals("Phone internet / System", preview.matchedRuleName)
+        assertEquals("System / Система", preview.selectedProfileName)
+        assertEquals("System", preview.selectedProfileType)
         assertFalse(preview.warnings.any { it.contains("Runtime forwarding") })
     }
 

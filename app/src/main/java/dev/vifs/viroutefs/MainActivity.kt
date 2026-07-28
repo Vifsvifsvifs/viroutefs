@@ -81,7 +81,7 @@ import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
-import dev.vifs.viroutefs.routing.providerTunnelActivationError
+import dev.vifs.viroutefs.routing.defaultRouteActivationError
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.findConflictsForCandidate
 import dev.vifs.viroutefs.routing.findExactRouteConflicts
@@ -176,7 +176,7 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
 
     fun startAfterPermissions(testRoutePreviewEnabled: Boolean = tunTestRoutePreviewEnabled) {
         if (!testRoutePreviewEnabled && !config.emergencyBlockEnabled) {
-            providerTunnelActivationError(config)?.let { error ->
+            defaultRouteActivationError(config)?.let { error ->
                 selectedScreen = AppScreen.Vpn
                 vpnState = VpnServiceUiState(VpnServiceStatus.Error, error)
                 return
@@ -411,10 +411,10 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
                         creatingRoute = true
                     }) { Text(text.addRoute) }
                 }
-                val providerName = config.defaultProfileId
+                val defaultRouteName = config.defaultProfileId
                     ?.let { id -> config.profiles.firstOrNull { it.id == id }?.name }
                     ?: "не выбран"
-                Text("По умолчанию: $providerName", style = MaterialTheme.typography.bodySmall)
+                Text("По умолчанию: $defaultRouteName", style = MaterialTheme.typography.bodySmall)
                 Text("Доступно приложений: ${installedApps.size} • правил: ${userRules.size}", style = MaterialTheme.typography.labelSmall)
                 Details(text.details, text.routeIsolationNote)
             }
@@ -798,14 +798,14 @@ private fun newRouteDraft(config: RoutingConfig): RouteRule = RouteRule(
     id = "route_${UUID.randomUUID()}",
     name = "New route",
     type = RouteRuleType.APP,
-    targetProfileId = config.defaultProfileId ?: RoutingConfigDefaults.BLOCK_PROFILE_ID,
+    targetProfileId = config.defaultProfileId ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID,
     dnsPolicyId = RoutingConfigDefaults.SYSTEM_DNS_ID,
     priority = (config.rules.maxOfOrNull { it.priority } ?: 1000) + 10,
     matchers = emptyList(),
     appMatchers = emptyList(),
     reason = routeReason(RouteMatcherKind.App),
     technicalDetails = routeTechnicalDetails(RouteMatcherKind.App),
-    recommendedAction = routeRecommendedAction(config.defaultProfileId ?: RoutingConfigDefaults.BLOCK_PROFILE_ID),
+    recommendedAction = routeRecommendedAction(config.defaultProfileId ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID),
 )
 
 private fun RouteRule.toMatcherKind(): RouteMatcherKind = when (type) {
@@ -1013,7 +1013,7 @@ private fun SettingsScreen(
                     CompactCard(text, text.projectPurposeTitle, text.projectPurposeShort, text.projectPurposeDetails)
                     CompactCard(text, text.licenseSummaryTitle, text.licenseSummaryShort, text.licenseSummaryDetails)
                     CompactCard(text, text.privacy, text.privacyShort, text.privacyDetails)
-                    CompactCard(text, text.currentAlphaLimitations, text.alphaLimitationsShort, text.alphaLimitationsDetails)
+                    CompactCard(text, text.currentBetaLimitations, text.betaLimitationsShort, text.betaLimitationsDetails)
                     CompactCard(text, text.projectGoals, text.projectGoalsShort, text.projectGoalsDetails)
                     ExpandableHelpBlock(text.beginnerMode, beginnerExpanded, { beginnerExpanded = !beginnerExpanded }, text.beginnerHelp)
                     ExpandableHelpBlock(text.adminMode, adminExpanded, { adminExpanded = !adminExpanded }, text.adminHelp)
@@ -1183,7 +1183,7 @@ private fun UpdateSettingsCard(
     CardBlock {
         Text(text.updates, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
     Text(text.currentVersion(BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE), style = MaterialTheme.typography.bodySmall)
-    Text(text.updateChannelAlpha, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(text.updateChannelBeta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         Button(onClick = onCheck) { Text(text.checkForUpdates) }
         OutlinedButton(onClick = onOpenReleases) { Text(text.openGithubReleases) }
@@ -1475,9 +1475,9 @@ internal class UiText(private val language: AppLanguage) {
     val addProfileSubtitle = t("Выберите рабочий протокол; недоступные и устаревшие варианты помечены отдельно.", "Choose a working protocol; unavailable and legacy options are marked separately.", "请选择可用协议；不可用和旧协议会单独标记。")
     val importOptions = t("Импорт", "Import", "导入")
     val noDns = t("Использует системный DNS Android", "Uses Android system DNS", "使用 Android 系统 DNS")
-    val defaultProfile = t("Туннель провайдера", "Provider tunnel", "提供商隧道")
-    val defaultChanged = t("Туннель провайдера изменён.", "Provider tunnel changed.", "提供商隧道已更改。")
-    val makeDefault = t("Сделать туннелем провайдера", "Use as provider tunnel", "设为提供商隧道")
+    val defaultProfile = t("Основной маршрут", "Default route", "默认路由")
+    val defaultChanged = t("Основной маршрут изменён.", "Default route changed.", "默认路由已更改。")
+    val makeDefault = t("Сделать основным маршрутом", "Use as default route", "设为默认路由")
     val delete = t("Удалить", "Delete", "删除")
     val profileDeleted = t("Профиль удалён.", "Profile deleted.", "配置已删除。")
     val protectedProfileMessage = t("System, Block и ByeDPI — встроенные профили, их нельзя удалить.", "System, Block, and ByeDPI are built-in profiles and cannot be deleted.", "System、Block 和 ByeDPI 是内置配置，无法删除。")
@@ -1487,7 +1487,7 @@ internal class UiText(private val language: AppLanguage) {
     val profileUpdated = t("Профиль обновлён.", "Profile updated.", "配置已更新。")
     val save = t("Сохранить", "Save", "保存")
     val simulation = t("Проверка правила", "Rule check", "规则检查")
-    val routeEmptyState = t("Приложения без отдельных правил идут через туннель провайдера.", "Apps without specific rules use the provider tunnel.", "没有单独规则的应用使用提供商隧道。")
+    val routeEmptyState = t("Без отдельных правил приложения используют обычный интернет телефона через System.", "Without specific rules, apps use the phone's normal internet connection through System.", "没有单独规则时，应用通过 System 使用手机的普通网络连接。")
     val noRoutesConfigured = t("Маршруты не настроены", "No routes configured yet", "尚未配置路由")
     val installedApps = t("Установленные приложения", "Installed apps", "已安装应用")
     val noInstalledApps = t("Список приложений недоступен на этом устройстве.", "Installed app list is not available on this device.", "此设备无法使用已安装应用列表。")
@@ -1654,16 +1654,16 @@ Packets are dropped after counting""",
     val licenseSummaryTitle = t("Лицензия GPL-3.0-or-later", "GPL-3.0-or-later license", "GPL-3.0-or-later 许可证")
     val licenseSummaryShort = t("Проект остаётся свободным ПО под GPL-3.0-or-later.", "The project remains free software under GPL-3.0-or-later.", "项目仍是 GPL-3.0-or-later 下的自由软件。")
     val licenseSummaryDetails = t("Вы можете изучать, изменять и распространять код при соблюдении GPL. В APK включены тексты GPL-3.0, лицензии sing-box и MIT-лицензии ByeDPI; точные версии, хэши и скрипты воспроизводимой сборки находятся в репозитории.", "You may study, modify, and redistribute the code under the GPL. The APK includes the GPL-3.0 text, the sing-box license, and the ByeDPI MIT license; exact versions, hashes, and reproducible build scripts are in the repository.", "可按 GPL 条款研究、修改和再分发代码。APK 内含 GPL-3.0、sing-box 许可证和 ByeDPI MIT 许可证；精确版本、哈希和可复现构建脚本位于代码仓库中。")
-    val currentAlphaLimitations = t("Текущие ограничения alpha", "Current alpha limitations", "当前 alpha 限制")
-    val alphaLimitationsShort = t("Нужна проверка на реальном arm64-телефоне. OpenVPN/OpenConnect и живые события Flow Scanner подключены, но IKEv2/IPsec и устаревшие L2TP/PPTP/SSTP ещё требуют отдельных Android-движков.", "Real arm64 device testing is still required. OpenVPN/OpenConnect and live Flow Scanner events are connected, while IKEv2/IPsec and legacy L2TP/PPTP/SSTP still need separate Android engines.", "仍需在真实 arm64 设备上测试。OpenVPN/OpenConnect 和实时 Flow Scanner 事件已接入，而 IKEv2/IPsec 与旧版 L2TP/PPTP/SSTP 仍需要单独的 Android 引擎。")
-    val alphaLimitationsDetails = t("Текущий APK содержит sing-box 1.14 alpha для OpenVPN, OpenConnect/AnyConnect, VLESS, SOCKS5, VMess, Trojan, Shadowsocks, Hysteria v1/v2, Snell, TUIC, AnyTLS, HTTP(S), SSH, WireGuard и Tailscale/Headscale. Flow Scanner показывает метаданные реальных соединений без содержимого пакетов и расшифровки HTTPS. Профили проверяются нативным движком, но конкретный сервер подтверждается только тестом на устройстве.", "The current APK contains sing-box 1.14 alpha for OpenVPN, OpenConnect/AnyConnect, VLESS, SOCKS5, VMess, Trojan, Shadowsocks, Hysteria v1/v2, Snell, TUIC, AnyTLS, HTTP(S), SSH, WireGuard, and Tailscale/Headscale. Flow Scanner shows real connection metadata without packet payloads or HTTPS decryption. Profiles are checked by the native engine, but a specific server is confirmed only by a device test.", "当前 APK 包含 sing-box 1.14 alpha，支持 OpenVPN、OpenConnect/AnyConnect、VLESS、SOCKS5、VMess、Trojan、Shadowsocks、Hysteria v1/v2、Snell、TUIC、AnyTLS、HTTP(S)、SSH、WireGuard 和 Tailscale/Headscale。Flow Scanner 显示真实连接元数据，不记录数据包内容，也不解密 HTTPS。具体服务器仍需设备测试确认。")
+    val currentBetaLimitations = t("Границы beta", "Beta boundaries", "Beta 限制")
+    val betaLimitationsShort = t("Нужна проверка на реальном arm64-телефоне. OpenVPN/OpenConnect и живые события Flow Scanner подключены, но IKEv2/IPsec и устаревшие L2TP/PPTP/SSTP ещё требуют отдельных Android-движков.", "Real arm64 device testing is still required. OpenVPN/OpenConnect and live Flow Scanner events are connected, while IKEv2/IPsec and legacy L2TP/PPTP/SSTP still need separate Android engines.", "仍需在真实 arm64 设备上测试。OpenVPN/OpenConnect 和实时 Flow Scanner 事件已接入，而 IKEv2/IPsec 与旧版 L2TP/PPTP/SSTP 仍需要单独的 Android 引擎。")
+    val betaLimitationsDetails = t("Beta можно включать без VPN: System использует обычный мобильный интернет или Wi‑Fi, а отдельные правила направляют выбранный трафик в VPN, Block или ByeDPI. APK содержит sing-box 1.14 alpha для OpenVPN, OpenConnect/AnyConnect, VLESS, SOCKS5, VMess, Trojan, Shadowsocks, Hysteria v1/v2, Snell, TUIC, AnyTLS, HTTP(S), SSH, WireGuard и Tailscale/Headscale. Flow Scanner показывает метаданные без содержимого пакетов и расшифровки HTTPS.", "The beta can start without a VPN: System uses normal mobile data or Wi-Fi, while explicit rules send selected traffic to a VPN, Block, or ByeDPI. The APK contains sing-box 1.14 alpha for OpenVPN, OpenConnect/AnyConnect, VLESS, SOCKS5, VMess, Trojan, Shadowsocks, Hysteria v1/v2, Snell, TUIC, AnyTLS, HTTP(S), SSH, WireGuard, and Tailscale/Headscale. Flow Scanner shows metadata without packet payloads or HTTPS decryption.", "Beta 无需 VPN 即可启动：System 使用普通移动数据或 Wi-Fi，明确规则可将选定流量发送到 VPN、Block 或 ByeDPI。APK 包含 sing-box 1.14 alpha，支持 OpenVPN、OpenConnect/AnyConnect、VLESS、SOCKS5、VMess、Trojan、Shadowsocks、Hysteria v1/v2、Snell、TUIC、AnyTLS、HTTP(S)、SSH、WireGuard 和 Tailscale/Headscale。Flow Scanner 仅显示元数据，不记录数据包内容，也不解密 HTTPS。")
     val projectGoals = t("Цели проекта", "Project goals", "项目目标")
     val projectGoalsShort = t("Сети, маршруты, DNS, Flow Scanner, диагностика и безопасные локальные аудиты.", "Networks, routes, DNS, Flow Scanner, diagnostics, and safe local audits.", "网络、路由、DNS、Flow Scanner、诊断和安全本地审计。")
     val projectGoalsDetails = t("Один VpnService, локальный sing-box, правила по приложениям/доменам/IP/CIDR, DNS через выбранный туннель, понятная диагностика и fail-closed без телеметрии и записи содержимого трафика.", "A single VpnService, local sing-box, app/domain/IP/CIDR rules, DNS through a selected tunnel, readable diagnostics, and fail-closed behavior without telemetry or traffic-content logging.", "单个 VpnService、本地 sing-box、按应用/域名/IP/CIDR 的规则、通过所选隧道的 DNS、清晰诊断，以及无遥测或流量内容记录的 fail-closed 行为。")
     val beginnerMode = t("Для самых маленьких", "Beginner mode", "初学者模式")
-    val beginnerHelp = t("Сначала выберите туннель провайдера — через него пойдёт весь трафик. Маршруты — это исключения вида: выбранное приложение, домен, IP или диапазон сети идёт через другой туннель, System, ByeDPI или Block. System означает осознанный прямой путь без туннеля провайдера; Block полностью запрещает совпавший трафик.", "First select the provider tunnel; all traffic uses it by default. Routes are exceptions: a selected app, domain, IP, or network range uses another tunnel, System, ByeDPI, or Block. System is an explicit direct path outside the provider tunnel; Block denies matching traffic.", "先选择提供商隧道，所有流量默认通过该隧道。路由是例外规则：所选应用、域名、IP 或网段可使用其他隧道、System、ByeDPI 或 Block。System 是明确的直连路径；Block 会拒绝匹配的流量。")
+    val beginnerHelp = t("Контроль сети можно включить без добавления VPN. По умолчанию всё продолжит работать через обычный мобильный интернет или Wi‑Fi телефона (System). Маршруты — это исключения: выбранное приложение, домен, IP или диапазон сети можно отправить в конкретный VPN, ByeDPI или Block.", "Network control can start without adding a VPN. By default, everything keeps using the phone's normal mobile data or Wi-Fi connection (System). Routes are exceptions: a selected app, domain, IP, or network range can use a specific VPN, ByeDPI, or Block.", "无需添加 VPN 即可启动网络控制。默认情况下，所有流量继续使用手机的普通移动数据或 Wi-Fi（System）。路由是例外：可将指定应用、域名、IP 或网段发送到特定 VPN、ByeDPI 或 Block。")
     val adminMode = t("Для админов", "Admin mode", "管理员模式")
-    val adminHelp = t("Модель: весь трафик без более точного правила → выбранный туннель провайдера; app/domain/IP/CIDR → назначенный профиль; недоступный профиль → Block / fail closed. DNS перехватывается внутри TUN и может идти через отдельный профиль. Arm64 APK содержит sing-box 1.14 alpha с OpenVPN/OpenConnect и ByeDPI по MIT без Naive/Cronet. Flow Scanner получает метаданные соединений, но не содержимое пакетов. IKEv2/IPsec требует отдельного strongSwan-адаптера; L2TP/PPTP/SSTP не выдаются за рабочие без проверенного движка.", "Model: traffic without a more specific rule → the selected provider tunnel; app/domain/IP/CIDR → the assigned profile; unavailable profile → Block / fail closed. DNS is intercepted inside TUN and can use a separate profile. The arm64 APK embeds sing-box 1.14 alpha with OpenVPN/OpenConnect and MIT-licensed ByeDPI, without Naive/Cronet. Flow Scanner receives connection metadata but no packet content. IKEv2/IPsec needs a separate strongSwan adapter; L2TP/PPTP/SSTP are not claimed as working without an audited engine.", "模型：没有更具体规则的流量 → 所选提供商隧道；app/domain/IP/CIDR → 指定配置；不可用配置 → Block / fail closed。DNS 在 TUN 内拦截，并可通过单独配置发送。arm64 APK 内置 sing-box 1.14 alpha、OpenVPN/OpenConnect 和 MIT 许可的 ByeDPI，不含 Naive/Cronet。Flow Scanner 仅接收连接元数据，不记录数据包内容。IKEv2/IPsec 仍需单独的 strongSwan 适配器；没有审计引擎时不会声称 L2TP/PPTP/SSTP 可用。")
+    val adminHelp = t("Модель: трафик без более точного правила → System, то есть обычный uplink телефона; app/domain/IP/CIDR → назначенный VPN/прокси/Block/ByeDPI; недоступная цель явного правила → Block / fail closed. DNS перехватывается внутри TUN и может идти через отдельный профиль. Arm64 APK содержит sing-box 1.14 alpha с OpenVPN/OpenConnect и ByeDPI по MIT без Naive/Cronet. Flow Scanner получает метаданные соединений, но не содержимое пакетов. IKEv2/IPsec требует отдельного strongSwan-адаптера; L2TP/PPTP/SSTP не выдаются за рабочие без проверенного движка.", "Model: traffic without a more specific rule → System, the phone's normal uplink; app/domain/IP/CIDR → the assigned VPN/proxy/Block/ByeDPI target; an unavailable explicit target → Block / fail closed. DNS is intercepted inside TUN and can use a separate profile. The arm64 APK embeds sing-box 1.14 alpha with OpenVPN/OpenConnect and MIT-licensed ByeDPI, without Naive/Cronet. Flow Scanner receives connection metadata but no packet content. IKEv2/IPsec needs a separate strongSwan adapter; L2TP/PPTP/SSTP are not claimed as working without an audited engine.", "模型：没有更具体规则的流量使用 System，即手机的普通网络；app/domain/IP/CIDR 使用指定 VPN、代理、Block 或 ByeDPI；明确规则的目标不可用时执行 Block / fail closed。DNS 在 TUN 内拦截，并可通过单独配置发送。arm64 APK 内置 sing-box 1.14 alpha、OpenVPN/OpenConnect 和 MIT 许可的 ByeDPI，不含 Naive/Cronet。Flow Scanner 仅接收连接元数据，不记录数据包内容。IKEv2/IPsec 仍需单独的 strongSwan 适配器；没有审计引擎时不会声称 L2TP/PPTP/SSTP 可用。")
     val developerDiagnostics = t("Developer diagnostics", "Developer diagnostics", "开发者诊断")
     val developerDiagnosticsWarning = t("Не обычная функция пользователя. Используется для внутренней проверки безопасного TEST-NET маршрута.", "Not a normal user feature. Used for internal validation of the safe TEST-NET route.", "不是普通用户功能。用于安全 TEST-NET 路由的内部验证。")
     val supportProject = t("Поддержать проект", "Support project", "支持项目")
@@ -1672,7 +1672,7 @@ Packets are dropped after counting""",
     val voluntarySupport = t("Добровольно поддержать", "Voluntary support", "自愿支持")
     val supportLinkNotConfigured = t("Безопасная платёжная ссылка пока не настроена в сборке.", "No secure payment link is configured in this build.", "此版本尚未配置安全支付链接。")
     val updates = t("Обновления", "Updates", "更新")
-    val updateChannelAlpha = t("Канал обновлений: Alpha", "Update channel: Alpha", "更新频道：Alpha")
+    val updateChannelBeta = t("Канал обновлений: Beta", "Update channel: Beta", "更新频道：Beta")
     val checkForUpdates = t("Проверить обновления", "Check for updates", "检查更新")
     val openGithubReleases = t("Открыть релизы GitHub", "Open GitHub releases", "打开 GitHub 发布页")
     val openReleasePage = t("Открыть страницу релиза", "Open release page", "打开发布页面")

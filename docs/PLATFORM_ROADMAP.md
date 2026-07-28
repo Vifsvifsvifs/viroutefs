@@ -27,7 +27,7 @@ Examples:
 - `windows / chrome.exe`;
 - `any / telegram`.
 
-Android `0.11.0-alpha` reads the complete installed-app list locally and requests `QUERY_ALL_PACKAGES` because selecting any installed app is a core per-app VPN-routing feature. The list is used only by the route picker and Flow Scanner filters; it is never uploaded, sold, or used for advertising.
+Android `0.12.0-beta.1` reads the complete installed-app list locally and requests `QUERY_ALL_PACKAGES` because selecting any installed app is a core per-app VPN-routing feature. The list is used only by the route picker and Flow Scanner filters; it is never uploaded, sold, or used for advertising.
 
 ## Later work
 

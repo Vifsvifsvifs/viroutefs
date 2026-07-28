@@ -428,7 +428,7 @@ private fun VpnConnectionFlow.toFlowEvent(context: Context, config: RoutingConfi
             ?: "Локальный движок выбрал маршрут «$routeName» по действующим правилам.",
         riskWarning = when {
             blocked -> "Соединение заблокировано выбранным правилом."
-            direct -> "Это соединение идёт напрямую через System как явное исключение и не использует туннель провайдера."
+            direct -> "Это соединение идёт через System — обычный мобильный интернет или Wi‑Fi телефона."
             destinationPort == 80 -> "Порт 80 обычно означает незашифрованный HTTP. Не вводите пароли без HTTPS."
             else -> null
         },
