@@ -12,12 +12,16 @@ import android.net.VpnService
 import android.os.Build
 import androidx.core.content.ContextCompat
 import dev.vifs.viroutefs.runtime.tcp.TcpSessionState
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
 internal enum class VpnServiceStatus {
     Off,
     PermissionRequired,
     NotificationPermissionRequired,
     Starting,
+    RuntimeActive,
     ServiceActiveNoTun,
     TunPreviewActive,
     TunTestRouteActive,
@@ -39,6 +43,7 @@ internal data class VpnServiceUiState(
     val packetSummaryUpdatedAt: Long? = null,
     val packetInspectorPaused: Boolean = false,
     val packetSummaries: List<PacketSummary> = emptyList(),
+    val connectionFlows: List<VpnConnectionFlow> = emptyList(),
     val activeTcpSessions: Int = 0,
     val tcpSessionStateStats: Map<TcpSessionState, Int> = emptyMap(),
 )
@@ -70,10 +75,20 @@ internal class VpnServiceController(context: Context) {
         }
     }
 
+    fun reloadLocalService(testRoutePreviewEnabled: Boolean = false) {
+        if (!ViRouteVpnService.isRunning) return
+        appContext.startService(
+            Intent(appContext, ViRouteVpnService::class.java)
+                .setAction(ACTION_RELOAD)
+                .putExtra(EXTRA_TEST_ROUTE_ENABLED, testRoutePreviewEnabled),
+        )
+    }
+
     fun clearPacketSummaries() {
         if (!ViRouteVpnService.isRunning) {
             val state = ViRouteVpnService.lastState.copy(
                 packetSummaries = emptyList(),
+                connectionFlows = emptyList(),
                 packetSummaryUpdatedAt = System.currentTimeMillis(),
             )
             publishState(state)
@@ -131,6 +146,9 @@ internal class VpnServiceController(context: Context) {
                             .takeUnless { it == NO_PACKET_TIME },
                         packetInspectorPaused = intent.getBooleanExtra(EXTRA_PACKET_INSPECTOR_PAUSED, false),
                         packetSummaries = decodePacketSummaries(intent.getStringArrayListExtra(EXTRA_PACKET_SUMMARIES)),
+                        connectionFlows = decodeConnectionFlows(
+                            intent.getStringArrayListExtra(EXTRA_CONNECTION_FLOWS),
+                        ),
                         activeTcpSessions = intent.getIntExtra(EXTRA_ACTIVE_TCP_SESSIONS, 0),
                         tcpSessionStateStats = decodeTcpSessionStateStats(
                             intent.getStringArrayListExtra(EXTRA_TCP_SESSION_STATE_STATS),
@@ -166,6 +184,7 @@ internal class VpnServiceController(context: Context) {
         packetSummaryUpdatedAt: Long? = null,
         packetInspectorPaused: Boolean = false,
         packetSummaries: List<PacketSummary> = emptyList(),
+        connectionFlows: List<VpnConnectionFlow> = emptyList(),
         activeTcpSessions: Int = 0,
         tcpSessionStateStats: Map<TcpSessionState, Int> = emptyMap(),
     ) {
@@ -183,6 +202,7 @@ internal class VpnServiceController(context: Context) {
             packetSummaryUpdatedAt = packetSummaryUpdatedAt,
             packetInspectorPaused = packetInspectorPaused,
             packetSummaries = packetSummaries,
+            connectionFlows = connectionFlows,
             activeTcpSessions = activeTcpSessions,
             tcpSessionStateStats = tcpSessionStateStats,
         )
@@ -202,6 +222,7 @@ internal class VpnServiceController(context: Context) {
             .putExtra(EXTRA_PACKET_SUMMARY_UPDATED_AT, packetSummaryUpdatedAt ?: NO_PACKET_TIME)
             .putExtra(EXTRA_PACKET_INSPECTOR_PAUSED, packetInspectorPaused)
             .putStringArrayListExtra(EXTRA_PACKET_SUMMARIES, ArrayList(packetSummaries.map(::encodePacketSummary)))
+            .putStringArrayListExtra(EXTRA_CONNECTION_FLOWS, ArrayList(connectionFlows.map(::encodeConnectionFlow)))
             .putExtra(EXTRA_ACTIVE_TCP_SESSIONS, activeTcpSessions)
             .putStringArrayListExtra(EXTRA_TCP_SESSION_STATE_STATS, ArrayList(encodeTcpSessionStateStats(tcpSessionStateStats)))
         appContext.sendBroadcast(intent)
@@ -222,6 +243,7 @@ internal class VpnServiceController(context: Context) {
             packetSummaryUpdatedAt = state.packetSummaryUpdatedAt,
             packetInspectorPaused = state.packetInspectorPaused,
             packetSummaries = state.packetSummaries,
+            connectionFlows = state.connectionFlows,
             activeTcpSessions = state.activeTcpSessions,
             tcpSessionStateStats = state.tcpSessionStateStats,
         )
@@ -229,6 +251,7 @@ internal class VpnServiceController(context: Context) {
 
     companion object {
         internal const val ACTION_START = "dev.vifs.viroutefs.vpn.START"
+        internal const val ACTION_RELOAD = "dev.vifs.viroutefs.vpn.RELOAD"
         internal const val ACTION_STOP = "dev.vifs.viroutefs.vpn.STOP"
         internal const val ACTION_CLEAR_PACKET_SUMMARIES = "dev.vifs.viroutefs.vpn.CLEAR_PACKET_SUMMARIES"
         internal const val ACTION_SET_PACKET_INSPECTOR_PAUSED = "dev.vifs.viroutefs.vpn.SET_PACKET_INSPECTOR_PAUSED"
@@ -247,6 +270,7 @@ internal class VpnServiceController(context: Context) {
         internal const val EXTRA_PACKET_SUMMARY_UPDATED_AT = "packet_summary_updated_at"
         internal const val EXTRA_PACKET_INSPECTOR_PAUSED = "packet_inspector_paused"
         internal const val EXTRA_PACKET_SUMMARIES = "packet_summaries"
+        internal const val EXTRA_CONNECTION_FLOWS = "connection_flows"
         internal const val EXTRA_ACTIVE_TCP_SESSIONS = "active_tcp_sessions"
         internal const val EXTRA_TCP_SESSION_STATE_STATS = "tcp_session_state_stats"
         internal const val NO_PACKET_TIME = -1L
@@ -264,6 +288,52 @@ internal class VpnServiceController(context: Context) {
         internal fun decodePacketSummaries(encoded: ArrayList<String>?): List<PacketSummary> = encoded
             .orEmpty()
             .mapNotNull(::decodePacketSummary)
+
+        internal fun encodeConnectionFlow(flow: VpnConnectionFlow): String = listOf(
+            flow.id,
+            flow.createdAt.toString(),
+            flow.closedAt?.toString().orEmpty(),
+            flow.network,
+            flow.source,
+            flow.destination,
+            flow.domain,
+            flow.protocol,
+            flow.appPackages.joinToString(FLOW_PACKAGE_SEPARATOR),
+            flow.processPath,
+            flow.outboundTag,
+            flow.outboundType,
+            flow.matchedRule,
+            flow.uplinkBytes.toString(),
+            flow.downlinkBytes.toString(),
+        ).joinToString(CONNECTION_FLOW_SEPARATOR, transform = ::encodeFlowField)
+
+        internal fun decodeConnectionFlows(encoded: ArrayList<String>?): List<VpnConnectionFlow> = encoded
+            .orEmpty()
+            .mapNotNull(::decodeConnectionFlow)
+
+        private fun decodeConnectionFlow(encoded: String): VpnConnectionFlow? {
+            val parts = encoded.split(CONNECTION_FLOW_SEPARATOR).map(::decodeFlowField)
+            if (parts.size != CONNECTION_FLOW_FIELD_COUNT) return null
+            return runCatching {
+                VpnConnectionFlow(
+                    id = parts[0],
+                    createdAt = parts[1].toLong(),
+                    closedAt = parts[2].takeIf(String::isNotBlank)?.toLong(),
+                    network = parts[3],
+                    source = parts[4],
+                    destination = parts[5],
+                    domain = parts[6],
+                    protocol = parts[7],
+                    appPackages = parts[8].split(FLOW_PACKAGE_SEPARATOR).filter(String::isNotBlank),
+                    processPath = parts[9],
+                    outboundTag = parts[10],
+                    outboundType = parts[11],
+                    matchedRule = parts[12],
+                    uplinkBytes = parts[13].toLong(),
+                    downlinkBytes = parts[14].toLong(),
+                )
+            }.getOrNull()
+        }
 
         private fun decodePacketSummary(encoded: String): PacketSummary? {
             val parts = encoded.split(PACKET_SUMMARY_SEPARATOR)
@@ -298,8 +368,17 @@ internal class VpnServiceController(context: Context) {
 
         private const val PACKET_SUMMARY_SEPARATOR = "|"
         private const val PACKET_SUMMARY_FIELD_COUNT = 7
+        private const val CONNECTION_FLOW_SEPARATOR = "|"
+        private const val FLOW_PACKAGE_SEPARATOR = "\u001E"
+        private const val CONNECTION_FLOW_FIELD_COUNT = 15
         private const val TCP_SESSION_STATE_SEPARATOR = ":"
         private const val TCP_SESSION_STATE_FIELD_COUNT = 2
+
+        private fun encodeFlowField(value: String): String =
+            URLEncoder.encode(value, StandardCharsets.UTF_8.name())
+
+        private fun decodeFlowField(value: String): String =
+            URLDecoder.decode(value, StandardCharsets.UTF_8.name())
 
     }
 }

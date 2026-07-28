@@ -1,63 +1,48 @@
-# Security Boundaries
+# Security boundaries
 
-ViRouteFS is a defensive network diagnostics and VPN routing tool.
+## Runtime
 
-## Allowed features
+ViRouteFS uses one Android `VpnService` and one embedded sing-box runtime. The
+service owns the TUN interface and applies app, domain, IP, CIDR, default-route
+and DNS decisions from one configuration snapshot.
 
-- VPN routing
-- DNS diagnostics
-- TCP/TLS/HTTP/UDP checks
-- MTU checks
-- LAN discovery
-- service discovery
-- Wi-Fi security posture detection
-- WPS detection
-- route leak checks
-- DNS leak checks
-- local packet/event logging
-- PCAP export for user-controlled traffic
-- root-only local diagnostics
+The built-in `Block` profile is fail-closed. A rule that refers to a disabled,
+unsupported or failed profile is compiled to `Block`; it is never silently sent
+through `Direct`.
 
-## Not allowed features
+ByeDPI runs as a local SOCKS proxy owned by the ViRouteFS application process.
+It is not a VPN, does not encrypt traffic and does not provide anonymity. If its
+process cannot start or exits unexpectedly, routes assigned to it are blocked.
 
-ViRouteFS must not implement:
+## Secrets
 
-- WPS PIN brute force
-- WPA/WPA2/WPA3 cracking
-- Wi-Fi handshake capture for cracking
-- deauthentication attacks
-- evil twin attacks
-- credential theft
-- router admin brute force
-- exploit automation
-- stealth scanning
-- hidden traffic interception
-- automatic upload of captured traffic
+- Configuration is stored in the application's private storage.
+- Exported configuration can contain VPN credentials and private keys. The user
+  must treat an export as a secret.
+- ViRouteFS does not upload configuration, diagnostic results or traffic
+  metadata.
+- The flow scanner shows locally observed metadata only. It does not save packet
+  contents and does not decrypt TLS.
 
-## Reporting language
+## Network checks
 
-Reports must distinguish between:
+DNS, TCP, TLS and HTTP diagnostics started from the application UI use the
+application's own sockets, which are excluded from its TUN to prevent loops.
+These checks verify reachability from the device, not passage through a selected
+VPN profile. Per-route status is therefore reported separately from endpoint
+reachability.
 
-- detected risk
-- likely vulnerability
-- confirmed misconfiguration
-- confirmed compromise
+## Native components
 
-Example:
+Native components are pinned by source commit and SHA-256 and are checked before
+every Android build. Reproduction scripts are in `tools/`.
 
-"WPS is enabled" means detected risk.
-It does not mean confirmed compromise.
+Only the `arm64-v8a` ABI is packaged at present. A build succeeding on a
+workstation is not evidence that the application has been installed or tested on
+a physical Android device.
 
-## Routing and DNS boundaries
+## Signing
 
-When network control is off, Android works normally and ViRouteFS does not control traffic. When network control is on in the product model, all traffic must enter ViRouteFS: unmatched apps use the built-in System / Система route, matched rules use only the selected profile, and unavailable selected profiles fail closed / Block.
-
-System / Система is an internal default route, not bypass. Full runtime enforcement is still a future task and must not add hidden interception, packet payload logging, telemetry, analytics, ads, tracking SDKs, or cloud upload.
-
-If no DNS is configured for a route/profile, the model uses Android system DNS. ViRouteFS must not silently replace missing DNS with public resolvers or swap failed user-defined DNS to another resolver.
-
-## VLESS profile model in 0.8.5-alpha
-
-VLESS profiles are configuration-only in 0.8.5-alpha. The app can store, validate, import, and explicitly export local VLESS URI configuration for route decision preview, including UUID, transport placeholders, TLS/REALITY metadata, ALPN, and gRPC service names. It does not connect to VLESS servers, test reachability, forward packets, write packets back to TUN, implement REALITY/XTLS runtime, or proxy DNS. Route decision preview must warn: "Selected profile is VLESS. Runtime forwarding is not enabled yet."
-
-`routing_config.json`, route-config exports, and explicit VLESS URI exports may contain VLESS connection identifiers such as UUID, host, SNI, and placeholder key metadata. Treat exported routing configs and VLESS URIs as sensitive local files. UUID values must not appear in summaries, diagnostics text, logs, route-preview text, or masked import previews. Imported profiles can be used for route decision preview only. No telemetry, cloud upload, analytics, ads, background validation, startup tests, or auto-connect behavior is added.
+Debug builds use the standard Android debug key. Public releases must use a new
+long-lived owner-controlled keystore configured through environment variables;
+the keystore and passwords must not be committed to the repository.

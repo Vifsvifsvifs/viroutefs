@@ -1,82 +1,42 @@
 # Routing policy
 
-ViRouteFS routing must be explicit, local-first, and fail closed.
+ViRouteFS uses one Android `VpnService` and one sing-box routing table.
 
-## Network control model
+## Invariants
 
-When network control is **OFF**:
+1. When network control is active, IPv4, IPv6 and DNS enter the local TUN router.
+2. Rules are evaluated by priority.
+3. A matching rule selects exactly one outbound or endpoint.
+4. An unavailable target maps to `Block`; there is no silent fallback to another VPN or `System`.
+5. Unmatched traffic uses the explicit `System` default rule: the phone's normal uplink.
+6. The app’s own UID is excluded from TUN to prevent loops in sing-box and the ByeDPI child process.
 
-- Android works normally.
-- ViRouteFS does not control traffic.
-- Current diagnostics still run only when the user starts them manually.
+## Matchers
 
-When network control is **ON** in the product model:
+- Android package name (`package_name`, Android 10+);
+- exact domain;
+- domain suffix;
+- domain keyword;
+- regular expression;
+- IP/CIDR;
+- default.
 
-- All device traffic must conceptually enter ViRouteFS.
-- No traffic should bypass ViRouteFS.
-- Apps without explicit rules use the built-in **System / Система** route inside ViRouteFS.
-- Matched apps, domains, hosts, or CIDRs use only the selected route/profile.
-- If the selected profile is unavailable, the safe behavior is **Block / fail closed**.
-- ViRouteFS must never silently fall back from one explicit route/profile to another.
-- No kilobyte should bypass ViRouteFS while network control is active.
+## Built-in targets
 
-This is the corrected product model for docs, configuration, and UI wording. Full runtime enforcement is still a future routing-engine task; this change does not add default-route enforcement, DNS servers in the VPN builder, packet payload logging, forwarding, proxying, or tunnel engines.
+- `System`: the normal Android network path inside the router;
+- `Block`: reject matching traffic;
+- `ByeDPI`: local app-private SOCKS route when enabled.
 
-## Built-in routes/profiles
+User profiles add VLESS, SOCKS5, advanced sing-box outbounds and endpoints.
 
-- **System / Система** — the default Android/system network path, controlled by ViRouteFS when network control is active. This is the default route for apps without explicit rules. It is internal to ViRouteFS and must not be described as bypass.
-- **Block / Блокировать** — drops or blocks matched traffic in the policy model and represents fail-closed behavior.
+## Emergency block
 
-The old user-facing **Direct** wording was only a confusing duplicate of the phone/system route. It is removed from normal product wording and renamed to **System / Система**. Legacy ids/types may still contain `direct` internally for saved-config compatibility, but they mean the System route unless a future implementation documents a distinct technical difference.
+The emergency switch inserts an all-traffic Block rule before normal routing and makes Block the final route. DNS hijacking is omitted in this mode. Profiles remain stored and become active again only after the switch is disabled.
 
-## Strict route isolation
+## DNS
 
-App, domain/host, and IP/CIDR rules are exclusive policy bindings:
+DNS is intercepted by the TUN runtime. A rule’s explicit policy wins; otherwise the target profile policy is used. An unavailable DNS detour rejects the matching query.
 
-- If a rule says an app must use a chosen profile, that traffic must not use another profile.
-- If a rule says a domain/host must use a chosen profile, that traffic must not use another profile.
-- If a rule says an IP/CIDR range must use a chosen profile, that traffic must not use another profile.
-- If the chosen profile is unavailable, the safe behavior is **Block / fail closed**.
-- ViRouteFS must never silently fall back to a foreign VPN profile.
+## Configuration changes
 
-Example: if `MAX` is assigned to `System / Система` or to a future `Russia` profile, that traffic must not silently use future Germany/Xray/Hysteria/WireGuard foreign profiles.
-
-## DNS defaults
-
-- If no DNS is configured for a route/profile, ViRouteFS uses Android/system DNS through the ViRouteFS policy model.
-- Missing DNS must not be silently replaced with public resolvers such as `1.1.1.1` or `8.8.8.8`.
-- User-defined DNS applies only where explicitly configured.
-- If user-defined DNS is unavailable, the route/profile should show an error or fail-safe state; ViRouteFS must not silently swap to another resolver.
-
-## Current 0.6.6-alpha behavior
-
-- Normal UI exposes only real built-in profiles: `System / Система` and `Block`.
-- User-facing route and DNS targets come from actual available profiles.
-- Fake tunnels, fake categories, and TEST-NET route controls are not normal user features.
-- The internal TEST-NET route remains developer/testing-only documentation for the safe TUN skeleton.
-- 0.6.6-alpha adds a route editor for app, domain/host, and IP/CIDR matchers.
-- App rules use installed-app selection from Android PackageManager instead of requiring normal users to type package names.
-- Route targets in the editor are built from actual profiles only: built-in System / Система, built-in Block / Блокировать, and user-created real profiles. Mock/developer profiles and TEST-NET entries are not normal route targets.
-- Exact duplicate conflict validation blocks save for duplicate app matchers, duplicate domain/host matchers, and exact duplicate IP/CIDR matchers. Broad CIDR overlap analysis is TODO for a later routing-engine milestone.
-- No runtime VPN/TUN routing behavior changes are introduced by 0.6.6-alpha route editor work.
-
-## Runtime enforcement still future
-
-Full "no kilobyte bypass" enforcement requires a later milestone with safe default-route capture and a forwarding engine that can apply System, Block, and explicit profile routing without leaking payload data or silently falling back. 0.6.6-alpha intentionally does **not** add `addRoute("0.0.0.0", 0)`, VPN builder DNS servers, packet payload logging, forwarding/proxying, cloud upload, or tunnel runtime enforcement.
-
-## SOCKS5 profiles in 0.7.0-alpha
-
-ViRouteFS 0.7.0-alpha adds local-only SOCKS5 profile configuration and an explicit manual SOCKS5 handshake connectivity tester. A user can store a SOCKS5 name, host, port, optional username, optional password, enabled flag, and test status locally on the device. Connectivity testing runs only when the user taps **Test connection**; there are no startup checks, background checks, periodic checks, auto-connect behavior, silent DNS changes, telemetry, analytics, cloud upload, or public/free proxy dependency.
-
-Full TUN-to-SOCKS device traffic routing is not implemented yet: ViRouteFS does not capture the default route for SOCKS5, does not forward runtime packets to SOCKS5, and route explanations must treat SOCKS5 targets as configuration/preview only with: "Selected profile: SOCKS5. Runtime forwarding is not enabled yet." For manual testing, use a trusted/self-owned SOCKS5 server. Public/free SOCKS5 proxies are not required or recommended. Credentials remain local, and passwords must not be logged, shown in diagnostics, or included in docs/PR text.
-
-## 0.7.4-alpha SOCKS5 manual CONNECT diagnostics
-
-ViRouteFS 0.7.4-alpha adds an explicit manual SOCKS5 CONNECT diagnostic for configured SOCKS5 profiles. The user edits the target host and port, taps the test button, and ViRouteFS performs only the SOCKS5 greeting/authentication and CONNECT request; it sends no HTTP request or application payload after CONNECT succeeds.
-
-Boundaries for this release:
-- CONNECT diagnostics are manual-only: no startup checks, background checks, periodic checks, auto-connect, or automatic profile testing.
-- Runtime TUN-to-SOCKS forwarding is still not implemented. ViRouteFS does not capture the Android default route or route real device traffic through SOCKS5.
-- Test history is stored locally in app-private no-backup storage (`socks5_test_history.json`) and is not automatically exported or uploaded.
-- SOCKS5 credentials are not logged, exported, or stored in diagnostic history.
-- No telemetry, ads, analytics, tracking SDKs, or cloud upload are added.
+Config is written atomically. If the VPN is active, a saved change triggers a controlled runtime reload. No profile is tested in the background.

@@ -41,7 +41,7 @@ class LiveRouteDecisionPreviewerTest {
         val preview = LiveRouteDecisionPreviewer(RoutingConfigDefaults.defaultConfig())
             .preview(tcpSummary(dstIp = "198.51.100.10"))
 
-        assertEquals("Default System", preview.matchedRuleName)
+        assertEquals("Phone internet / System", preview.matchedRuleName)
         assertEquals("System / Система", preview.selectedProfileName)
         assertEquals("System", preview.selectedProfileType)
         assertTrue(preview.displayLines.contains(OBSERVATION_ONLY_NO_FORWARDING))
@@ -53,21 +53,21 @@ class LiveRouteDecisionPreviewerTest {
 
         val preview = LiveRouteDecisionPreviewer(config).preview(tcpSummary(dstIp = "198.51.100.10"))
 
-        assertEquals("Fail-closed default", preview.matchedRuleName)
-        assertEquals("Block", preview.selectedProfileName)
-        assertEquals("Block", preview.selectedProfileType)
+        assertEquals("Phone internet / System", preview.matchedRuleName)
+        assertEquals("System / Система", preview.selectedProfileName)
+        assertEquals("System", preview.selectedProfileType)
         assertFalse(preview.warnings.any { it.contains("Runtime forwarding") })
     }
 
     @Test
-    fun socks5ProfileShowsRuntimeForwardingWarning() {
+    fun socks5ProfileIsRuntimeReadyWithoutLeakingCredentials() {
         val secret = "do-not-print-this-password"
         val socks5Profile = TunnelProfile(
             id = "socks5-lab",
             name = "Lab SOCKS5",
             type = TunnelType.Socks5,
             description = "Manual diagnostics only.",
-            mockOnly = true,
+            mockOnly = false,
             socks5 = Socks5ProfileConfig(
                 name = "Lab SOCKS5",
                 host = "127.0.0.1",
@@ -89,21 +89,20 @@ class LiveRouteDecisionPreviewerTest {
         val preview = LiveRouteDecisionPreviewer(config).preview(tcpSummary(dstIp = "203.0.113.7"))
         val decisionText = preview.displayLines.joinToString("\n")
 
-        assertTrue(preview.warnings.contains(SOCKS5_RUNTIME_FORWARDING_NOT_ENABLED))
-        assertTrue(decisionText.contains("Runtime forwarding is not enabled yet"))
+        assertFalse(preview.warnings.any { it.contains("Runtime forwarding is not enabled yet") })
         assertFalse(decisionText.contains(secret), "decision text must not include passwords/secrets")
         assertFalse(decisionText.contains("tester"), "decision text must not include SOCKS5 usernames")
     }
 
     @Test
-    fun vlessProfileShowsRuntimeForwardingWarningWithoutUuid() {
+    fun vlessProfileShowsDiagnosticClassificationWithoutUuid() {
         val uuid = "123e4567-e89b-12d3-a456-426614174000"
         val vlessProfile = TunnelProfile(
             id = "vless-lab",
             name = "Lab VLESS",
             type = TunnelType.VLESS,
             description = "VLESS config only.",
-            mockOnly = true,
+            mockOnly = false,
             vless = VlessProfileConfig(
                 name = "Lab VLESS",
                 host = "example.com",
@@ -125,8 +124,7 @@ class LiveRouteDecisionPreviewerTest {
         val preview = LiveRouteDecisionPreviewer(config).preview(tcpSummary(dstIp = "203.0.113.9"))
         val decisionText = preview.displayLines.joinToString("\n")
 
-        assertTrue(preview.warnings.contains(VLESS_RUNTIME_FORWARDING_NOT_ENABLED))
-        assertTrue(decisionText.contains("Selected profile is VLESS. Runtime forwarding is not enabled yet."))
+        assertFalse(preview.warnings.any { it.contains("Runtime forwarding is not enabled yet") })
         assertTrue(decisionText.contains("Latest manual VLESS response classification:"))
         assertFalse(decisionText.contains(uuid), "decision text must not include VLESS UUID")
     }

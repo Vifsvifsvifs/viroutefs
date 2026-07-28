@@ -18,7 +18,8 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
 internal const val DEV_TCP_BRIDGE_NOTICE = "Dev TCP session only. No Android traffic is forwarded."
-internal const val DEV_TCP_BRIDGE_SECRET_NOTICE = "UUID and sensitive data not transmitted in dev session."
+internal const val DEV_TCP_BRIDGE_SECRET_NOTICE =
+    "The VLESS UUID is used in the protocol handshake. It is never shown in session events or diagnostic logs."
 internal const val DEV_TCP_BRIDGE_EVENT_OPEN = "Dev session open"
 internal const val DEV_TCP_BRIDGE_NO_FORWARDING = "DevTcpBridge accepts only explicit test bytes; Android traffic, UDP, and DNS forwarding are not implemented."
 

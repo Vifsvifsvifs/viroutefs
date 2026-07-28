@@ -10,11 +10,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag, for example v0.6.11-alpha'
+        description: 'Release tag, for example v0.12.0-beta.1'
         required: true
         type: string
       release_name:
-        description: 'Release title, for example ViRouteFS 0.6.11-alpha'
+        description: 'Release title, for example ViRouteFS 0.12.0-beta.1'
         required: true
         type: string
       prerelease:
@@ -33,12 +33,17 @@ jobs:
   build:
     name: Build debug APK
     runs-on: ubuntu-latest
+    outputs:
+      version_name: ${{ steps.prepare_apk.outputs.version_name }}
+      version_code: ${{ steps.prepare_apk.outputs.version_code }}
     permissions:
       contents: read
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -51,10 +56,11 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.13'
 
-      - name: Prepare optional alpha signing key
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Prepare release signing key
         env:
           VIROUTEFS_ALPHA_KEYSTORE_BASE64: ${{ secrets.VIROUTEFS_ALPHA_KEYSTORE_BASE64 }}
           VIROUTEFS_ALPHA_KEYSTORE_PASSWORD: ${{ secrets.VIROUTEFS_ALPHA_KEYSTORE_PASSWORD }}
@@ -64,42 +70,61 @@ jobs:
           set -euo pipefail
 
           if [ -n "${VIROUTEFS_ALPHA_KEYSTORE_BASE64:-}" ]; then
-            ALPHA_KEYSTORE_PATH="$RUNNER_TEMP/viroutefs-alpha.jks"
-            printf '%s' "$VIROUTEFS_ALPHA_KEYSTORE_BASE64" | base64 --decode > "$ALPHA_KEYSTORE_PATH"
+            RELEASE_KEYSTORE_PATH="$RUNNER_TEMP/viroutefs-beta.jks"
+            printf '%s' "$VIROUTEFS_ALPHA_KEYSTORE_BASE64" | base64 --decode > "$RELEASE_KEYSTORE_PATH"
             {
-              echo "VIROUTEFS_ALPHA_KEYSTORE_PATH=$ALPHA_KEYSTORE_PATH"
+              echo "VIROUTEFS_ALPHA_KEYSTORE_PATH=$RELEASE_KEYSTORE_PATH"
               echo "VIROUTEFS_ALPHA_KEYSTORE_PASSWORD=$VIROUTEFS_ALPHA_KEYSTORE_PASSWORD"
               echo "VIROUTEFS_ALPHA_KEY_ALIAS=$VIROUTEFS_ALPHA_KEY_ALIAS"
               echo "VIROUTEFS_ALPHA_KEY_PASSWORD=$VIROUTEFS_ALPHA_KEY_PASSWORD"
             } >> "$GITHUB_ENV"
-            echo "Alpha signing key decoded into RUNNER_TEMP."
+            echo "Beta signing key decoded into RUNNER_TEMP."
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "A manual release requires VIROUTEFS_ALPHA_KEYSTORE_* repository secrets." >&2
+            exit 1
           else
             echo "VIROUTEFS_ALPHA_KEYSTORE_BASE64 is not configured; building with default debug signing."
           fi
 
-      - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace
+      - name: Run tests and build APK
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ./gradlew :app:testDebugUnitTest :app:assembleRelease --stacktrace
+          else
+            ./gradlew :app:testDebugUnitTest :app:assembleDebug --stacktrace
+          fi
 
       - name: Prepare APK artifact
+        id: prepare_apk
         run: |
           set -euo pipefail
 
-          VERSION_NAME="$(awk -F'"' '/^[[:space:]]*versionName[[:space:]]*=/ { print $2; exit }' app/build.gradle.kts)"
+          VERSION_NAME="$(./gradlew -q :app:printVersionName | tail -n 1)"
+          VERSION_CODE="$(./gradlew -q :app:printVersionCode | tail -n 1)"
           if [ -z "$VERSION_NAME" ]; then
-            echo "Unable to detect versionName from app/build.gradle.kts." >&2
+            echo "Unable to obtain versionName from Gradle." >&2
             exit 1
           fi
 
-          mapfile -t DEBUG_APKS < <(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' | sort)
-          if [ "${#DEBUG_APKS[@]}" -eq 0 ]; then
-            echo "No debug APK found under app/build/outputs/apk/debug/*.apk." >&2
-            echo "Debug APK output directory contents:" >&2
-            find app/build/outputs/apk/debug -maxdepth 2 -print >&2 || true
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            APK_DIRECTORY="app/build/outputs/apk/release"
+            BUILD_KIND="release"
+          else
+            APK_DIRECTORY="app/build/outputs/apk/debug"
+            BUILD_KIND="debug"
+          fi
+
+          mapfile -t APKS < <(find "$APK_DIRECTORY" -maxdepth 1 -type f -name '*.apk' | sort)
+          if [ "${#APKS[@]}" -eq 0 ]; then
+            echo "No APK found under $APK_DIRECTORY." >&2
+            find "$APK_DIRECTORY" -maxdepth 2 -print >&2 || true
             exit 1
           fi
 
-          SELECTED_APK="${DEBUG_APKS[0]}"
-          ARTIFACT_NAME="ViRouteFS-debug-${VERSION_NAME}"
+          SELECTED_APK="${APKS[0]}"
+          ARTIFACT_NAME="ViRouteFS-${BUILD_KIND}-${VERSION_NAME}"
           ARTIFACT_APK="${ARTIFACT_NAME}.apk"
           RELEASE_APK="ViRouteFS-${VERSION_NAME}.apk"
 
@@ -112,10 +137,15 @@ jobs:
           cp "$SELECTED_APK" "$RELEASE_APK"
           {
             echo "VERSION_NAME=${VERSION_NAME}"
+            echo "VERSION_CODE=${VERSION_CODE}"
             echo "ARTIFACT_NAME=${ARTIFACT_NAME}"
             echo "ARTIFACT_APK=${ARTIFACT_APK}"
             echo "RELEASE_APK=${RELEASE_APK}"
           } >> "$GITHUB_ENV"
+          {
+            echo "version_name=${VERSION_NAME}"
+            echo "version_code=${VERSION_CODE}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
@@ -143,6 +173,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Download release APK artifact
         uses: actions/download-artifact@v4
@@ -154,8 +186,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          VERSION_NAME="$(awk -F'"' '/^[[:space:]]*versionName[[:space:]]*=/ { print $2; exit }' app/build.gradle.kts)"
-          VERSION_CODE="$(awk '/^[[:space:]]*versionCode[[:space:]]*=/ { print $3; exit }' app/build.gradle.kts)"
+          VERSION_NAME="${{ needs.build.outputs.version_name }}"
+          VERSION_CODE="${{ needs.build.outputs.version_code }}"
           RELEASE_APK="ViRouteFS-${VERSION_NAME}.apk"
 
           if [ ! -f "release-apk/${RELEASE_APK}" ]; then
@@ -164,18 +196,25 @@ jobs:
             exit 1
           fi
 
+          EXPECTED_TAG="v${VERSION_NAME}"
+          if [ "${{ inputs.tag }}" != "$EXPECTED_TAG" ]; then
+            echo "Release tag must be $EXPECTED_TAG for this APK, got ${{ inputs.tag }}." >&2
+            exit 1
+          fi
+
+          SHA256="$(sha256sum "release-apk/${RELEASE_APK}" | awk '{print $1}')"
+          printf '%s  %s\n' "$SHA256" "$RELEASE_APK" > "release-apk/${RELEASE_APK}.sha256"
+
           cat > release-notes.md <<EOF
           ## ViRouteFS ${VERSION_NAME}
 
-          versionCode ${VERSION_CODE}
+          - versionName: ${VERSION_NAME}
+          - versionCode: ${VERSION_CODE}
+          - SHA-256: \`${SHA256}\`
 
-          This alpha APK is published through GitHub Releases as the official alpha APK channel.
+          This is a manually approved, consistently signed beta build from the tagged source.
 
-          Highlights for 0.6.11-alpha:
-          - Launcher icon consistency fix so adaptive, round, monochrome/themed, and legacy fallback resources use the same minimalist red V with LAN motif.
-          - Settings Help is collapsed by default so long beginner/admin explanations stay behind expanders.
-
-          Alpha update behavior:
+          Beta update behavior:
           - The app supports manual update checking from Settings.
           - APK download starts only after the user taps Download APK.
           - Install update opens Android's system package installer.
@@ -184,9 +223,7 @@ jobs:
           - No silent install.
           - Android / Play Protect may show sideload warnings outside Google Play; ViRouteFS cannot suppress system install warnings.
 
-          Safety notes:
-          - No runtime VPN engine, packet forwarding, default route, telemetry, analytics, ads, tracking, or cloud upload is added by this release path.
-          - If you installed an older randomly-signed debug APK, Android may require one uninstall before installing stable alpha-signed builds.
+          If an older APK used a different signing key, Android requires uninstalling it once before this new signing line can be installed.
           EOF
 
           {
@@ -203,9 +240,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          args=("$RELEASE_TAG" "release-apk/$RELEASE_APK" --title "$RELEASE_NAME" --notes-file release-notes.md)
+          args=(
+            "$RELEASE_TAG"
+            "release-apk/$RELEASE_APK"
+            "release-apk/$RELEASE_APK.sha256"
+            --title "$RELEASE_NAME"
+            --notes-file release-notes.md
+            --target "$GITHUB_SHA"
+          )
           if [ "$PRERELEASE" = "true" ]; then
             args+=(--prerelease)
           fi
 
           gh release create "${args[@]}"
+
+          TAG_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq '.object.sha')"
+          if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+            echo "Release tag points to $TAG_SHA instead of the built commit $GITHUB_SHA." >&2
+            exit 1
+          fi

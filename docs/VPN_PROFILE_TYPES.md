@@ -1,5 +1,7 @@
 # VPN profile types
 
+> Historical 0.4.1-alpha model document. For current runtime support use `PROFILE_TYPES.md` and the root `README.md`.
+
 0.4.1-alpha broadens the connection profile model and UI. These profile types are **model/UI options only** in this release; real engines are not implemented.
 
 ## Base

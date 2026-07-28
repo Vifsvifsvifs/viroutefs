@@ -166,9 +166,9 @@ fun RouteDiagnosticReportCard(
             }
         }
         RouteInfoCard(
-            title = "Ограничение версии",
+            title = "Граница этой проверки",
             simple = report.limitationNote,
-            details = "Реальное VPN-маршрутизирование и DNS-маршрутизирование не подключены в этом отчёте.",
+            details = "Сетевые проверки отчёта выполняются самим ViRouteFS вне собственного TUN. Они не подтверждают, что выбранное приложение действительно прошло через указанный VPN.",
             action = report.recommendedNextAction,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

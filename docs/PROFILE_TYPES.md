@@ -1,35 +1,34 @@
-# ViRouteFS Network profile types — 0.6.7-alpha planning
+# Network profile types
 
-This document describes current and future Network profile types. It is documentation/planning only: unimplemented profile type buttons must not be exposed in the normal app UI yet.
+The UI uses one catalog so a protocol name is never confused with working runtime support.
 
-Every future type must preserve the ViRouteFS safety model: explicit user control, local-first operation, no hidden telemetry, no packet payload logging, no silent fallback from a selected unavailable profile, and fail-closed / Block behavior when required.
+## Runtime-ready in the current arm64 build
 
-| Type | User-facing name | Category | Expected role in routing | Implementation status |
-| --- | --- | --- | --- | --- |
-| System | System / Система | System route | Built-in internal route target for traffic without a more specific ViRouteFS rule. It represents the normal Android system path inside the ViRouteFS model. | planned |
-| Block | Block / Блокировать | System route | Built-in deny target for traffic that should be closed instead of sent through another profile. | planned |
-| SOCKS5 | SOCKS5 | Proxy | Early real outbound candidate for validating route-target architecture without full VPN protocol complexity. | planned |
-| HTTP proxy | HTTP proxy | Proxy | Early outbound candidate for explicit HTTP proxy routing where supported by the future engine layer. | planned |
-| HTTPS proxy | HTTPS proxy | Proxy | Early outbound candidate for explicit HTTPS proxy routing where supported by the future engine layer. | planned |
-| WireGuard | WireGuard | VPN | Future VPN profile for WireGuard-style tunnels through a GPL-compatible userspace implementation. | research |
-| OpenVPN3 | OpenVPN3 | VPN | Preferred future OpenVPN-compatible profile path using OpenVPN3 Core rather than embedding GPLv2-only OpenVPN 2.x core. | research |
-| Xray / VLESS / Reality | Xray / VLESS / Reality | VPN/tunnel | Future tunnel/import profile family for Xray-based configurations, subject to license and Android feasibility audit. | research |
-| Hysteria2 | Hysteria2 | VPN/tunnel | Future external tunnel profile candidate for explicit route targets. | research |
-| Shadowsocks | Shadowsocks | Proxy/tunnel | Future outbound profile candidate using a permissive or GPL-compatible implementation. | research |
-| Trojan | Trojan | VPN/tunnel | Future tunnel/import profile candidate, potentially related to Xray-compatible imports. | research |
-| TUIC | TUIC | VPN/tunnel | Future tunnel candidate requiring deeper audit before any profile exposure. | research |
-| NaiveProxy | NaiveProxy | Proxy/tunnel | Future proxy/tunnel candidate requiring deeper audit before any profile exposure. | research |
-| OpenConnect / AnyConnect-compatible | OpenConnect / AnyConnect-compatible | VPN | Future enterprise VPN compatibility candidate requiring deeper license, Android, and security review. | research |
-| IKEv2/IPSec | IKEv2/IPSec | VPN | Future VPN profile candidate requiring Android feasibility, native dependency, and security review. | research |
-| SoftEther | SoftEther | VPN | Future VPN profile candidate requiring deeper audit before any profile exposure. | research |
-| ByeDPI-style local DPI bypass | ByeDPI-style local DPI bypass | Local DPI bypass | Future local profile type, not a full VPN. It may appear as a Network profile and route target; if selected for an app/domain and unavailable, it must fail closed / Block and never fallback to another profile. | research |
+| Type | Runtime |
+| --- | --- |
+| System / Block | Built into ViRouteFS/sing-box |
+| ByeDPI | Pinned MIT-licensed local SOCKS process |
+| OpenVPN client | sing-box 1.14 alpha endpoint |
+| OpenConnect / AnyConnect family | sing-box 1.14 alpha endpoint |
+| VLESS, TLS, REALITY | sing-box |
+| SOCKS5 | sing-box |
+| VMess, Trojan | sing-box advanced profile |
+| Shadowsocks, Shadowsocks 2022 | sing-box advanced profile |
+| Hysteria v1/v2, Snell v4/v6, TUIC, AnyTLS | sing-box advanced profile |
+| HTTP, HTTPS proxy, SSH | sing-box advanced profile |
+| WireGuard | sing-box endpoint |
+| Tailscale/Headscale-compatible | sing-box endpoint |
 
-## UI exposure rule
+Advanced profiles require a JSON fragment because these protocols have different option sets. ViRouteFS overwrites the internal tag, rejects full sing-box configurations and runs native config validation before saving.
 
-Do not expose unimplemented profile type buttons, fake configured tunnels, or fake route targets in the normal app UI. Future profile types may be documented here and linked from admin/developer help, but normal users should only see features that have real, safe behavior.
+## Planned, not selectable as working
 
-## VLESS profile model in 0.8.5-alpha
+- IKEv2/IPsec and older enterprise IPsec modes;
+- ZeroTier and SoftEther;
+- Tor executable;
+- ShadowTLS chain editor;
+- Naive/Cronet.
 
-VLESS profiles are configuration-only in 0.8.5-alpha. The app can store and validate local profile fields for route decision preview, including UUID, transport placeholders (`tcp`, `ws`, or `grpc`), and placeholder TLS/REALITY metadata. It can also import and explicitly export usable `vless://` URIs as documented in [`VLESS_URI_IMPORT_EXPORT.md`](VLESS_URI_IMPORT_EXPORT.md). It does not connect to VLESS servers, forward packets, write packets back to TUN, implement REALITY/XTLS runtime, or proxy DNS. Route decision preview must warn: "Selected profile is VLESS. Runtime forwarding is not enabled yet."
+## Legacy-disabled
 
-`routing_config.json`, routing exports, and explicit VLESS URI exports may contain VLESS connection identifiers such as UUID, host, SNI, and placeholder key metadata. Treat exported routing configs and VLESS URIs as sensitive local files. UUID values must not appear in summaries, diagnostics text, logs, route-preview text, or masked import previews. No telemetry, cloud upload, analytics, ads, background validation, startup tests, or auto-connect behavior is added.
+PPTP, unencrypted L2TP and SSTP are displayed only to explain compatibility limits. They have no selected binary and cannot be saved as active secure tunnels.

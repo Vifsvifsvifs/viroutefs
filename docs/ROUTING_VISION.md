@@ -1,41 +1,55 @@
-# ViRouteFS routing vision
+# Routing model
 
-ViRouteFS is a human-readable traffic routing and diagnostics system. The product goal is simple:
+ViRouteFS is an Android policy router built around a single `VpnService`.
 
-> Show where traffic goes, explain why, and help fix the route.
+## What can be routed
 
-ViRouteFS is not only an Android VPN app. The route model is intentionally platform-neutral so future Android, Linux, and Windows implementations can share the same concepts: profiles, rules, DNS policy, explanations, diagnostics, and leak warnings.
+Rules can match:
 
-## Architecture direction
+- an Android application;
+- a domain name or domain suffix;
+- an IP address or CIDR network;
+- all remaining traffic.
 
-Android should eventually use one `VpnService` as the local traffic entry point. Future routing logic can then decide which internal outbound tunnel should handle each flow. Linux and Windows can later map the same model to their own platform routing mechanisms.
+Every rule selects one profile. The profile may be a VPN/proxy tunnel, `Direct`,
+`Block` or the built-in ByeDPI local proxy. Rules are ordered, and the first
+matching rule wins.
 
-Planned outbound profile types include System, Block, Xray, Hysteria2, OpenVPN, WireGuard, and SOCKS5. System is the built-in default Android/system path inside ViRouteFS for unmatched apps; Block is fail-closed behavior. Legacy `Direct` ids/types may exist only for saved-config compatibility. Xray, Hysteria2, OpenVPN, WireGuard, and SOCKS5 profiles remain future/mock concepts until they route traffic safely.
+When network control is enabled, every flow without a more specific rule uses
+`System`: the phone's normal mobile-data or Wi-Fi uplink. A VPN profile is not
+required to start network control. Explicit rules send only selected traffic to
+a VPN/proxy tunnel, `Block`, ByeDPI or an explicit `System` route.
 
-## Route rules
+## DNS
 
-The route engine uses clear, human-readable rules. Rules can match traffic by app group, app/text matcher, domain name, CIDR range, and a default fallback. Lower priority numbers win, disabled rules are ignored, and the enabled `DEFAULT` rule sends unmatched apps to System. Explicit matched rules are exclusive: unavailable selected profiles fail closed / Block and never silently fall back to another profile.
+Each rule may select its own DNS policy independently from its traffic profile:
 
-Each rule explains which tunnel profile it selects, which DNS policy applies as metadata, why it matched, the priority, mock status, leak risk, and what the user should do if the result is unexpected.
+- Android system DNS;
+- a custom DNS server;
+- `hosts` overrides;
+- blocked DNS.
 
-## DNS policy is part of a route
+A custom DNS server supports IP/UDP, TCP, TLS, QUIC, HTTPS and HTTP/3 transports
+and may itself be reached through a selected tunnel profile. If the selected DNS
+detour is unavailable, the request is blocked rather than leaked to another
+resolver.
 
-A route is not only a tunnel. A route also needs DNS policy, explanation, diagnostics, and leak warnings.
+## Runtime profiles
 
-DNS policy is stored and shown as configuration metadata only. If no DNS is configured, the model uses Android system DNS through ViRouteFS policy and must not silently substitute public resolvers. Real DNS routing is not implemented. The UI warns when DNS policy and selected profile could leak or conflict.
+The current sing-box-backed profile model covers OpenVPN,
+OpenConnect/AnyConnect, VLESS, SOCKS5, VMess, Trojan, Shadowsocks, Hysteria
+v1/v2, Snell, TUIC, AnyTLS, HTTP/HTTPS proxy, SSH, WireGuard and
+Tailscale/Headscale. ByeDPI is an embedded local SOCKS process with a dedicated
+toggle.
 
-## Route simulator and diagnostics
+Tor, ShadowTLS chains, Naive, IKEv2/IPsec, L2TP, PPTP and SSTP remain outside
+the current working runtime. The UI must not present these as active tunnels.
+Unencrypted legacy protocols such as bare L2TP and PPTP are intentionally kept
+disabled.
 
-The route simulator and route diagnostics now use the saved local routing configuration instead of hardcoded samples. Diagnostics still perform real DNS/TCP/TLS/HTTP checks only after the user presses a button, and those checks use the current Android connection rather than the simulated route.
+## Failure policy
 
-## Safety and privacy
-
-ViRouteFS remains local-first:
-
-- no telemetry;
-- no analytics;
-- no ads or tracking SDKs;
-- no cloud upload;
-- no background checks;
-- no automatic packet capture;
-- no offensive security features.
+Unsupported, disabled, invalid and failed targets compile to `Block`. ViRouteFS
+never falls back from a requested protected route to `Direct` without an
+explicit user rule. This fail-closed rule applies to explicit VPN/proxy routes;
+the normal unmatched route is intentionally `System`.

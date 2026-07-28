@@ -3,6 +3,7 @@
 package dev.vifs.viroutefs.socks5
 
 import kotlinx.coroutines.test.runTest
+import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -57,7 +58,7 @@ class Socks5ConnectProtocolTest {
 
     @Test
     fun historySerializationDoesNotIncludePasswordsAndLimitsTwentyPerProfile() = runTest {
-        val tempDir = createTempDir(prefix = "socks5-history-test")
+        val tempDir = createTempDirectory("socks5-history-test").toFile()
         try {
             val store = Socks5TestHistoryStore(tempDir.resolve(Socks5TestHistoryStore.FILENAME))
             (0 until 25).forEach { index ->

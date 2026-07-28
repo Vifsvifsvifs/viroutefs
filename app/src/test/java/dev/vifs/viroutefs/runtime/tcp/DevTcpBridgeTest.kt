@@ -67,8 +67,8 @@ class DevTcpBridgeTest {
     fun bridgeDoesNotExposeGeneralTrafficForwardingApi() {
         val methodNames = DevTcpBridge::class.java.methods.map { it.name }.toSet()
 
-        assertTrue(methodNames.contains("sendTestData"))
-        assertTrue(methodNames.contains("receiveTestData"))
+        assertTrue(methodNames.any { it == "sendTestData" || it.startsWith("sendTestData-") })
+        assertTrue(methodNames.any { it == "receiveTestData" || it.startsWith("receiveTestData-") })
         assertFalse(methodNames.contains("forward"))
         assertFalse(methodNames.contains("forwardUdp"))
         assertFalse(methodNames.contains("forwardDns"))

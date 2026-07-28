@@ -132,7 +132,7 @@ class RouteDiagnosticRunner(
         }
         val dnsText = "DNS-политика: ${routeDecision.dnsPolicySummary}. ${routeDecision.dnsLeakSummary}"
         val warningsText = routeDecision.warnings.joinToString("\n") { "Предупреждение: $it" }
-        return "$routeText\n$dnsText\n$statusText\n$warningsText\nТак как реальное VPN-маршрутизирование ещё не подключено, результат сетевой проверки не доказывает, что будущий маршрут работает или сломан."
+        return "$routeText\n$dnsText\n$statusText\n$warningsText\nЭти DNS/TCP/TLS/HTTP-проверки выполняются процессом ViRouteFS вне собственного TUN. Они проверяют доступность узла через текущую сеть Android, но не доказывают работу выбранного VPN-профиля."
     }
 
     private fun buildRecommendation(
@@ -141,7 +141,7 @@ class RouteDiagnosticRunner(
     ): String {
         val firstError = steps.firstOrNull { it.result?.status == DiagnosticStatus.ERROR }?.result
         return firstError?.recommendedAction
-            ?: routeDecision.recommendedAction + " DNS-политика сейчас используется только для объяснения риска утечки. Проверьте правило и повторите диагностику после подключения реального VPN-маршрута в будущих версиях."
+            ?: routeDecision.recommendedAction + " Для проверки самого маршрута включите VPN и проверьте внешний IP/DNS из приложения, которому назначено правило."
     }
 
     private data class ParsedTarget(

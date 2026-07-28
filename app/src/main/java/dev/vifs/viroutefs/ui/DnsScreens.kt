@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -35,8 +36,10 @@ import dev.vifs.viroutefs.diagnostics.DnsDiagnostic
 import dev.vifs.viroutefs.routing.DNS_POLICY_LIMITATION
 import dev.vifs.viroutefs.routing.DnsHostOverride
 import dev.vifs.viroutefs.routing.DnsPolicy
+import dev.vifs.viroutefs.routing.DnsPolicyType
 import dev.vifs.viroutefs.routing.RoutingConfig
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 private enum class DnsRoute {
     Main,
@@ -47,7 +50,8 @@ private enum class DnsRoute {
 internal fun DnsScreen(padding: PaddingValues, text: UiText, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
     var selectedRoute by rememberSaveable { mutableStateOf(DnsRoute.Main) }
     var selectedPolicyId by rememberSaveable { mutableStateOf<String?>(null) }
-    val selectedPolicy = config.dnsPolicies.firstOrNull { it.id == selectedPolicyId }
+    var newPolicy by remember { mutableStateOf<DnsPolicy?>(null) }
+    val selectedPolicy = newPolicy ?: config.dnsPolicies.firstOrNull { it.id == selectedPolicyId }
 
     when {
         selectedPolicy != null -> DnsPolicyDetailsScreen(
@@ -55,7 +59,10 @@ internal fun DnsScreen(padding: PaddingValues, text: UiText, config: RoutingConf
             text = text,
             policy = selectedPolicy,
             config = config,
-            onBack = { selectedPolicyId = null },
+            onBack = {
+                selectedPolicyId = null
+                newPolicy = null
+            },
             onConfig = onConfig,
         )
 
@@ -72,6 +79,16 @@ internal fun DnsScreen(padding: PaddingValues, text: UiText, config: RoutingConf
             text = text,
             config = config,
             onPolicy = { selectedPolicyId = it.id },
+            onAddPolicy = {
+                newPolicy = DnsPolicy(
+                    id = "dns-${UUID.randomUUID()}",
+                    name = "Новый DNS",
+                    type = DnsPolicyType.Custom,
+                    serverText = "tls://1.1.1.1",
+                    resolveThroughProfileId = config.defaultProfileId,
+                    description = "Пользовательский DNS для выбранных профилей и правил.",
+                )
+            },
             onHostOverrides = { selectedRoute = DnsRoute.HostOverrides },
         )
     }
@@ -83,6 +100,7 @@ private fun DnsMainScreen(
     text: UiText,
     config: RoutingConfig,
     onPolicy: (DnsPolicy) -> Unit,
+    onAddPolicy: () -> Unit,
     onHostOverrides: () -> Unit,
 ) = ScreenList(padding) {
     item { Header(text.dns, text.dnsSubtitle) }
@@ -92,6 +110,11 @@ private fun DnsMainScreen(
             title = text.policies,
             subtitle = text.policyCount(config.dnsPolicies.size),
         )
+    }
+    item {
+        Button(onClick = onAddPolicy, modifier = Modifier.fillMaxWidth()) {
+            Text("Добавить свой DNS")
+        }
     }
     items(config.dnsPolicies, key = { it.id }) { policy -> DnsPolicySummaryCard(text, policy, config, onOpen = { onPolicy(policy) }) }
     item {
@@ -149,7 +172,9 @@ private fun DnsPolicySummaryCard(text: UiText, policy: DnsPolicy, config: Routin
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(policy.name, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 Text(policy.type.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                val boundProfile = policy.resolveThroughProfileId?.let { id -> config.profiles.firstOrNull { it.id == id && !it.mockOnly } }
+                val boundProfile = policy.resolveThroughProfileId?.let { id ->
+                    config.profiles.firstOrNull { it.id == id && (!it.mockOnly || it.singBox != null) }
+                }
                 Text("${text.targetProfile}: ${boundProfile?.name ?: text.none}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(policy.serverText?.takeIf { it.isNotBlank() } ?: text.noDns, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -171,7 +196,13 @@ private fun DnsPolicyDetailsScreen(
     var serverText by rememberSaveable(policy.id) { mutableStateOf(policy.serverText.orEmpty()) }
     var description by rememberSaveable(policy.id) { mutableStateOf(policy.description) }
     var enabled by rememberSaveable(policy.id) { mutableStateOf(policy.enabled) }
-    val profileNames = config.profiles.filter { it.dnsPolicyId == policy.id && !it.mockOnly }.map { it.name }
+    var resolveThroughProfileId by rememberSaveable(policy.id) {
+        mutableStateOf(policy.resolveThroughProfileId)
+    }
+    val isNew = config.dnsPolicies.none { it.id == policy.id }
+    val profileNames = config.profiles.filter {
+        it.dnsPolicyId == policy.id && (!it.mockOnly || it.singBox != null)
+    }.map { it.name }
     val routeNames = config.rules.filter { it.dnsPolicyId == policy.id }.map { it.name }
 
     ScreenList(padding) {
@@ -185,7 +216,31 @@ private fun DnsPolicyDetailsScreen(
             CardBlock {
                 OutlinedTextField(name, { name = it }, label = { Text(text.name) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Text(policy.type.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedTextField(serverText, { serverText = it }, label = { Text(text.dnsServer) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                if (policy.type == DnsPolicyType.Custom) {
+                    OutlinedTextField(serverText, { serverText = it }, label = { Text(text.dnsServer) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    Text(
+                        "Укажите один сервер: IP, udp://, tcp://, tls://, quic://, https:// или h3://. Например: tls://1.1.1.1.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text("Через какой VPN отправлять DNS", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        config.profiles
+                            .filter { it.enabled && (!it.mockOnly || it.singBox != null) }
+                            .forEach { profile ->
+                                FilterChip(
+                                    selected = resolveThroughProfileId == profile.id,
+                                    onClick = { resolveThroughProfileId = profile.id },
+                                    label = { Text(profile.name) },
+                                )
+                            }
+                    }
+                } else {
+                    Text(
+                        "Эта политика использует DNS, который Android получил от текущей сети. Для своего адреса создайте отдельную пользовательскую политику.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                     Text(text.enabled, style = MaterialTheme.typography.bodySmall)
@@ -212,20 +267,18 @@ private fun DnsPolicyDetailsScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = {
                     onConfig(
-                        config.copy(
-                            dnsPolicies = config.dnsPolicies.map {
-                                if (it.id == policy.id) {
-                                    it.copy(
-                                        name = name.ifBlank { policy.name },
-                                        serverText = serverText.ifBlank { null },
-                                        description = description.ifBlank { policy.description },
-                                        enabled = enabled,
-                                    )
-                                } else {
-                                    it
-                                }
-                            },
-                        ),
+                        config.copy(dnsPolicies = run {
+                            val updated = policy.copy(
+                                name = name.ifBlank { policy.name },
+                                serverText = serverText.ifBlank { null },
+                                resolveThroughProfileId = resolveThroughProfileId,
+                                description = description.ifBlank { policy.description },
+                                enabled = enabled,
+                            )
+                            if (isNew) config.dnsPolicies + updated else config.dnsPolicies.map {
+                                if (it.id == policy.id) updated else it
+                            }
+                        }),
                         text.saved,
                     )
                     onBack()
