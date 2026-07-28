@@ -1,11 +1,11 @@
-# ViRouteFS UI concept — 0.6.5-alpha
+# ViRouteFS UI concept — 0.11.0-alpha
 
 ViRouteFS 0.6.5-alpha organizes the Android app around five compact product tasks:
 
 1. **Networks / Сети** — real network profiles and safe local network control.
 2. **Routes** — assign apps, domains/sites and IP/CIDR matchers to connection profiles.
 3. **DNS** — run DNS lookup checks, preview app DNS behavior, manage hosts-like overrides and assign DNS policies per connection.
-4. **FS** — Flow Scanner: local counters when available; no claim of full traffic analysis yet.
+4. **FS** — Flow Scanner: live local connection metadata and per-app filtering without payload capture.
 5. **Settings / Настройки** — language, theme, Help / Справка, project support, and developer diagnostics.
 
 The main navigation is: Networks / Сети, Routes / Маршруты, DNS, FS, and Settings / Настройки. Home / Главная content moved into Settings → Help / Справка.
@@ -18,14 +18,13 @@ The main navigation is: Networks / Сети, Routes / Маршруты, DNS, FS,
 - Russian-first labels are used for user-facing concepts.
 - Technical details remain available in result cards and documentation.
 
-## Current limitations
+## Current boundaries
 
-This release is UI/model-level only for connection engines and flow capture:
-
-- Real Android VPN routing is not implemented yet.
-- Xray, OpenVPN, WireGuard, Hysteria2 and other engines are not implemented yet and must not be shown as real configured tunnels.
-- Flow Scanner does not claim full traffic analysis yet.
-- DNS per connection and hosts-like overrides are configuration/simulation metadata for now.
+- The real single-`VpnService` runtime is arm64-only and still needs testing on a physical device.
+- OpenVPN/OpenConnect and the other catalog entries marked **Работает** are compiled into the pinned sing-box runtime.
+- IKEv2/IPsec and legacy L2TP/PPTP/SSTP do not have audited Android adapters and must not be shown as working.
+- Flow Scanner shows metadata, not decrypted HTTPS or packet contents.
+- DNS per profile/rule is enforced by the runtime and fails closed when its selected detour is unavailable.
 - There is no telemetry, analytics, ads, tracking, cloud log upload or background monitoring.
 
 

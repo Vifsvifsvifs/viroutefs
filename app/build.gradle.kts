@@ -1,7 +1,5 @@
-import java.io.BufferedInputStream
 import java.io.File
-import java.io.FileOutputStream
-import java.net.URI
+import java.security.MessageDigest
 
 plugins {
     id("com.android.application")
@@ -19,6 +17,15 @@ val hasAlphaSigning = listOf(
     alphaKeyAlias,
     alphaKeyPassword,
 ).all { !it.isNullOrBlank() }
+val buildNumber = (project.findProperty("buildNumber") as String?)?.toIntOrNull() ?: 0
+val donationUrl = providers.environmentVariable("VIROUTEFS_DONATION_URL")
+    .orElse(providers.gradleProperty("viroutefsDonationUrl"))
+    .orNull
+    ?.trim()
+    .orEmpty()
+val baseVersionName = "0.11.0-alpha"
+val appVersionName = if (buildNumber > 0) "$baseVersionName.$buildNumber" else baseVersionName
+val appVersionCode = 11000 + buildNumber
 
 android {
     namespace = "dev.vifs.viroutefs"
@@ -28,13 +35,13 @@ android {
         applicationId = "dev.vifs.viroutefs"
         minSdk = 26
         targetSdk = 36
-        val buildNumber = (project.findProperty("buildNumber") as String?)
-            ?.toIntOrNull() ?: 0
-        val baseVersionName = "0.9.1"
-
-        versionCode = 10000 + buildNumber
-        versionName = if (buildNumber > 0) "$baseVersionName.$buildNumber"
-            else baseVersionName
+        versionCode = appVersionCode
+        versionName = appVersionName
+        buildConfigField(
+            "String",
+            "DONATION_URL",
+            "\"${donationUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"",
+        )
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -60,6 +67,9 @@ android {
         }
         release {
             isMinifyEnabled = false
+            if (hasAlphaSigning) {
+                signingConfig = signingConfigs.getByName("alpha")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -85,16 +95,32 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            // ByeDPI is launched as an app-private executable from nativeLibraryDir.
+            useLegacyPackaging = true
+        }
     }
 }
 
-val libV2rayVersion = "v26.6.1"
-val libV2rayFile = file("libs/libv2ray.aar")
-val libV2rayDownloadUrls = listOf(
-    "https://github.com/2dust/AndroidLibXrayLite/releases/latest/download/libv2ray.aar",
-    "https://github.com/2dust/AndroidLibXrayLite/releases/download/$libV2rayVersion/libv2ray.aar",
-    "https://sourceforge.net/projects/androidlibxraylite.mirror/files/$libV2rayVersion/libv2ray.aar/download",
-)
+val libBoxVersion = "v1.14.0-alpha.50-viroutefs-arm64-openvpn-openconnect-no-naive-16k"
+val libBoxSha256 = "f3729b42c247c257adc2c7d03b1134ed7139b6f77da174f69f036d4fa4c7b685"
+val libBoxFile = file("libs/libbox.aar")
+val byeDpiVersion = "ba532298de7b28cfe854aea83d061369d13ca290-arm64-16k"
+val byeDpiSha256 = "abae93da6e426da5bbe5611f53a550eccb021d7be88b2c13865461024c4862d1"
+val byeDpiFile = file("src/main/jniLibs/arm64-v8a/libbyedpi.so")
+
+fun File.sha256(): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    inputStream().buffered().use { input ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+}
 
 repositories {
     google()
@@ -104,64 +130,48 @@ repositories {
     }
 }
 
-tasks.register("downloadLibv2ray") {
-    outputs.file(libV2rayFile)
-
+tasks.register("verifyLibbox") {
+    inputs.file(libBoxFile)
     doLast {
-        if (libV2rayFile.exists() && libV2rayFile.length() > 0L) {
-            println("libv2ray.aar already exists at ${libV2rayFile.relativeTo(projectDir)}.")
-            return@doLast
+        check(libBoxFile.exists() && libBoxFile.length() > 0L) {
+            "Missing ${libBoxFile.relativeTo(projectDir)} ($libBoxVersion)."
         }
-
-        libV2rayFile.parentFile.mkdirs()
-        val temporaryFile = File(libV2rayFile.parentFile, "${libV2rayFile.name}.download")
-        var lastError: Throwable? = null
-
-        for (downloadUrl in libV2rayDownloadUrls) {
-            println("Downloading libv2ray.aar $libV2rayVersion from $downloadUrl ...")
-            runCatching {
-                temporaryFile.delete()
-                val connection = URI.create(downloadUrl).toURL().openConnection().apply {
-                    connectTimeout = 30_000
-                    readTimeout = 120_000
-                    setRequestProperty("User-Agent", "ViRouteFS Gradle libv2ray downloader")
-                }
-                BufferedInputStream(connection.getInputStream()).use { input ->
-                    FileOutputStream(temporaryFile).use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                check(temporaryFile.length() > 0L) { "Downloaded libv2ray.aar is empty." }
-                check(temporaryFile.renameTo(libV2rayFile)) { "Could not move downloaded libv2ray.aar into app/libs." }
-                println("Downloaded libv2ray.aar to ${libV2rayFile.relativeTo(projectDir)}.")
-                return@doLast
-            }.onFailure { error ->
-                lastError = error
-                println("libv2ray.aar download failed from $downloadUrl: ${error.message ?: error::class.java.simpleName}")
-            }
+        check(libBoxFile.sha256() == libBoxSha256) {
+            "${libBoxFile.relativeTo(projectDir)} does not match the pinned $libBoxVersion SHA-256."
         }
-
-        temporaryFile.delete()
-        throw GradleException(
-            "Unable to download libv2ray.aar $libV2rayVersion. " +
-                "Create app/libs manually and place libv2ray.aar there, then run Gradle again.",
-            lastError,
-        )
+        println("Verified ${libBoxFile.relativeTo(projectDir)} as $libBoxVersion.")
     }
 }
 
-tasks.register("downloadLibXray") {
-    dependsOn("downloadLibv2ray")
+tasks.register("verifyByeDpi") {
+    inputs.file(byeDpiFile)
+    doLast {
+        check(byeDpiFile.exists() && byeDpiFile.length() > 0L) {
+            "Missing ${byeDpiFile.relativeTo(projectDir)} ($byeDpiVersion)."
+        }
+        check(byeDpiFile.sha256() == byeDpiSha256) {
+            "${byeDpiFile.relativeTo(projectDir)} does not match the pinned ByeDPI $byeDpiVersion SHA-256."
+        }
+        println("Verified ${byeDpiFile.relativeTo(projectDir)} as ByeDPI $byeDpiVersion.")
+    }
 }
 
 tasks.named("preBuild") {
-    dependsOn("downloadLibv2ray")
+    dependsOn("verifyLibbox", "verifyByeDpi")
+}
+
+tasks.register("printVersionName") {
+    doLast { println(appVersionName) }
+}
+
+tasks.register("printVersionCode") {
+    doLast { println(appVersionCode) }
 }
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
 
-    implementation(files("libs/libv2ray.aar"))
+    implementation(files("libs/libbox.aar"))
     implementation(fileTree(mapOf(
         "dir" to "libs",
         "include" to listOf("*.jar")

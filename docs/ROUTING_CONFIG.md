@@ -1,50 +1,31 @@
 # Routing configuration
 
-ViRouteFS stores routing configuration locally. The model is intended to explain future policy routing without changing device routing in the current alpha.
+ViRouteFS stores routing configuration locally in `routing_config.json`. The current schema version is 6.
 
-## 0.6.5-alpha defaults
+Required built-in profiles are restored during migration:
 
-The clean default configuration includes only real built-in profiles:
+- `direct` — user-visible `System`;
+- `block` — fail-closed target;
+- `byedpi` — disabled by default.
 
-- `System / Система` — default Android/system network path inside ViRouteFS. It is the default for apps without explicit rules and is not bypass when network control is active.
-- `Block` — fail closed for traffic that must not continue.
+The default rule initially targets `Block` until the user selects a working provider tunnel. Network control refuses to start without that provider tunnel.
 
-The default route model is `Default System` for planning. No fake Xray, Hysteria2, OpenVPN, SOCKS5, banking, media, or work categories are created as real user configuration.
+## Secrets
 
-The old user-facing `Direct` name was removed as a duplicate of System. Legacy saved config ids may still say `direct` for compatibility, but normal UI should show System unless a future technical difference is implemented and documented.
+SOCKS5 passwords are stored separately in the app’s no-backup directory and are omitted from exported JSON. Other profile fragments can contain credentials or private keys and therefore remain local. Android application backup is disabled.
 
-## Rule targets
+## Import/export
 
-Route targets must be selected from actual available profiles:
+Routing JSON export excludes SOCKS5 passwords. Import validates profile references, DNS references, rules, duplicate matchers, IP/CIDR syntax and protocol-specific fields before accepting the configuration.
 
-- System / Система.
-- Block.
-- Future user-created active profiles when those flows are implemented.
+## Runtime compilation
 
-App selection has started at the UI/model boundary with Android launchable-app discovery through `PackageManager`. Full route creation/editing remains future work.
+The model is compiled to pinned sing-box 1.14 alpha JSON:
 
-## DNS defaults
-
-If no DNS is configured for a route/profile, the model says **Uses Android system DNS**. ViRouteFS must not silently substitute public resolvers. User-defined DNS applies only where explicitly configured.
-
-## Strict isolation
-
-Rules are exclusive: app/domain/IP bindings must not silently fall back to another tunnel/profile. If the selected profile is unavailable, the safe behavior is Block / fail closed.
-
-See [ROUTING_POLICY.md](ROUTING_POLICY.md).
-
-## SOCKS5 readiness in route explanations
-
-Starting in 0.7.6-alpha, route explanations may show a selected SOCKS5 profile's last manual diagnostic readiness, such as a recent manual CONNECT success target or the latest safe failure message. This readiness is derived from local no-backup SOCKS5 test history only.
-
-The routing model still does not implement runtime TUN-to-SOCKS forwarding, Android default-route capture, or real device traffic forwarding through SOCKS5. Any route explanation for SOCKS5 must keep the warning: "Selected profile: SOCKS5. Runtime forwarding is not enabled yet."
-
-## SOCKS5 outbound connector foundation
-
-Starting in 0.7.7-alpha, the app has an internal SOCKS5 outbound connector abstraction used by explicit manual CONNECT diagnostics. It is a foundation for future runtime routing, but the routing configuration model still does not route Android device traffic through SOCKS5. It does not enable TUN-to-SOCKS forwarding, default-route capture, background checks, startup tests, auto-connect, silent DNS changes, credential export, telemetry, or cloud upload.
-
-## VLESS profile model in 0.8.5-alpha
-
-VLESS profiles are configuration-only in 0.8.5-alpha. The app can store, validate, import, and explicitly export local VLESS URI configuration for route decision preview, including UUID, transport placeholders, TLS/REALITY metadata, ALPN, and gRPC service names. It does not connect to VLESS servers, test reachability, forward packets, write packets back to TUN, implement REALITY/XTLS runtime, or proxy DNS. Route decision preview must warn: "Selected profile is VLESS. Runtime forwarding is not enabled yet."
-
-`routing_config.json`, route-config exports, and explicit VLESS URI exports may contain VLESS connection identifiers such as UUID, host, SNI, and placeholder key metadata. Treat exported routing configs and VLESS URIs as sensitive local files. UUID values must not appear in summaries, diagnostics text, logs, route-preview text, or masked import previews. Imported profiles can be used for route decision preview only. No telemetry, cloud upload, analytics, ads, background validation, startup tests, or auto-connect behavior is added.
+- invalid/disabled profiles are absent from runtime;
+- rules targeting them use Block;
+- endpoint and outbound tags are generated by ViRouteFS;
+- app rules enable Android process/package lookup;
+- custom DNS rules use the selected detour;
+- native libbox validation runs before advanced profiles are saved.
+- OpenVPN `.ovpn` import converts common directives and inline certificate/key blocks, reports anything it did not transfer, and still requires native validation.

@@ -17,7 +17,7 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import kotlin.system.measureTimeMillis
 
-const val VLESS_PROTOCOL_PROBE_NOTICE = "Manual VLESS probe sends a minimal VLESS request over plain TCP or TLS, then reads response metadata only. Runtime forwarding is not enabled."
+const val VLESS_PROTOCOL_PROBE_NOTICE = "This manual probe sends one minimal VLESS request over plain TCP or TLS and reads response metadata only. Saved profiles are routed separately by the VPN runtime."
 const val VLESS_RESPONSE_PROBE_METADATA_NOTICE = "Response probe reads metadata only. Payload bytes are not shown or stored."
 const val VLESS_REALITY_UNSUPPORTED_MESSAGE = "Security mode not supported"
 private const val DEFAULT_PROBE_CONNECT_TIMEOUT_MS = 5_000
@@ -67,8 +67,10 @@ data class VlessProtocolProbeResult(
 
     val displayMessage: String
         get() = buildString {
-            append(responseMetadata.safeMessage)
-            if (message.isNotBlank()) append(" • ${message.sanitizeVlessReachabilityMessage()}")
+            val summary = responseMetadata.safeMessage
+            val detail = message.sanitizeVlessReachabilityMessage()
+            append(summary)
+            if (detail.isNotBlank() && detail != summary) append(" • $detail")
             if (responseBytes > 0) append(" • response bytes: $responseBytes")
             elapsedMs?.let { append(" (${it} ms)") }
         }

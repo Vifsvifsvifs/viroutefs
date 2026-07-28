@@ -2,12 +2,12 @@
 
 package dev.vifs.viroutefs.routing
 
-import android.test.mock.MockContext
 import dev.vifs.viroutefs.socks5.Socks5ProfileConfig
 import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.VlessSecurityMode
 import java.io.File
 import kotlinx.coroutines.test.runTest
+import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -15,6 +15,18 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class RoutingConfigRepositoryTest {
+    @Test
+    fun emergencyBlockRoundTripsAndOldConfigsDefaultToOff() {
+        val enabledJson = RoutingConfigJson.encode(
+            RoutingConfigDefaults.defaultConfig().copy(emergencyBlockEnabled = true),
+        )
+        val oldJson = RoutingConfigJson.encode(RoutingConfigDefaults.defaultConfig())
+            .replace(Regex(",?\\s*\"emergencyBlockEnabled\"\\s*:\\s*false"), "")
+
+        assertTrue(RoutingConfigJson.decode(enabledJson).emergencyBlockEnabled)
+        assertFalse(RoutingConfigJson.decode(oldJson).emergencyBlockEnabled)
+    }
+
     @Test
     fun routingConfigSerializationDoesNotContainSocks5PasswordKeyByDefault() {
         val json = RoutingConfigJson.encode(configWithSocks5Password(), includeSocks5Passwords = false)
@@ -26,10 +38,10 @@ class RoutingConfigRepositoryTest {
 
     @Test
     fun exportJsonDoesNotContainSocks5PasswordKey() {
-        val tempDir = createTempDir(prefix = "viroutefs-routing-export")
+        val tempDir = createTempDirectory("viroutefs-routing-export").toFile()
         try {
             val repository = RoutingConfigRepository(
-                tempDir.routingTestContext(),
+                tempDir,
                 Socks5CredentialStore(File(tempDir, Socks5CredentialStore.FILENAME)),
             )
             val repositoryJson = repository.exportJson(configWithSocks5Password())
@@ -44,11 +56,10 @@ class RoutingConfigRepositoryTest {
 
     @Test
     fun normalSaveDoesNotWriteSocks5PasswordKeyToRoutingConfigJson() = runTest {
-        val tempDir = createTempDir(prefix = "viroutefs-routing-save")
+        val tempDir = createTempDirectory("viroutefs-routing-save").toFile()
         try {
-            val context = tempDir.routingTestContext()
             val credentialsFile = File(tempDir, "no_backup/${Socks5CredentialStore.FILENAME}")
-            val repository = RoutingConfigRepository(context, Socks5CredentialStore(credentialsFile))
+            val repository = RoutingConfigRepository(tempDir, Socks5CredentialStore(credentialsFile))
             val config = configWithSocks5Password()
 
             repository.save(config)
@@ -105,7 +116,7 @@ class RoutingConfigRepositoryTest {
 
     @Test
     fun credentialStoreKeepsPasswordOutsideRoutingConfigJson() {
-        val tempDir = createTempDir(prefix = "viroutefs-socks5-credentials")
+        val tempDir = createTempDirectory("viroutefs-socks5-credentials").toFile()
         try {
             val routingConfigFile = File(tempDir, RoutingConfigRepository.ROUTING_CONFIG_FILENAME)
             val credentialsFile = File(tempDir, Socks5CredentialStore.FILENAME)
@@ -136,11 +147,6 @@ class RoutingConfigRepositoryTest {
         assertEquals(uuid, decodedVless?.uuid)
         assertFalse(decodedVless?.safeSummary().orEmpty().contains(uuid))
         assertTrue(validateRoutingConfig(decoded).isEmpty())
-    }
-
-    private fun File.routingTestContext(): MockContext = object : MockContext() {
-        override fun getFilesDir(): File = this@routingTestContext
-        override fun getNoBackupFilesDir(): File = File(this@routingTestContext, "no_backup").also { it.mkdirs() }
     }
 
     private fun configWithSocks5Password(password: String? = SECRET): RoutingConfig {

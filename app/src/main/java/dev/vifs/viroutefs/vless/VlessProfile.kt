@@ -8,8 +8,10 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 
-const val VLESS_RUNTIME_LIMITATION = "VLESS runtime forwarding is not implemented yet."
-const val VLESS_ROUTE_PREVIEW_ONLY = "This profile can be used for route decision preview only."
+const val VLESS_RUNTIME_LIMITATION =
+    "VLESS/TLS/REALITY forwarding is available through the local sing-box TUN runtime when network control is active."
+const val VLESS_ROUTE_PREVIEW_ONLY =
+    "Manual reachability tests remain diagnostic only; the router uses the saved profile and fail-closed policy."
 const val VLESS_NO_HANDSHAKE_NOTICE = "Manual TCP reachability does not perform a VLESS handshake and does not send credentials or UUID."
 
 private val supportedTransportTypes = setOf("tcp", "ws", "grpc")
@@ -84,7 +86,7 @@ data class VlessProfileConfig(
 enum class VlessSecurityMode(val wireName: String, val label: String) {
     NONE("none", "none"),
     TLS("tls", "tls"),
-    REALITY("reality", "reality placeholder"),
+    REALITY("reality", "reality"),
 }
 
 sealed interface VlessProfileStatus {

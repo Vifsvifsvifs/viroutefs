@@ -5,8 +5,10 @@ package dev.vifs.viroutefs
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -20,12 +22,13 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AltRoute
+import androidx.compose.material.icons.automirrored.outlined.AltRoute
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.MoreHoriz
@@ -69,7 +72,6 @@ import dev.vifs.viroutefs.diagnostics.DiagnosticResult
 import dev.vifs.viroutefs.diagnostics.HttpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TcpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TlsDiagnostic
-import dev.vifs.viroutefs.engine.XrayEngine
 import dev.vifs.viroutefs.routing.CURRENT_ROUTING_CONFIG_VERSION
 import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.routing.AppMatcher
@@ -79,6 +81,7 @@ import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
+import dev.vifs.viroutefs.routing.providerTunnelActivationError
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.findConflictsForCandidate
 import dev.vifs.viroutefs.routing.findExactRouteConflicts
@@ -105,9 +108,12 @@ import dev.vifs.viroutefs.update.formatBytes
 import dev.vifs.viroutefs.update.UpdateChecker
 import dev.vifs.viroutefs.vpn.VpnServiceController
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
-import dev.vifs.viroutefs.vpn.VLESS_RUNTIME_FORWARDING_NOT_ENABLED
+import dev.vifs.viroutefs.vless.VLESS_RUNTIME_LIMITATION
+import dev.vifs.viroutefs.vless.VLESS_ROUTE_PREVIEW_ONLY
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.Locale
 import java.util.UUID
@@ -135,7 +141,7 @@ class MainActivity : ComponentActivity() {
 
 internal enum class AppScreen(val icon: ImageVector) {
     Vpn(Icons.Outlined.Shield),
-    Routes(Icons.Outlined.AltRoute),
+    Routes(Icons.AutoMirrored.Outlined.AltRoute),
     Dns(Icons.Outlined.Dns),
     Fs(Icons.Outlined.Security),
     More(Icons.Outlined.MoreHoriz),
@@ -152,6 +158,7 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
     val scope = rememberCoroutineScope()
     val text = remember(settings.language) { UiText(settings.language) }
     val repository = remember(context) { RoutingConfigRepository(context.applicationContext) }
+    val configSaveMutex = remember { Mutex() }
     val vpnController = remember(context) { VpnServiceController(context.applicationContext) }
     var selectedScreen by rememberSaveable { mutableStateOf(AppScreen.Vpn) }
     var config by remember { mutableStateOf(RoutingConfigDefaults.defaultConfig()) }
@@ -168,6 +175,13 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
     }
 
     fun startAfterPermissions(testRoutePreviewEnabled: Boolean = tunTestRoutePreviewEnabled) {
+        if (!testRoutePreviewEnabled && !config.emergencyBlockEnabled) {
+            providerTunnelActivationError(config)?.let { error ->
+                selectedScreen = AppScreen.Vpn
+                vpnState = VpnServiceUiState(VpnServiceStatus.Error, error)
+                return
+            }
+        }
         if (!vpnController.notificationPermissionGranted()) {
             vpnState = VpnServiceUiState(
                 VpnServiceStatus.NotificationPermissionRequired,
@@ -244,7 +258,7 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
 
     fun setTunTestRoutePreviewEnabled(enabled: Boolean) {
         tunTestRoutePreviewEnabled = enabled
-        if (enabled && (vpnState.status == VpnServiceStatus.Starting || vpnState.status == VpnServiceStatus.ServiceActiveNoTun || vpnState.status == VpnServiceStatus.TunPreviewActive || vpnState.status == VpnServiceStatus.TunTestRouteActive)) {
+        if (enabled && (vpnState.status == VpnServiceStatus.Starting || vpnState.status == VpnServiceStatus.RuntimeActive || vpnState.status == VpnServiceStatus.ServiceActiveNoTun || vpnState.status == VpnServiceStatus.TunPreviewActive || vpnState.status == VpnServiceStatus.TunTestRouteActive)) {
             if (!vpnController.notificationPermissionGranted()) {
                 vpnState = VpnServiceUiState(
                     VpnServiceStatus.NotificationPermissionRequired,
@@ -259,9 +273,26 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
 
     fun updateConfig(newConfig: RoutingConfig, note: String? = null) {
         val normalizedConfig = newConfig.copy(version = CURRENT_ROUTING_CONFIG_VERSION)
+        val reloadActiveVpn = vpnState.status == VpnServiceStatus.RuntimeActive ||
+            vpnState.status == VpnServiceStatus.TunPreviewActive ||
+            vpnState.status == VpnServiceStatus.TunTestRouteActive
+        val reloadTestRoutePreview = vpnState.tunTestRouteActive
         config = normalizedConfig
         message = note ?: text.saved
-        scope.launch { repository.save(normalizedConfig) }
+        scope.launch {
+            val saveResult = configSaveMutex.withLock {
+                runCatching { repository.save(normalizedConfig) }
+            }
+            saveResult
+                .onSuccess {
+                    if (reloadActiveVpn) {
+                        vpnController.reloadLocalService(reloadTestRoutePreview)
+                    }
+                }
+                .onFailure { error ->
+                        message = "Не удалось сохранить конфигурацию: ${error.localizedMessage ?: error::class.java.simpleName}"
+                }
+        }
     }
 
     Scaffold(
@@ -292,10 +323,17 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
         },
     ) { padding ->
         when (selectedScreen) {
-            AppScreen.Vpn -> VpnScreen(padding, text, config, vpnState, tunTestRoutePreviewEnabled, ::setVpnEnabled, ::setTunTestRoutePreviewEnabled, vpnController::clearPacketSummaries, vpnController::setPacketInspectorPaused, ::updateConfig)
+            AppScreen.Vpn -> VpnScreen(padding, text, config, vpnState, settings.developerMode, tunTestRoutePreviewEnabled, ::setVpnEnabled, ::setTunTestRoutePreviewEnabled, vpnController::clearPacketSummaries, vpnController::setPacketInspectorPaused, ::updateConfig)
             AppScreen.Routes -> RoutesScreen(padding, text, config, ::updateConfig)
             AppScreen.Dns -> DnsScreen(padding, text, config, ::updateConfig)
-            AppScreen.Fs -> FlowScannerScreen(padding, text, vpnState)
+            AppScreen.Fs -> FlowScannerScreen(
+                padding,
+                text,
+                vpnState,
+                config,
+                vpnController::clearPacketSummaries,
+                vpnController::setPacketInspectorPaused,
+            )
             AppScreen.More -> MoreScreen(padding, text, onOpen = { selectedScreen = it })
             AppScreen.Tools -> ToolsScreen(padding, text, config)
             AppScreen.Settings -> SettingsScreen(padding, text, settings, loaded, message, tunTestRoutePreviewEnabled, ::setTunTestRoutePreviewEnabled, vpnState, onSettings)
@@ -314,12 +352,10 @@ private fun DashboardScreen(padding: PaddingValues, text: UiText, loaded: Boolea
 @Composable
 private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingConfig, onConfig: (RoutingConfig, String?) -> Unit) {
     val context = LocalContext.current
-    var target by rememberSaveable { mutableStateOf("") }
     var selectedRouteId by rememberSaveable { mutableStateOf<String?>(null) }
-    var selectedAppPackage by rememberSaveable { mutableStateOf<String?>(null) }
     var creatingRoute by rememberSaveable { mutableStateOf(false) }
     var draftRoute by remember { mutableStateOf<RouteRule?>(null) }
-    val installedApps = remember(context) { context.loadLaunchableApps() }
+    val installedApps = remember(context) { context.loadInstalledAppsForRouting() }
     val historyStore = remember(context) { Socks5TestHistoryStore(context) }
     var readinessByProfile by remember(config.profiles) { mutableStateOf<Map<String, Socks5ReadinessSummary>>(emptyMap()) }
     LaunchedEffect(config.profiles) {
@@ -329,8 +365,6 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
     }
     val userRules = config.rules.filter { it.type != RouteRuleType.DEFAULT }
     val selectedRoute = userRules.firstOrNull { it.id == selectedRouteId }
-    val simulationInput = selectedAppPackage ?: target.ifBlank { "example.com" }
-    val decision = remember(config, simulationInput) { RouteEngine(config).simulate(simulationInput) }
     val conflicts = remember(config.rules) { findExactRouteConflicts(config.rules) }
     val conflictsByRuleId = remember(conflicts) { conflicts.flatMap { conflict -> conflict.ruleIds.map { it to conflict } }.groupBy({ it.first }, { it.second }) }
 
@@ -362,46 +396,26 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
         item {
             CardBlock {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Text(text.simulation, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text("Куда направлять трафик", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Выберите приложение, домен, отдельный IP или диапазон сети, затем назначьте туннель и DNS.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                     Button(onClick = {
                         draftRoute = newRouteDraft(config)
                         creatingRoute = true
                     }) { Text(text.addRoute) }
                 }
-                Text(text.routeEmptyState, style = MaterialTheme.typography.bodySmall)
-                if (installedApps.isNotEmpty()) {
-                    Text(text.installedApps, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
-                    ChipRow {
-                        installedApps.take(6).forEach { app ->
-                            FilterChip(
-                                selected = selectedAppPackage == app.packageName,
-                                onClick = { selectedAppPackage = if (selectedAppPackage == app.packageName) null else app.packageName },
-                                label = { Text(app.label, maxLines = 1) },
-                            )
-                        }
-                    }
-                } else {
-                    StatusChip(text.noInstalledApps)
-                }
-                OutlinedTextField(
-                    target,
-                    {
-                        target = it
-                        selectedAppPackage = null
-                    },
-                    label = { Text(text.domainIpApp) },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                )
-                Text("${decision.input} → ${decision.tunnelProfile.name}", style = MaterialTheme.typography.bodySmall)
-                if (decision.tunnelProfile.type == TunnelType.Socks5) {
-                    WarningText("Selected profile: SOCKS5. Runtime forwarding is not enabled yet.")
-                    Text(readinessByProfile[decision.tunnelProfile.id]?.routeExplanationLine ?: "SOCKS5 profile has not been tested yet.", style = MaterialTheme.typography.bodySmall)
-                }
-                if (decision.tunnelProfile.type == TunnelType.VLESS) {
-                    WarningText(VLESS_RUNTIME_FORWARDING_NOT_ENABLED)
-                    Text("This profile can be used for route decision preview only.", style = MaterialTheme.typography.bodySmall)
-                }
+                val providerName = config.defaultProfileId
+                    ?.let { id -> config.profiles.firstOrNull { it.id == id }?.name }
+                    ?: "не выбран"
+                Text("По умолчанию: $providerName", style = MaterialTheme.typography.bodySmall)
+                Text("Доступно приложений: ${installedApps.size} • правил: ${userRules.size}", style = MaterialTheme.typography.labelSmall)
                 Details(text.details, text.routeIsolationNote)
             }
         }
@@ -421,21 +435,40 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
     }
 }
 
-private enum class RouteMatcherKind { App, Domain, Cidr }
+private enum class RouteMatcherKind { App, Domain, Ip, Network }
 
-data class InstalledAppUi(val label: String, val packageName: String)
+data class InstalledAppUi(
+    val label: String,
+    val packageName: String,
+    val isSystem: Boolean,
+)
 
-private fun android.content.Context.loadLaunchableApps(): List<InstalledAppUi> {
-    val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-    return packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+@Suppress("DEPRECATION")
+private fun android.content.Context.loadInstalledAppsForRouting(): List<InstalledAppUi> {
+    val applications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        packageManager.getInstalledApplications(
+            PackageManager.ApplicationInfoFlags.of(0),
+        )
+    } else {
+        packageManager.getInstalledApplications(0)
+    }
+    return applications
+        .asSequence()
+        .filterNot { it.packageName == packageName }
         .map { info ->
             InstalledAppUi(
                 label = info.loadLabel(packageManager).toString(),
-                packageName = info.activityInfo.packageName,
+                packageName = info.packageName,
+                isSystem = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
             )
         }
         .distinctBy { it.packageName }
-        .sortedWith(compareBy<InstalledAppUi> { it.label.lowercase(Locale.ROOT) }.thenBy { it.packageName })
+        .sortedWith(
+            compareBy<InstalledAppUi> { it.isSystem }
+                .thenBy { it.label.lowercase(Locale.ROOT) }
+                .thenBy { it.packageName },
+        )
+        .toList()
 }
 
 @Composable
@@ -474,9 +507,12 @@ private fun RouteDetailsScreen(
 ) {
     var name by rememberSaveable(rule.id) { mutableStateOf(rule.name) }
     var enabled by rememberSaveable(rule.id) { mutableStateOf(rule.enabled) }
-    var matcherKind by rememberSaveable(rule.id) { mutableStateOf(rule.type.toMatcherKind()) }
+    var matcherKind by rememberSaveable(rule.id) { mutableStateOf(rule.toMatcherKind()) }
     var targetProfileId by rememberSaveable(rule.id) { mutableStateOf(rule.targetProfileId) }
-    var selectedAppPackage by rememberSaveable(rule.id) { mutableStateOf(rule.appMatchers.firstOrNull()?.value.orEmpty()) }
+    var dnsPolicyId by rememberSaveable(rule.id) { mutableStateOf(rule.dnsPolicyId) }
+    var selectedAppPackages by rememberSaveable(rule.id) {
+        mutableStateOf(rule.appMatchers.map { it.value })
+    }
     var matcherText by rememberSaveable(rule.id) { mutableStateOf(rule.matchers.firstOrNull().orEmpty()) }
     var appSearch by rememberSaveable { mutableStateOf("") }
     var saveErrors by rememberSaveable(rule.id) { mutableStateOf<List<String>>(emptyList()) }
@@ -498,22 +534,30 @@ private fun RouteDetailsScreen(
         val query = appSearch.trim().lowercase(Locale.ROOT)
         installedApps.filter { app ->
             query.isBlank() || app.label.lowercase(Locale.ROOT).contains(query) || app.packageName.lowercase(Locale.ROOT).contains(query)
-        }.take(30)
+        }
     }
-    val selectedApp = installedApps.firstOrNull { it.packageName == selectedAppPackage }
-    val draft = remember(name, enabled, matcherKind, targetProfileId, selectedAppPackage, matcherText, selectedApp, rule) {
+    val appsByPackage = remember(installedApps) { installedApps.associateBy { it.packageName } }
+    val draft = remember(name, enabled, matcherKind, targetProfileId, dnsPolicyId, selectedAppPackages, matcherText, appsByPackage, rule) {
         rule.copy(
             name = name.trim().ifBlank { rule.name },
             enabled = enabled,
             type = matcherKind.toRuleType(),
             targetProfileId = targetProfileId,
+            dnsPolicyId = dnsPolicyId,
             matchers = when (matcherKind) {
                 RouteMatcherKind.App -> emptyList()
                 RouteMatcherKind.Domain -> listOf(matcherText.trim().trimEnd('.').lowercase(Locale.ROOT)).filter { it.isNotBlank() }
-                RouteMatcherKind.Cidr -> listOf(matcherText.trim()).filter { it.isNotBlank() }
+                RouteMatcherKind.Ip,
+                RouteMatcherKind.Network -> listOf(matcherText.trim()).filter { it.isNotBlank() }
             },
-            appMatchers = if (matcherKind == RouteMatcherKind.App && selectedAppPackage.isNotBlank()) {
-                listOf(AppMatcher(AppMatcherPlatform.Android, selectedAppPackage, selectedApp?.label ?: selectedAppPackage))
+            appMatchers = if (matcherKind == RouteMatcherKind.App) {
+                selectedAppPackages.distinct().map { packageName ->
+                    AppMatcher(
+                        AppMatcherPlatform.Android,
+                        packageName,
+                        appsByPackage[packageName]?.label ?: packageName,
+                    )
+                }
             } else {
                 emptyList()
             },
@@ -539,17 +583,24 @@ private fun RouteDetailsScreen(
                 ChipRow {
                     FilterChip(selected = matcherKind == RouteMatcherKind.App, onClick = { matcherKind = RouteMatcherKind.App }, label = { Text(text.matcherApp) })
                     FilterChip(selected = matcherKind == RouteMatcherKind.Domain, onClick = { matcherKind = RouteMatcherKind.Domain }, label = { Text(text.matcherDomain) })
-                    FilterChip(selected = matcherKind == RouteMatcherKind.Cidr, onClick = { matcherKind = RouteMatcherKind.Cidr }, label = { Text(text.matcherCidr) })
+                    FilterChip(selected = matcherKind == RouteMatcherKind.Ip, onClick = { matcherKind = RouteMatcherKind.Ip }, label = { Text("IP-адрес") })
+                    FilterChip(selected = matcherKind == RouteMatcherKind.Network, onClick = { matcherKind = RouteMatcherKind.Network }, label = { Text("Диапазон сети") })
                 }
                 RouteMatcherEditor(
                     text = text,
                     kind = matcherKind,
                     installedApps = filteredApps,
-                    selectedAppPackage = selectedAppPackage,
+                    selectedAppPackages = selectedAppPackages,
                     appSearch = appSearch,
                     matcherText = matcherText,
                     onAppSearch = { appSearch = it },
-                    onSelectedAppPackage = { selectedAppPackage = it },
+                    onToggleAppPackage = { packageName ->
+                        selectedAppPackages = if (packageName in selectedAppPackages) {
+                            selectedAppPackages - packageName
+                        } else {
+                            selectedAppPackages + packageName
+                        }
+                    },
                     onMatcherText = { matcherText = it },
                 )
                 Text(text.targetProfile, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
@@ -564,13 +615,28 @@ private fun RouteDetailsScreen(
                 }
                 if (availableProfiles.isEmpty()) StatusChip(text.systemBlockOnly)
                 targetWarning.forEach { StatusChip(it) }
+                Text("DNS для этого правила", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                Text(
+                    "Для приложения или домена можно выбрать отдельный DNS. Запросы к нему пойдут через профиль, указанный в DNS-политике.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                ChipRow {
+                    config.dnsPolicies.filter { it.enabled }.forEach { policy ->
+                        FilterChip(
+                            selected = dnsPolicyId == policy.id,
+                            onClick = { dnsPolicyId = policy.id },
+                            label = { Text(policy.name, maxLines = 1) },
+                        )
+                    }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                     Text(text.enabled, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
                 Text("${text.targetProfile}: ${targetProfile?.name ?: targetProfileId}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (targetProfile?.type == TunnelType.Socks5) {
-                    WarningText("Selected profile: SOCKS5. Runtime forwarding is not enabled yet.")
+                    Text("Selected profile: SOCKS5. Matching traffic is forwarded by the local VPN runtime.")
                     Text(selectedSocks5Readiness?.routeExplanationLine ?: "SOCKS5 profile has not been tested yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -581,6 +647,7 @@ private fun RouteDetailsScreen(
                 RouteDetailLine(text.matcherType, matcherKind.label(text))
                 RouteDetailLine(text.selectedMatcher, matcherSummary(draft))
                 RouteDetailLine(text.targetProfile, routeTargetName(config, targetProfileId))
+                RouteDetailLine("DNS", config.dnsPolicies.firstOrNull { it.id == dnsPolicyId }?.name ?: "По профилю")
                 Details(text.advanced, "${text.routeIsolationNote}\n\n${text.runtimeRoutingFuture}\n\n${rule.reason}\n${rule.technicalDetails}\n${rule.recommendedAction}")
             }
         }
@@ -597,7 +664,20 @@ private fun RouteDetailsScreen(
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = {
-                    val errors = validateRouteEditorDraft(draft, config.rules)
+                    val matcherShapeErrors = when (matcherKind) {
+                        RouteMatcherKind.Ip -> if (matcherText.isNotBlank() && '/' in matcherText) {
+                            listOf("Для одиночного IP не указывайте маску сети. Пример: 192.0.2.10")
+                        } else {
+                            emptyList()
+                        }
+                        RouteMatcherKind.Network -> if (matcherText.isNotBlank() && '/' !in matcherText) {
+                            listOf("Для диапазона сети укажите маску CIDR. Пример: 192.168.50.0/24")
+                        } else {
+                            emptyList()
+                        }
+                        else -> emptyList()
+                    }
+                    val errors = validateRouteEditorDraft(draft, config.rules) + matcherShapeErrors
                     saveErrors = errors
                     if (errors.isEmpty()) {
                         val nextRules = if (isNew) {
@@ -622,11 +702,11 @@ private fun RouteMatcherEditor(
     text: UiText,
     kind: RouteMatcherKind,
     installedApps: List<InstalledAppUi>,
-    selectedAppPackage: String,
+    selectedAppPackages: List<String>,
     appSearch: String,
     matcherText: String,
     onAppSearch: (String) -> Unit,
-    onSelectedAppPackage: (String) -> Unit,
+    onToggleAppPackage: (String) -> Unit,
     onMatcherText: (String) -> Unit,
 ) {
     when (kind) {
@@ -638,20 +718,38 @@ private fun RouteMatcherEditor(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
+            Text(
+                "Выбрано: ${selectedAppPackages.size}. Список читается только на устройстве и никуда не отправляется.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             if (installedApps.isEmpty()) {
                 Text(text.noInstalledApps, style = MaterialTheme.typography.bodySmall)
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    installedApps.forEach { app ->
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    items(installedApps, key = { it.packageName }) { app ->
                         Card(
-                            modifier = Modifier.fillMaxWidth().clickable { onSelectedAppPackage(app.packageName) },
+                            modifier = Modifier.fillMaxWidth().clickable { onToggleAppPackage(app.packageName) },
                             colors = CardDefaults.cardColors(
-                                containerColor = if (selectedAppPackage == app.packageName) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+                                containerColor = if (app.packageName in selectedAppPackages) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
                             ),
                         ) {
-                            Column(Modifier.padding(10.dp)) {
-                                Text(app.label, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                                Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(app.label, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                                    Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                if (app.isSystem) StatusChip("Системное")
+                                StatusChip(if (app.packageName in selectedAppPackages) "Выбрано" else "Выбрать")
                             }
                         }
                     }
@@ -667,14 +765,23 @@ private fun RouteMatcherEditor(
             singleLine = true,
             isError = matcherText.isBlank(),
         )
-        RouteMatcherKind.Cidr -> OutlinedTextField(
+        RouteMatcherKind.Ip -> OutlinedTextField(
             value = matcherText,
             onValueChange = onMatcherText,
-            label = { Text(text.ipCidrInput) },
-            placeholder = { Text("192.0.2.0/24") },
+            label = { Text("IP-адрес устройства или сервера") },
+            placeholder = { Text("192.0.2.10") },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            isError = matcherText.isNotBlank() && !isValidIpOrCidr(matcherText),
+            isError = matcherText.isNotBlank() && (!isValidIpOrCidr(matcherText) || '/' in matcherText),
+        )
+        RouteMatcherKind.Network -> OutlinedTextField(
+            value = matcherText,
+            onValueChange = onMatcherText,
+            label = { Text("Адрес сети в формате CIDR") },
+            placeholder = { Text("192.168.50.0/24") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            isError = matcherText.isNotBlank() && (!isValidIpOrCidr(matcherText) || '/' !in matcherText),
         )
     }
 }
@@ -691,33 +798,39 @@ private fun newRouteDraft(config: RoutingConfig): RouteRule = RouteRule(
     id = "route_${UUID.randomUUID()}",
     name = "New route",
     type = RouteRuleType.APP,
-    targetProfileId = config.defaultProfileId ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID,
+    targetProfileId = config.defaultProfileId ?: RoutingConfigDefaults.BLOCK_PROFILE_ID,
     dnsPolicyId = RoutingConfigDefaults.SYSTEM_DNS_ID,
     priority = (config.rules.maxOfOrNull { it.priority } ?: 1000) + 10,
     matchers = emptyList(),
     appMatchers = emptyList(),
     reason = routeReason(RouteMatcherKind.App),
     technicalDetails = routeTechnicalDetails(RouteMatcherKind.App),
-    recommendedAction = routeRecommendedAction(config.defaultProfileId ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID),
+    recommendedAction = routeRecommendedAction(config.defaultProfileId ?: RoutingConfigDefaults.BLOCK_PROFILE_ID),
 )
 
-private fun RouteRuleType.toMatcherKind(): RouteMatcherKind = when (this) {
+private fun RouteRule.toMatcherKind(): RouteMatcherKind = when (type) {
     RouteRuleType.APP, RouteRuleType.APP_GROUP -> RouteMatcherKind.App
     RouteRuleType.DOMAIN -> RouteMatcherKind.Domain
-    RouteRuleType.CIDR -> RouteMatcherKind.Cidr
+    RouteRuleType.CIDR -> if (matchers.firstOrNull()?.contains('/') == true) {
+        RouteMatcherKind.Network
+    } else {
+        RouteMatcherKind.Ip
+    }
     RouteRuleType.DEFAULT -> RouteMatcherKind.App
 }
 
 private fun RouteMatcherKind.toRuleType(): RouteRuleType = when (this) {
     RouteMatcherKind.App -> RouteRuleType.APP
     RouteMatcherKind.Domain -> RouteRuleType.DOMAIN
-    RouteMatcherKind.Cidr -> RouteRuleType.CIDR
+    RouteMatcherKind.Ip,
+    RouteMatcherKind.Network -> RouteRuleType.CIDR
 }
 
 private fun RouteMatcherKind.label(text: UiText): String = when (this) {
     RouteMatcherKind.App -> text.matcherApp
     RouteMatcherKind.Domain -> text.matcherDomain
-    RouteMatcherKind.Cidr -> text.matcherCidr
+    RouteMatcherKind.Ip -> "IP-адрес"
+    RouteMatcherKind.Network -> "Диапазон сети"
 }
 
 private fun matcherSummary(rule: RouteRule): String = when (rule.type) {
@@ -740,8 +853,9 @@ private fun unavailableTargetWarning(config: RoutingConfig, rule: RouteRule): Li
     return when {
         profile == null -> listOf("Target unavailable: fail closed")
         !profile.enabled -> listOf("Target disabled: fail closed")
-        profile.type == TunnelType.Socks5 -> listOf("Selected profile: SOCKS5. Runtime forwarding is not enabled yet.")
-        profile.type == TunnelType.VLESS -> listOf(VLESS_RUNTIME_FORWARDING_NOT_ENABLED)
+        profile.type == TunnelType.Socks5 -> emptyList()
+        profile.type == TunnelType.VLESS -> emptyList()
+        profile.singBox != null -> emptyList()
         profile.mockOnly -> listOf("Target is mock-only")
         else -> emptyList()
     }
@@ -750,10 +864,11 @@ private fun unavailableTargetWarning(config: RoutingConfig, rule: RouteRule): Li
 private fun routeReason(kind: RouteMatcherKind): String = when (kind) {
     RouteMatcherKind.App -> "Explicit app route selected by the local route editor."
     RouteMatcherKind.Domain -> "Explicit domain / host route selected by the local route editor."
-    RouteMatcherKind.Cidr -> "Explicit IP / CIDR route selected by the local route editor."
+    RouteMatcherKind.Ip -> "Explicit IP address route selected by the local route editor."
+    RouteMatcherKind.Network -> "Explicit CIDR network route selected by the local route editor."
 }
 
-private fun routeTechnicalDetails(kind: RouteMatcherKind): String = "Matcher type: ${kind.name}. Exact duplicate conflicts are validated locally before save. Runtime packet enforcement is still planned."
+private fun routeTechnicalDetails(kind: RouteMatcherKind): String = "Matcher type: ${kind.name}. Exact duplicate conflicts are validated locally before save. Active VPN rules are enforced by the fail-closed local runtime."
 
 private fun routeRecommendedAction(targetProfileId: String): String = if (targetProfileId == RoutingConfigDefaults.BLOCK_PROFILE_ID) {
     "Traffic matching this rule should be blocked when runtime enforcement is implemented."
@@ -780,22 +895,6 @@ private fun ToolsScreen(padding: PaddingValues, text: UiText, config: RoutingCon
     var tcp by remember { mutableStateOf<DiagnosticResult?>(null) }
     var tls by remember { mutableStateOf<DiagnosticResult?>(null) }
     var http by remember { mutableStateOf<DiagnosticResult?>(null) }
-    var xrayStatus by rememberSaveable { mutableStateOf("stopped") }
-    var xrayLog by rememberSaveable {
-        mutableStateOf(
-            listOf(
-                "Ready. This dev-only smoke test starts libv2ray locally without VPN/TUN traffic.",
-            ),
-        )
-    }
-    val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
-    val xrayEngine = remember(context) {
-        XrayEngine(context.applicationContext) { entry ->
-            mainHandler.post {
-                xrayLog = (xrayLog + entry).takeLast(40)
-            }
-        }
-    }
     ScreenList(padding) {
         item { Header(text.tools, text.toolsSubtitle) }
         item {
@@ -829,55 +928,13 @@ private fun ToolsScreen(padding: PaddingValues, text: UiText, config: RoutingCon
                 OutlinedTextField(routeTarget, { routeTarget = it }, label = { Text(text.domainIpApp) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Text("${d.input} → ${d.tunnelProfile.name} • ${d.dnsPolicySummary}", style = MaterialTheme.typography.bodySmall)
                 if (d.tunnelProfile.type == TunnelType.Socks5) {
-                    WarningText("Selected profile: SOCKS5. Runtime forwarding is not enabled yet.")
+                    Text("Selected profile: SOCKS5. The local VPN runtime can route matching traffic through it.")
                     Text(readinessByProfile[d.tunnelProfile.id]?.routeExplanationLine ?: "SOCKS5 profile has not been tested yet.", style = MaterialTheme.typography.bodySmall)
                 }
                 if (d.tunnelProfile.type == TunnelType.VLESS) {
-                    WarningText(VLESS_RUNTIME_FORWARDING_NOT_ENABLED)
-                    Text("This profile can be used for route decision preview only.", style = MaterialTheme.typography.bodySmall)
+                    Text(VLESS_RUNTIME_LIMITATION, style = MaterialTheme.typography.bodySmall)
+                    Text(VLESS_ROUTE_PREVIEW_ONLY, style = MaterialTheme.typography.bodySmall)
                 }
-            }
-        }
-        item {
-            CardBlock {
-                Text("Xray Engine Smoke Test", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                WarningText("Experimental dev-only check. It starts libv2ray with a localhost-only smoke config, does not attach to VpnService/TUN, and must not be treated as real routing.")
-                Text("Status: $xrayStatus", style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                xrayEngine.startSmokeTest()
-                                xrayStatus = xrayEngine.getStatus()
-                            }
-                        },
-                    ) { Text("Run Xray Smoke Test") }
-                    OutlinedButton(
-                        onClick = {
-                            scope.launch {
-                                xrayEngine.stop()
-                                xrayStatus = xrayEngine.getStatus()
-                            }
-                        },
-                    ) { Text("Stop") }
-                }
-                OutlinedButton(
-                    onClick = {
-                        scope.launch {
-                            xrayStatus = xrayEngine.getStatus()
-                            xrayLog = (xrayLog + "Manual status check: $xrayStatus").takeLast(40)
-                        }
-                    },
-                ) { Text("Refresh status") }
-                OutlinedTextField(
-                    value = xrayLog.joinToString("\n"),
-                    onValueChange = {},
-                    label = { Text("Local smoke log") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 6,
-                    maxLines = 10,
-                    readOnly = true,
-                )
             }
         }
         item { CompactCard(text, "MTU", text.mtuShort, text.mtuDetails) }
@@ -927,6 +984,11 @@ private fun SettingsScreen(
     var beginnerExpanded by rememberSaveable { mutableStateOf(false) }
     var adminExpanded by rememberSaveable { mutableStateOf(false) }
     var developerExpanded by rememberSaveable { mutableStateOf(false) }
+    val donationUrl = remember {
+        BuildConfig.DONATION_URL.trim().takeIf { url ->
+            url.startsWith("https://", ignoreCase = true)
+        }
+    }
     ScreenList(padding) {
         item { Header(text.settings, text.settingsSubtitle) }
         item {
@@ -948,6 +1010,7 @@ private fun SettingsScreen(
                 }
                 if (helpExpanded) {
                     CompactCard(text, text.aboutViroutefs, text.projectOverviewShort, text.projectOverviewDetails)
+                    CompactCard(text, text.projectPurposeTitle, text.projectPurposeShort, text.projectPurposeDetails)
                     CompactCard(text, text.licenseSummaryTitle, text.licenseSummaryShort, text.licenseSummaryDetails)
                     CompactCard(text, text.privacy, text.privacyShort, text.privacyDetails)
                     CompactCard(text, text.currentAlphaLimitations, text.alphaLimitationsShort, text.alphaLimitationsDetails)
@@ -1046,6 +1109,20 @@ private fun SettingsScreen(
                     Text(text.developerDiagnosticsWarning, style = MaterialTheme.typography.bodySmall)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.weight(1f)) {
+                            Text("Режим разработчика", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                "Показывает тесты движка и низкоуровневый VLESS-мост. Для обычного использования они не нужны.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = settings.developerMode,
+                            onCheckedChange = { onSettings(settings.copy(developerMode = it)) },
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.weight(1f)) {
                             Text(text.vpnTestRoute, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
                             Text(text.vpnNormalInternetUnchanged, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
@@ -1072,14 +1149,15 @@ private fun SettingsScreen(
                 }
                 Text(text.supportShort, style = MaterialTheme.typography.bodySmall)
                 if (supportExpanded) {
-                    val links = listOf(
-                        "GitHub" to "https://github.com/Vifsvifsvifs/viroutefs",
-                        "GitHub Sponsors" to "https://github.com/sponsors",
-                        "Boosty" to "https://boosty.to",
-                        "DonationAlerts" to "https://www.donationalerts.com",
-                        "Project page" to "https://github.com/Vifsvifsvifs/viroutefs",
-                    )
+                    Text(text.supportDonationDisclaimer, style = MaterialTheme.typography.bodySmall)
+                    val links = buildList {
+                        donationUrl?.let { add(text.voluntarySupport to it) }
+                        add("GitHub" to "https://github.com/Vifsvifsvifs/viroutefs")
+                    }
                     links.forEach { (label, url) -> OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }) { Text(label) } }
+                    if (donationUrl == null) {
+                        Text(text.supportLinkNotConfigured, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
         }
@@ -1326,14 +1404,14 @@ internal class UiText(private val language: AppLanguage) {
     val vpnSubtitle = networksSubtitle
     val routesSubtitle = t("Какой тоннель используется. Нажмите маршрут для деталей.", "Which tunnel is used. Tap a route for details.", "查看使用哪个隧道。点按路由查看详情。")
     val dnsSubtitle = t("Проверка DNS и локальные политики.", "DNS checks and local policies.", "DNS 检查和本地策略。")
-    val fsSubtitle = t("Локальные счётчики и будущая видимость потоков без обещаний полного анализа.", "Local counters and future flow visibility without claiming full traffic analysis.", "本地计数器和未来流量可见性，不声称完整流量分析。")
+    val fsSubtitle = t("Понятное состояние маршрутизатора; события отдельных соединений появятся только после безопасной интеграции с движком.", "Readable router state; per-connection events will appear only after safe engine integration.", "清晰显示路由器状态；单连接事件仅会在与引擎安全集成后出现。")
     val toolsSubtitle = t("TCP, TLS, HTTP и маршрутная диагностика.", "TCP, TLS, HTTP, and route diagnostics.", "TCP、TLS、HTTP 和路由诊断。")
     val settingsSubtitle = t("Язык, тема, справка и расширенная диагностика.", "Language, theme, help, and advanced diagnostics.", "语言、主题、帮助和高级诊断。")
     val moreSubtitle = t("Инструменты и настройки без перегруза навигации.", "Tools and settings without crowded navigation.", "工具和设置不再挤占导航栏。")
     val version = t("Версия", "Version", "版本")
     val privacy = t("Приватность", "Privacy", "隐私")
     val privacyShort = t("Локально: без рекламы, аналитики и скрытой отправки.", "Local-first: no ads, analytics, or hidden uploads.", "本地优先：无广告、分析或隐藏上传。")
-    val privacyDetails = t("Логи и будущие экспорты остаются на устройстве до явного действия пользователя.", "Logs and future exports stay on the device until the user explicitly exports them.", "日志和未来导出会留在设备上，除非用户明确导出。")
+    val privacyDetails = t("Метаданные соединений, настройки и список установленных приложений обрабатываются только на устройстве. Список нужен для выбора приложения в маршрутах и Flow Scanner, никуда не загружается и не продаётся. Содержимое пакетов не записывается; экспорт возможен только по явному действию пользователя.", "Connection metadata, settings, and the installed-app list are processed only on the device. The list is used for the route picker and Flow Scanner, and is never uploaded or sold. Packet contents are not recorded; export requires an explicit user action.", "连接元数据、设置和已安装应用列表仅在设备上处理。该列表只用于路由选择器和 Flow Scanner，绝不会上传或出售。不会记录数据包内容；导出需要用户明确操作。")
     val configStatus = t("Конфигурация", "Configuration", "配置")
     val configLoaded = t("Локальная конфигурация загружена.", "Local configuration loaded.", "本地配置已加载。")
     val loading = t("Загрузка…", "Loading…", "正在加载…")
@@ -1344,14 +1422,11 @@ internal class UiText(private val language: AppLanguage) {
     val off = t("выкл", "off", "关")
     val details = t("Подробнее", "Details", "详情")
     val less = t("Скрыть", "Less", "收起")
-    val vpnDemoDetails = t("Переключатель показывает состояние UI. VPN-движки в этой версии не добавлены.", "The switch controls UI state only. VPN engines are not added in this release.", "此开关仅控制界面状态。本版本未添加 VPN 引擎。")
     val vpnLocalPreviewTitle = t("Активировать контроль сети", "Activate network control", "激活网络控制")
     val activateNetworkControl = vpnLocalPreviewTitle
-    val vpnNoTrafficRoutingYet = t("Сейчас это безопасный preview; полное применение модели — будущая runtime-задача.", "Safe preview now; full model enforcement is a future runtime task.", "当前是安全预览；完整模型执行是未来运行时任务。")
+    val vpnNoTrafficRoutingYet = t("При включении Android направляет IPv4/IPv6 и DNS в локальный маршрутизатор; недоступные цели блокируются.", "When enabled, Android sends IPv4/IPv6 and DNS through the local router; unavailable targets are blocked.", "启用后，Android 会将 IPv4/IPv6 和 DNS 交给本地路由器；不可用目标会被阻止。")
     val networkControlSummary = vpnNoTrafficRoutingYet
     val vpnNoHiddenInterception = t("Нет скрытого перехвата", "No hidden interception", "没有隐藏拦截")
-    val vpnPacketProcessingLater = t("Интернет должен остаться без изменений.", "Internet should remain unchanged.", "互联网应保持不变。")
-    val vpnLifecycleOnlyDetails = t("0.8.3-alpha по умолчанию создаёт минимальный route-less TUN с адресом 10.250.0.2/32 только для проверки VpnService. В режиме тестового маршрута явно добавляется только 203.0.113.0/24 (TEST-NET-3); runtime default-route enforcement, DNS-серверов, логирования payload, пересылки, прокси и VPN-движков нет. Инспектор хранит только последние 50 IPv4 metadata-сводок в памяти, без payload, hostname, PCAP или сохранения.", "0.8.3-alpha creates a minimal route-less TUN with address 10.250.0.2/32 by default only to verify VpnService. Test-route mode explicitly adds only 203.0.113.0/24 (TEST-NET-3); there is no runtime default-route enforcement, DNS servers, payload logging, forwarding, proxying, or VPN engines. The inspector keeps only the latest 50 IPv4 metadata summaries in memory, without payloads, hostnames, PCAP, or persistence.", "0.8.3-alpha 默认仅创建地址为 10.250.0.2/32 的最小无路由 TUN 来验证 VpnService。测试路由模式仅显式添加 203.0.113.0/24 (TEST-NET-3)；没有运行时默认路由执行、DNS 服务器、payload 日志、转发、代理或 VPN 引擎。检查器仅在内存中保留最近 50 条 IPv4 元数据摘要，不包含 payload、主机名、PCAP 或持久化。")
     val vpnTestRoutePreview = t("Тестовый маршрут", "Test route preview", "测试路由预览")
     val vpnTestRoute = t("Тестовый маршрут: 203.0.113.0/24", "Test route: 203.0.113.0/24", "测试路由：203.0.113.0/24")
     val vpnPacketsRead = t("Прочитано пакетов", "Packets read", "已读取数据包")
@@ -1361,8 +1436,8 @@ internal class UiText(private val language: AppLanguage) {
     val vpnUdpPacketsRead = "UDP"
     val vpnIcmpPacketsRead = "ICMP"
     val vpnPacketInspector = t("Инспектор пакетов", "Packet inspector", "数据包检查器")
+    val vpnPacketInspectorPrivacy = t("Только тестовый маршрут TEST-NET: пакеты читаются и отбрасываются. Показываются IP, TCP/UDP-порты, протокол, размер и время — без payload, hostname, PCAP и сохранения.", "TEST-NET route only: packets are read and dropped. The view shows IPs, TCP/UDP ports, protocol, size, and time—without payloads, hostnames, PCAP, or persistence.", "仅限 TEST-NET 测试路由：数据包会被读取并丢弃。仅显示 IP、TCP/UDP 端口、协议、大小和时间，不包含 payload、主机名、PCAP 或持久化。")
     val vpnPacketInspectorEmpty = t("Пакеты пока не наблюдались", "No packets observed yet", "尚未观察到数据包")
-    val vpnPacketInspectorPrivacy = t("Observation only. Packets are read and dropped. No forwarding is enabled. Только metadata: IP, TCP/UDP ports, protocol, size and time; без payload, hostname, PCAP или сохранения.", "Observation only. Packets are read and dropped. No forwarding is enabled. Metadata only: IPs, TCP/UDP ports, protocol, size, and time; no payloads, hostnames, PCAP, or persistence.", "仅观察。数据包会被读取并丢弃。未启用转发。仅元数据：IP、TCP/UDP 端口、协议、大小和时间；无 payload、主机名、PCAP 或持久化。")
     val vpnClearPacketList = t("Очистить список пакетов", "Clear packet list", "清除数据包列表")
     val vpnPausePacketInspector = t("Пауза инспектора пакетов", "Pause packet inspector", "暂停数据包检查器")
     val vpnPacketInspectorPaused = t("Инспектор на паузе: новые сводки не добавляются, сервис остаётся активным.", "Inspector paused: new summaries are not appended while the service remains active.", "检查器已暂停：服务保持活动，但不会追加新的摘要。")
@@ -1376,7 +1451,7 @@ internal class UiText(private val language: AppLanguage) {
     val vpnTunActive = t("TUN: active", "TUN: active", "TUN：活动")
     val vpnTunInactive = t("TUN: inactive", "TUN: inactive", "TUN：未活动")
     val vpnNotificationPermissionRequired = t("Требуется разрешение уведомлений", "Notification permission required", "需要通知权限")
-    val vpnNotificationPermissionRequiredDetail = t("Требуется разрешение на уведомления, чтобы запустить локальный сервис превью VPN", "Notification permission required to start local VPN preview service", "需要通知权限才能启动本地 VPN 预览服务")
+    val vpnNotificationPermissionRequiredDetail = t("Требуется разрешение на уведомления, чтобы Android разрешил запустить VPN-маршрутизатор в фоне.", "Notification permission is required so Android can run the VPN router in the foreground.", "需要通知权限，Android 才能以前台服务运行 VPN 路由器。")
     val vpnStopped = t("Остановлен", "Stopped", "已停止")
     val vpnError = t("Ошибка", "Error", "错误")
     val vpnPermissionDenied = t("Разрешение Android VPN не выдано.", "Android VPN permission was not granted.", "未授予 Android VPN 权限。")
@@ -1392,27 +1467,27 @@ internal class UiText(private val language: AppLanguage) {
     val manual = t("Вручную", "Manual", "手动")
     val name = t("Название", "Name", "名称")
     val description = t("Описание", "Description", "描述")
-    val mockProfileDescription = t("Профиль добавлен вручную. Движок пока не реализован.", "Profile added manually. The engine is not implemented yet.", "已手动添加配置。引擎尚未实现。")
+    val mockProfileDescription = t("Профиль сохранён локально. Перед использованием приложение проверит его через текущий движок.", "Profile saved locally. The app validates it with the current engine before use.", "配置保存在本地。应用会在使用前通过当前引擎进行验证。")
     val profileAdded = t("Профиль добавлен локально.", "Profile added locally.", "配置已本地添加。")
     val create = t("Создать", "Create", "创建")
     val profileDetails = t("Детали профиля", "Profile details", "配置详情")
     val profileDetailsSubtitle = t("Настройте профиль без перегруза основного списка.", "Edit the profile without crowding the main list.", "编辑配置而不挤占主列表。")
-    val addProfileSubtitle = t("Импорт — заглушки, ручное создание сохраняется локально.", "Import options are placeholders; manual creation saves locally.", "导入选项为占位；手动创建会本地保存。")
+    val addProfileSubtitle = t("Выберите рабочий протокол; недоступные и устаревшие варианты помечены отдельно.", "Choose a working protocol; unavailable and legacy options are marked separately.", "请选择可用协议；不可用和旧协议会单独标记。")
     val importOptions = t("Импорт", "Import", "导入")
     val noDns = t("Использует системный DNS Android", "Uses Android system DNS", "使用 Android 系统 DNS")
-    val defaultProfile = t("Основной", "Default", "默认")
-    val defaultChanged = t("Основной профиль изменён.", "Default profile changed.", "默认配置已更改。")
-    val makeDefault = t("Основной", "Default", "默认")
+    val defaultProfile = t("Туннель провайдера", "Provider tunnel", "提供商隧道")
+    val defaultChanged = t("Туннель провайдера изменён.", "Provider tunnel changed.", "提供商隧道已更改。")
+    val makeDefault = t("Сделать туннелем провайдера", "Use as provider tunnel", "设为提供商隧道")
     val delete = t("Удалить", "Delete", "删除")
     val profileDeleted = t("Профиль удалён.", "Profile deleted.", "配置已删除。")
-    val protectedProfileMessage = t("System и Block — встроенные профили, их нельзя удалить.", "System and Block are built-in profiles and cannot be deleted.", "System 和 Block 是内置配置，无法删除。")
+    val protectedProfileMessage = t("System, Block и ByeDPI — встроенные профили, их нельзя удалить.", "System, Block, and ByeDPI are built-in profiles and cannot be deleted.", "System、Block 和 ByeDPI 是内置配置，无法删除。")
     val mockOnly = t("Демо: реальный тоннель не запускается.", "Demo: no real tunnel is started.", "演示：不会启动真实隧道。")
     val cancel = t("Отмена", "Cancel", "取消")
     val edit = t("Изменить", "Edit", "编辑")
     val profileUpdated = t("Профиль обновлён.", "Profile updated.", "配置已更新。")
     val save = t("Сохранить", "Save", "保存")
     val simulation = t("Проверка правила", "Rule check", "规则检查")
-    val routeEmptyState = t("Приложения без правил идут через маршрут Система.", "Apps without rules use System route.", "没有规则的应用使用 System 路由。")
+    val routeEmptyState = t("Приложения без отдельных правил идут через туннель провайдера.", "Apps without specific rules use the provider tunnel.", "没有单独规则的应用使用提供商隧道。")
     val noRoutesConfigured = t("Маршруты не настроены", "No routes configured yet", "尚未配置路由")
     val installedApps = t("Установленные приложения", "Installed apps", "已安装应用")
     val noInstalledApps = t("Список приложений недоступен на этом устройстве.", "Installed app list is not available on this device.", "此设备无法使用已安装应用列表。")
@@ -1444,8 +1519,8 @@ internal class UiText(private val language: AppLanguage) {
     val advanced = t("Дополнительно", "Advanced", "高级")
     val validation = t("Проверка конфликтов", "Conflict validation", "冲突检查")
     val warning = t("предупреждение", "warning", "警告")
-    val systemBlockOnly = t("Доступны встроенные System и Block; внешних реальных профилей нет.", "Built-in System and Block are available; no real external profiles exist.", "可用内置 System 和 Block；没有真实外部配置。")
-    val runtimeRoutingFuture = t("Runtime enforcement ещё не добавлен: ViRouteFS пока не захватывает default route и не пересылает пакеты через профили.", "Runtime enforcement is still planned: ViRouteFS does not capture the default route or forward packets through profiles yet.", "运行时执行仍在计划中：ViRouteFS 尚未捕获默认路由或通过配置转发数据包。")
+    val systemBlockOnly = t("Нет включённых пользовательских профилей. Доступны встроенные System и Block.", "No enabled user profiles. Built-in System and Block are available.", "没有已启用的用户配置。可使用内置 System 和 Block。")
+    val runtimeRoutingFuture = t("При включённом контроле сети Android передаёт IPv4/IPv6 и DNS в локальный маршрутизатор. Недоступная цель правила блокируется без скрытого перехода на System.", "When network control is active, Android sends IPv4/IPv6 and DNS through the local router. An unavailable rule target is blocked without a silent fallback to System.", "网络控制启用时，Android 会将 IPv4/IPv6 和 DNS 交给本地路由器。不可用的规则目标会被阻止，不会静默回退到 System。")
     val lookup = t("DNS-запрос", "DNS lookup", "DNS 查询")
     val domain = t("Домен", "Domain", "域名")
     val type = t("Тип", "Type", "类型")
@@ -1453,13 +1528,13 @@ internal class UiText(private val language: AppLanguage) {
     val check = t("Проверить", "Check", "检查")
     val dnsResult = t("Результат DNS", "DNS result", "DNS 结果")
     val policies = t("Политики", "Policies", "策略")
-    val dnsPolicyLimit = t("Политики описывают желаемое поведение; реальное DNS-маршрутизирование будет позже.", "Policies describe desired behavior; real DNS routing comes later.", "策略描述目标行为；真实 DNS 路由稍后实现。")
+    val dnsPolicyLimit = t("Пользовательский DNS применяется внутри VPN-маршрутизатора и при необходимости отправляется через выбранный профиль. Недоступный путь DNS блокируется.", "Custom DNS is applied inside the VPN router and can be sent through the selected profile. An unavailable DNS path is blocked.", "自定义 DNS 在 VPN 路由器内应用，并可通过所选配置发送。不可用的 DNS 路径会被阻止。")
     val dnsPolicyDetails = t("Детали DNS-политики", "DNS policy details", "DNS 策略详情")
-    val dnsPolicyDetailsSubtitle = t("Краткие поля и ограничения будущего DNS-движка.", "Compact fields and future DNS-engine limits.", "紧凑字段和未来 DNS 引擎限制。")
+    val dnsPolicyDetailsSubtitle = t("Адрес DNS и профиль, через который нужно отправлять запросы.", "DNS address and the profile used to send its requests.", "DNS 地址以及发送其请求所用的配置。")
     val usedByProfiles = t("Используется профилями", "Used by profiles", "配置使用")
     val usedByRoutes = t("Используется маршрутами", "Used by routes", "路由使用")
     val hostOverrides = t("Host overrides", "Host overrides", "主机覆盖")
-    val hostOverridesSubtitle = t("Локальные hosts-подстановки для будущего DNS-движка.", "Local hosts-like mappings for the future DNS engine.", "用于未来 DNS 引擎的本地主机映射。")
+    val hostOverridesSubtitle = t("Локальные hosts-подстановки рабочего DNS-маршрутизатора.", "Local hosts-like mappings for the active DNS router.", "工作 DNS 路由器的本地主机映射。")
     val hostOverridesShort = t("Локальная hosts-like подстановка. Реальный DNS-движок применит её позже.", "Local hosts-like mapping. Real DNS engine will apply it later.", "本地 hosts 类映射。真实 DNS 引擎稍后会应用。")
     val addHostOverride = t("Добавить запись", "Add override", "添加覆盖")
     val ipAddress = t("IP", "IP", "IP")
@@ -1473,8 +1548,8 @@ internal class UiText(private val language: AppLanguage) {
     val certOk = t("сертификат OK", "certificate OK", "证书正常")
     val waiting = t("ожидание", "waiting", "等待")
     val limitation = t("Ограничение", "Limitation", "限制")
-    val fsLimitShort = t("Пока нет полного анализа трафика; доступны только локальные счётчики при явном включении диагностики.", "No full traffic analysis yet; only local counters are available when diagnostics are explicitly enabled.", "尚无完整流量分析；仅在明确启用诊断时可用本地计数器。")
-    val fsLimitDetails = t("FS 0.6.6 показывает локальные счётчики только при явном включении developer diagnostics. Это не полный packet capture: нет runtime default-route enforcement, DNS в VPN, payload logging, извлечения доменов, forwarding/proxying или облачной загрузки.", "FS 0.6.6 shows local counters only when developer diagnostics are explicitly enabled. This is not full packet capture: there is no runtime default-route enforcement, VPN DNS, payload logging, domain extraction, forwarding/proxying, or cloud upload.", "FS 0.6.6 仅在明确启用开发者诊断时显示本地计数。这不是完整抓包：没有运行时默认路由执行、VPN DNS、负载日志、域名提取、转发/代理或云上传。")
+    val fsLimitShort = t("Сканер показывает метаданные соединений, но не расшифровывает и не сохраняет содержимое HTTPS, сообщений, паролей или файлов.", "The scanner shows connection metadata but does not decrypt or store HTTPS contents, messages, passwords, or files.", "扫描器显示连接元数据，但不会解密或保存 HTTPS 内容、消息、密码或文件。")
+    val fsLimitDetails = t("События поступают напрямую от локального sing-box внутри ViRouteFS: приложение, адрес, домен при наличии, протокол, маршрут и объём. Это понятный анализ потоков, а не перехват полезной нагрузки и не замена криминалистическому Wireshark/PCAP.", "Events come directly from the local sing-box inside ViRouteFS: app, address, domain when known, protocol, route, and traffic volume. This is understandable flow analysis, not payload interception or a replacement for forensic Wireshark/PCAP.", "事件直接来自 ViRouteFS 内的本地 sing-box：应用、地址、已知域名、协议、路由和流量。它是易懂的流分析，不会截获有效载荷，也不能替代取证级 Wireshark/PCAP。")
     val flowScannerTitle = "Flow Scanner"
     val flowScannerSubtitle = t("кто куда подключается и почему", "who connects where and why", "谁连接到哪里以及原因")
     val flowAppFilter = t("Приложения", "Apps", "应用")
@@ -1482,8 +1557,7 @@ internal class UiText(private val language: AppLanguage) {
     val flowStartAnalysis = t("Начать анализ", "Start analysis", "开始分析")
     val flowDemoMode = t("локально", "local", "本地")
     val flowEmptyTitle = t("Потоки пока не записаны", "No flows captured yet", "尚未捕获流量")
-    val flowEmptyState = t("Flow Scanner покажет локальные счётчики, когда они доступны. Полный анализ трафика приложений ещё не заявляется.", "Flow Scanner shows local counters when available. Full app traffic analysis is not claimed yet.", "Flow Scanner 会在可用时显示本地计数器。目前不声称完整应用流量分析。")
-    val flowPreviewOnly = t("Локальная видимость без payload logging, forwarding/proxying или облачной загрузки.", "Local visibility without payload logging, forwarding/proxying, or cloud upload.", "本地可见性，无 payload 日志、转发/代理或云上传。")
+    val flowEmptyState = t("Включите контроль сети и откройте нужное приложение. Здесь появятся его реальные соединения; содержимое трафика не записывается.", "Enable network control and open an app. Its real connections will appear here; traffic contents are not recorded.", "启用网络控制并打开应用。真实连接会显示在这里；不会记录流量内容。")
     val flowLiveTestRoute = t("Live test route", "Live test route", "实时测试路由")
     val flowLiveLocalTestData = t("live local test data", "live local test data", "实时本地测试数据")
     val flowDemoPreview = t("demo / preview", "demo / preview", "演示 / 预览")
@@ -1536,9 +1610,9 @@ Packets are dropped after counting""",
     val browserApp = t("Браузер", "Browser", "浏览器")
     val workApp = t("Рабочее приложение", "Work app", "工作应用")
     val trackerApp = t("Пример трекера", "Tracker example", "跟踪器示例")
-    val telegramRouteReason = t("Правило домена показывает будущий выбор выбранного профиля.", "A domain rule shows future selected-profile routing.", "域名规则展示未来所选配置路由。")
+    val telegramRouteReason = t("Пример объясняет, как доменное правило выбирает профиль.", "This sample explains how a domain rule selects a profile.", "此示例说明域名规则如何选择配置。")
     val telegramRecommendation = t("Проверьте, что профиль выбран осознанно, затем включайте реальный режим только вручную.", "Confirm the profile is intentional, then enable any real mode only manually.", "确认配置选择正确；真实模式只能手动启用。")
-    val telegramTechnical = t("Демо-событие: будущий источник — локальный VpnService flow log после явного разрешения пользователя.", "Demo event: future source is the local VpnService flow log after explicit user consent.", "演示事件：未来来源是在用户明确同意后的本地 VpnService 流日志。")
+    val telegramTechnical = t("Учебный пример, не событие реального трафика. Рабочий движок пока не передаёт интерфейсу поток событий каждого соединения.", "Training sample, not a real traffic event. The runtime does not yet emit a per-connection event stream to the UI.", "教学示例，并非真实流量事件。运行时尚未向界面输出每个连接的事件流。")
     val mediaRouteReason = t("Домены могут соответствовать пользовательскому правилу выбранного профиля.", "Domains can match a user rule for a selected profile.", "域名可以匹配所选配置的用户规则。")
     val mediaRecommendation = t("Если соединение работает медленно, позже проверьте выбранный профиль и MTU.", "If a connection is slow, later check the selected profile and MTU.", "如果连接较慢，稍后检查所选配置和 MTU。")
     val mediaTechnical = t("Событие показывает целевой домен и предполагаемый протокол; реальный QUIC/TCP анализ не выполняется.", "The event shows target domains and expected protocol; real QUIC/TCP analysis is not performed.", "事件显示目标域和预期协议；未执行真实 QUIC/TCP 分析。")
@@ -1547,11 +1621,11 @@ Packets are dropped after counting""",
     val govTechnical = t("Демо не проверяет сертификат и не читает содержимое соединения.", "The demo does not validate certificates or read connection contents.", "演示不验证证书，也不读取连接内容。")
     val workRouteReason = t("Внутренний домен gitlab.corp совпал с рабочим правилом и DNS-политикой.", "The internal gitlab.corp domain matched the work rule and DNS policy.", "内部域 gitlab.corp 匹配工作规则和 DNS 策略。")
     val workRecommendation = t("Используйте рабочий VPN только для корпоративных доменов и приложений.", "Use the work VPN only for corporate domains and apps.", "仅对公司域名和应用使用工作 VPN。")
-    val workTechnical = t("IP показан как пример частного адреса; реальный корпоративный DNS ещё не подключён.", "The IP is a sample private address; real corporate DNS is not connected yet.", "IP 是示例私有地址；尚未接入真实公司 DNS。")
+    val workTechnical = t("Это учебная карточка с частным IP и вымышленным корпоративным доменом; она не является событием реального трафика.", "This is a training card with a private IP and a fictional corporate domain; it is not a real traffic event.", "这是包含私有 IP 和虚构公司域名的教学卡片，并非真实流量事件。")
     val trackerRouteReason = t("Домен совпал с демонстрационным правилом Block для нежелательных трекеров.", "The domain matched a demo Block rule for unwanted trackers.", "该域匹配不需要跟踪器的演示 Block 规则。")
     val trackerWarning = t("Возможный трекер: соединение предлагается блокировать.", "Possible tracker: blocking is recommended.", "可能的跟踪器：建议阻止。")
     val trackerRecommendation = t("Оставьте блокировку, если этот домен не нужен приложению для основной функции.", "Keep it blocked if the app does not need this domain for its core function.", "如果应用核心功能不需要该域，请保持阻止。")
-    val trackerTechnical = t("В демо нет DNS-запроса и сетевого блокирования; это только пример будущего решения политики.", "The demo does not perform DNS lookup or network blocking; it only previews a future policy decision.", "演示不执行 DNS 查询或网络阻止；仅预览未来策略决策。")
+    val trackerTechnical = t("Это учебная карточка: она сама не выполняет DNS-запрос и не включает блокировку. Реальные правила Block применяются только после запуска VPN-маршрутизатора.", "This training card does not itself run DNS or enable blocking. Real Block rules apply only while the VPN router is running.", "这是一张教学卡片，本身不会执行 DNS 或启用阻止；真实 Block 规则仅在 VPN 路由器运行时生效。")
     val tcpTls = "TCP / TLS"
     val host = t("Хост", "Host", "主机")
     val port = t("Порт", "Port", "端口")
@@ -1574,23 +1648,29 @@ Packets are dropped after counting""",
     val aboutViroutefs = t("About ViRouteFS", "About ViRouteFS", "关于 ViRouteFS")
     val projectOverviewShort = t("Visual Route & Flow Scanner — локальный Android-инструмент для видимости маршрутов и потоков.", "Visual Route & Flow Scanner is a local Android tool for route and flow visibility.", "Visual Route & Flow Scanner 是用于路由和流量可见性的本地 Android 工具。")
     val projectOverviewDetails = t("Home больше не отдельная вкладка: обзор, статус, приватность и цели живут здесь, в Settings → Help.", "Home is no longer a separate tab: overview, status, privacy, and goals live here in Settings → Help.", "Home 不再是单独标签：概览、状态、隐私和目标位于 Settings → Help。")
+    val projectPurposeTitle = t("Назначение и законное использование", "Purpose and lawful use", "用途与合法使用")
+    val projectPurposeShort = t("ViRouteFS создан для нормальной VPN-маршрутизации, диагностики и контроля собственного трафика.", "ViRouteFS is built for ordinary VPN routing, diagnostics, and control of your own traffic.", "ViRouteFS 用于常规 VPN 路由、诊断和控制您自己的流量。")
+    val projectPurposeDetails = t("Приложение не предназначено и не продвигается как средство обхода блокировок. Используйте его только законно, с разрешёнными сетями и VPN-провайдерами. Дополнительный режим совместимости с DPI не является VPN, не шифрует трафик и не скрывает IP-адрес.", "The app is not intended or marketed as an access-restriction circumvention tool. Use it lawfully and only with authorized networks and VPN providers. The optional DPI compatibility mode is not a VPN, does not encrypt traffic, and does not hide the IP address.", "本应用不用于或宣传为规避访问限制的工具。请仅在合法且获授权的网络和 VPN 服务中使用。可选 DPI 兼容模式不是 VPN，不加密流量，也不隐藏 IP 地址。")
     val licenseSummaryTitle = t("Лицензия GPL-3.0-or-later", "GPL-3.0-or-later license", "GPL-3.0-or-later 许可证")
     val licenseSummaryShort = t("Проект остаётся свободным ПО под GPL-3.0-or-later.", "The project remains free software under GPL-3.0-or-later.", "项目仍是 GPL-3.0-or-later 下的自由软件。")
-    val licenseSummaryDetails = t("Вы можете изучать, изменять и распространять код при соблюдении условий GPL; лицензия не заменяется и не ослабляется.", "You may study, modify, and redistribute the code under GPL terms; the license is not replaced or weakened.", "可按 GPL 条款研究、修改和再分发代码；许可证不会被替换或削弱。")
+    val licenseSummaryDetails = t("Вы можете изучать, изменять и распространять код при соблюдении GPL. В APK включены тексты GPL-3.0, лицензии sing-box и MIT-лицензии ByeDPI; точные версии, хэши и скрипты воспроизводимой сборки находятся в репозитории.", "You may study, modify, and redistribute the code under the GPL. The APK includes the GPL-3.0 text, the sing-box license, and the ByeDPI MIT license; exact versions, hashes, and reproducible build scripts are in the repository.", "可按 GPL 条款研究、修改和再分发代码。APK 内含 GPL-3.0、sing-box 许可证和 ByeDPI MIT 许可证；精确版本、哈希和可复现构建脚本位于代码仓库中。")
     val currentAlphaLimitations = t("Текущие ограничения alpha", "Current alpha limitations", "当前 alpha 限制")
-    val alphaLimitationsShort = t("Нет runtime default-route enforcement, DNS в VPN builder, payload logging, forwarding/proxying или готовых внешних тоннелей.", "No runtime default-route enforcement, VPN builder DNS, payload logging, forwarding/proxying, or ready external tunnels.", "没有运行时默认路由执行、VPN builder DNS、payload 日志、转发/代理或可用外部隧道。")
-    val alphaLimitationsDetails = t("System — внутренний маршрут по умолчанию в модели ViRouteFS, не bypass. Полное runtime-применение всех потоков ещё не добавлено; TEST-NET маршрут оставлен только в Developer diagnostics.", "System is the internal default route in the ViRouteFS model, not bypass. Full runtime enforcement for all flows is not added yet; the TEST-NET route remains only in Developer diagnostics.", "System 是 ViRouteFS 模型中的内部默认路由，不是绕过。尚未添加所有流量的完整运行时执行；TEST-NET 路由仅保留在开发者诊断中。")
+    val alphaLimitationsShort = t("Нужна проверка на реальном arm64-телефоне. OpenVPN/OpenConnect и живые события Flow Scanner подключены, но IKEv2/IPsec и устаревшие L2TP/PPTP/SSTP ещё требуют отдельных Android-движков.", "Real arm64 device testing is still required. OpenVPN/OpenConnect and live Flow Scanner events are connected, while IKEv2/IPsec and legacy L2TP/PPTP/SSTP still need separate Android engines.", "仍需在真实 arm64 设备上测试。OpenVPN/OpenConnect 和实时 Flow Scanner 事件已接入，而 IKEv2/IPsec 与旧版 L2TP/PPTP/SSTP 仍需要单独的 Android 引擎。")
+    val alphaLimitationsDetails = t("Текущий APK содержит sing-box 1.14 alpha для OpenVPN, OpenConnect/AnyConnect, VLESS, SOCKS5, VMess, Trojan, Shadowsocks, Hysteria v1/v2, Snell, TUIC, AnyTLS, HTTP(S), SSH, WireGuard и Tailscale/Headscale. Flow Scanner показывает метаданные реальных соединений без содержимого пакетов и расшифровки HTTPS. Профили проверяются нативным движком, но конкретный сервер подтверждается только тестом на устройстве.", "The current APK contains sing-box 1.14 alpha for OpenVPN, OpenConnect/AnyConnect, VLESS, SOCKS5, VMess, Trojan, Shadowsocks, Hysteria v1/v2, Snell, TUIC, AnyTLS, HTTP(S), SSH, WireGuard, and Tailscale/Headscale. Flow Scanner shows real connection metadata without packet payloads or HTTPS decryption. Profiles are checked by the native engine, but a specific server is confirmed only by a device test.", "当前 APK 包含 sing-box 1.14 alpha，支持 OpenVPN、OpenConnect/AnyConnect、VLESS、SOCKS5、VMess、Trojan、Shadowsocks、Hysteria v1/v2、Snell、TUIC、AnyTLS、HTTP(S)、SSH、WireGuard 和 Tailscale/Headscale。Flow Scanner 显示真实连接元数据，不记录数据包内容，也不解密 HTTPS。具体服务器仍需设备测试确认。")
     val projectGoals = t("Цели проекта", "Project goals", "项目目标")
     val projectGoalsShort = t("Сети, маршруты, DNS, Flow Scanner, диагностика и безопасные локальные аудиты.", "Networks, routes, DNS, Flow Scanner, diagnostics, and safe local audits.", "网络、路由、DNS、Flow Scanner、诊断和安全本地审计。")
-    val projectGoalsDetails = t("Один VpnService, внутренние политики маршрутизации, Xray/OpenVPN позже, DNS/TCP/TLS/HTTP/UDP/MTU диагностика, понятные логи и локальный PCAP export по явному действию пользователя.", "A single VpnService, internal routing policies, Xray/OpenVPN later, DNS/TCP/TLS/HTTP/UDP/MTU diagnostics, readable logs, and local PCAP export only by explicit user action.", "单个 VpnService、内部路由策略、未来 Xray/OpenVPN、DNS/TCP/TLS/HTTP/UDP/MTU 诊断、可读日志，以及仅用户明确操作的本地 PCAP 导出。")
+    val projectGoalsDetails = t("Один VpnService, локальный sing-box, правила по приложениям/доменам/IP/CIDR, DNS через выбранный туннель, понятная диагностика и fail-closed без телеметрии и записи содержимого трафика.", "A single VpnService, local sing-box, app/domain/IP/CIDR rules, DNS through a selected tunnel, readable diagnostics, and fail-closed behavior without telemetry or traffic-content logging.", "单个 VpnService、本地 sing-box、按应用/域名/IP/CIDR 的规则、通过所选隧道的 DNS、清晰诊断，以及无遥测或流量内容记录的 fail-closed 行为。")
     val beginnerMode = t("Для самых маленьких", "Beginner mode", "初学者模式")
-    val beginnerHelp = t("Маршруты — это правила вида: это приложение, домен или IP идёт через этот маршрут. System / Система — обычный системный путь Android внутри модели ViRouteFS для приложений без явного правила. Block / Блокировать означает: совпавший трафик должен быть закрыт.", "Routes are rules like: this app, domain, or IP goes through this route. System is the normal Android system path inside the ViRouteFS model for apps without an explicit rule. Block means matching traffic should be denied.", "网络控制开启时，流量通过 ViRouteFS。没有规则的应用使用 System。网络显示流量可去向；路由选择规则；DNS 规划名称处理。")
+    val beginnerHelp = t("Сначала выберите туннель провайдера — через него пойдёт весь трафик. Маршруты — это исключения вида: выбранное приложение, домен, IP или диапазон сети идёт через другой туннель, System, ByeDPI или Block. System означает осознанный прямой путь без туннеля провайдера; Block полностью запрещает совпавший трафик.", "First select the provider tunnel; all traffic uses it by default. Routes are exceptions: a selected app, domain, IP, or network range uses another tunnel, System, ByeDPI, or Block. System is an explicit direct path outside the provider tunnel; Block denies matching traffic.", "先选择提供商隧道，所有流量默认通过该隧道。路由是例外规则：所选应用、域名、IP 或网段可使用其他隧道、System、ByeDPI 或 Block。System 是明确的直连路径；Block 会拒绝匹配的流量。")
     val adminMode = t("Для админов", "Admin mode", "管理员模式")
-    val adminHelp = t("Модель: app/domain/IP/CIDR matchers; точные дубликаты блокируются перед сохранением; unmatched → System; matched → только выбранный профиль; unavailable → Block / fail closed. Runtime enforcement ещё планируется: нет default-route capture, DNS в builder, payload logging или forwarding/proxying. VPN/proxy engines ещё не bundled; кандидаты documented. OpenVPN должен идти через OpenVPN3 Core, не GPLv2-only OpenVPN 2.x embedding. ByeDPI planned как local DPI bypass profile candidate.", "Model: app/domain/IP/CIDR matchers; exact duplicates are blocked before save; unmatched → System; matched → selected profile only; unavailable → Block / fail closed. Runtime enforcement is still planned: no default-route capture, builder DNS, payload logging, or forwarding/proxying. VPN/proxy engines are not bundled yet; planned candidates are documented. OpenVPN support should use the OpenVPN3 Core path, not GPLv2-only OpenVPN 2.x embedding. ByeDPI is planned as a local DPI bypass profile candidate.", "模型：app/domain/IP/CIDR 匹配；保存前阻止精确重复；未匹配 → System；已匹配 → 仅所选配置；不可用 → Block / fail closed。运行时执行仍在计划中：没有默认路由捕获、builder DNS、payload 日志或转发/代理。尚未捆绑 VPN/代理引擎；计划候选项已记录。OpenVPN 支持应使用 OpenVPN3 Core 路径，而不是嵌入 GPLv2-only OpenVPN 2.x。ByeDPI 计划作为本地 DPI 绕过配置候选。")
+    val adminHelp = t("Модель: весь трафик без более точного правила → выбранный туннель провайдера; app/domain/IP/CIDR → назначенный профиль; недоступный профиль → Block / fail closed. DNS перехватывается внутри TUN и может идти через отдельный профиль. Arm64 APK содержит sing-box 1.14 alpha с OpenVPN/OpenConnect и ByeDPI по MIT без Naive/Cronet. Flow Scanner получает метаданные соединений, но не содержимое пакетов. IKEv2/IPsec требует отдельного strongSwan-адаптера; L2TP/PPTP/SSTP не выдаются за рабочие без проверенного движка.", "Model: traffic without a more specific rule → the selected provider tunnel; app/domain/IP/CIDR → the assigned profile; unavailable profile → Block / fail closed. DNS is intercepted inside TUN and can use a separate profile. The arm64 APK embeds sing-box 1.14 alpha with OpenVPN/OpenConnect and MIT-licensed ByeDPI, without Naive/Cronet. Flow Scanner receives connection metadata but no packet content. IKEv2/IPsec needs a separate strongSwan adapter; L2TP/PPTP/SSTP are not claimed as working without an audited engine.", "模型：没有更具体规则的流量 → 所选提供商隧道；app/domain/IP/CIDR → 指定配置；不可用配置 → Block / fail closed。DNS 在 TUN 内拦截，并可通过单独配置发送。arm64 APK 内置 sing-box 1.14 alpha、OpenVPN/OpenConnect 和 MIT 许可的 ByeDPI，不含 Naive/Cronet。Flow Scanner 仅接收连接元数据，不记录数据包内容。IKEv2/IPsec 仍需单独的 strongSwan 适配器；没有审计引擎时不会声称 L2TP/PPTP/SSTP 可用。")
     val developerDiagnostics = t("Developer diagnostics", "Developer diagnostics", "开发者诊断")
     val developerDiagnosticsWarning = t("Не обычная функция пользователя. Используется для внутренней проверки безопасного TEST-NET маршрута.", "Not a normal user feature. Used for internal validation of the safe TEST-NET route.", "不是普通用户功能。用于安全 TEST-NET 路由的内部验证。")
     val supportProject = t("Поддержать проект", "Support project", "支持项目")
-    val supportShort = t("Ссылки скрыты, чтобы экран оставался компактным.", "Links are collapsed to keep the screen compact.", "链接已折叠，使界面更紧凑。")
+    val supportShort = t("Добровольная поддержка без покупки функций и преимуществ.", "Voluntary support without purchasing features or benefits.", "自愿支持，不购买任何功能或权益。")
+    val supportDonationDisclaimer = t("Номер банковской карты в приложение не встраивается и не сохраняется. Кнопка открывает только настроенную владельцем HTTPS-страницу оплаты; приложение не обрабатывает платёжные данные.", "No bank card number is embedded or stored. The button only opens an owner-configured HTTPS payment page; the app does not process payment data.", "应用不会嵌入或保存银行卡号。按钮仅打开所有者配置的 HTTPS 支付页面，应用不处理支付数据。")
+    val voluntarySupport = t("Добровольно поддержать", "Voluntary support", "自愿支持")
+    val supportLinkNotConfigured = t("Безопасная платёжная ссылка пока не настроена в сборке.", "No secure payment link is configured in this build.", "此版本尚未配置安全支付链接。")
     val updates = t("Обновления", "Updates", "更新")
     val updateChannelAlpha = t("Канал обновлений: Alpha", "Update channel: Alpha", "更新频道：Alpha")
     val checkForUpdates = t("Проверить обновления", "Check for updates", "检查更新")

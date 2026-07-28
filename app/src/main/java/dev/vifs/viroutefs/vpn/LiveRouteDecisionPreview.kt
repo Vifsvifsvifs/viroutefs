@@ -9,10 +9,6 @@ import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_EVENT_OPEN
 
-internal const val SOCKS5_RUNTIME_FORWARDING_NOT_ENABLED =
-    "Selected profile is SOCKS5. Runtime forwarding is not enabled yet."
-internal const val VLESS_RUNTIME_FORWARDING_NOT_ENABLED =
-    "Selected profile is VLESS. Runtime forwarding is not enabled yet."
 internal const val VLESS_ROUTE_PREVIEW_RESPONSE_UNTESTED =
     "Latest manual VLESS response classification: not tested."
 internal const val REMOTE_RUNTIME_FORWARDING_NOT_ENABLED =
@@ -71,15 +67,14 @@ internal class LiveRouteDecisionPreviewer(config: RoutingConfig) {
         if (protocol == Ipv4Protocol.Tcp && srcPort != null && dstPort != null) WOULD_CREATE_TCP_SESSION else null
 
     private fun TunnelProfile.runtimeForwardingWarnings(): List<String> = when (type) {
-        TunnelType.Socks5,
-        TunnelType.Socks5Mock -> listOf(SOCKS5_RUNTIME_FORWARDING_NOT_ENABLED)
-        TunnelType.VLESS -> buildList {
-            add(VLESS_RUNTIME_FORWARDING_NOT_ENABLED)
-            add(vless?.status.toVlessRoutePreviewClassificationLine())
-        }
+        TunnelType.Socks5 -> emptyList()
+        TunnelType.VLESS -> listOf(vless?.status.toVlessRoutePreviewClassificationLine())
+        TunnelType.Socks5Mock -> listOf(REMOTE_RUNTIME_FORWARDING_NOT_ENABLED)
         TunnelType.Direct,
         TunnelType.Block -> emptyList()
-        else -> if (mockOnly || type.remoteRuntimeForwardingRequired()) {
+        else -> if (singBox != null) {
+            emptyList()
+        } else if (mockOnly || type.remoteRuntimeForwardingRequired()) {
             listOf(REMOTE_RUNTIME_FORWARDING_NOT_ENABLED)
         } else {
             emptyList()

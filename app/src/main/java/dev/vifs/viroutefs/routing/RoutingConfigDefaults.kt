@@ -6,6 +6,7 @@ object RoutingConfigDefaults {
     const val SYSTEM_PROFILE_ID = "direct"
     const val DIRECT_PROFILE_ID = SYSTEM_PROFILE_ID
     const val BLOCK_PROFILE_ID = "block"
+    const val BYEDPI_PROFILE_ID = "byedpi"
 
     const val SYSTEM_DNS_ID = "system_dns"
 
@@ -13,7 +14,7 @@ object RoutingConfigDefaults {
         profiles = defaultProfiles(),
         dnsPolicies = defaultDnsPolicies(),
         rules = defaultRules(),
-        defaultProfileId = SYSTEM_PROFILE_ID,
+        defaultProfileId = null,
         hostOverrides = emptyList(),
     )
 
@@ -23,21 +24,7 @@ object RoutingConfigDefaults {
 
     fun banksDirectConfig(): RoutingConfig = defaultConfig()
 
-    fun safeDefaultConfig(): RoutingConfig = defaultConfig().copy(
-        defaultProfileId = BLOCK_PROFILE_ID,
-        rules = defaultRules().map { rule ->
-            if (rule.type == RouteRuleType.DEFAULT) {
-                rule.copy(
-                    targetProfileId = BLOCK_PROFILE_ID,
-                    name = "Fail-closed default",
-                    reason = "Unknown traffic is blocked until an explicit rule is configured.",
-                    recommendedAction = "Add explicit app, domain, or CIDR rules for allowed destinations.",
-                )
-            } else {
-                rule
-            }
-        },
-    )
+    fun safeDefaultConfig(): RoutingConfig = defaultConfig()
 
     private fun defaultProfiles(): List<TunnelProfile> = listOf(
         TunnelProfile(
@@ -57,30 +44,76 @@ object RoutingConfigDefaults {
             mockOnly = false,
             dnsPolicyId = SYSTEM_DNS_ID,
         ),
+        byeDpiProfile(),
     )
+
+    fun byeDpiProfile(enabled: Boolean = false): TunnelProfile = TunnelProfile(
+        id = BYEDPI_PROFILE_ID,
+        name = "ByeDPI",
+        type = TunnelType.ByeDpi,
+        description = "Локальный SOCKS-прокси совместимости для сетей, где DPI мешает нормальной передаче TCP/TLS.",
+        enabled = enabled,
+        mockOnly = false,
+        platformNotes = "Встроенный ByeDPI (MIT). Это не VPN: он не шифрует весь трафик и не скрывает IP-адрес.",
+        dnsPolicyId = SYSTEM_DNS_ID,
+    )
+
+    fun ensureRequiredProfiles(config: RoutingConfig): RoutingConfig {
+        val existingIds = config.profiles.mapTo(mutableSetOf()) { it.id }
+        val required = defaultProfiles().filterNot { it.id in existingIds }
+        val providerProfileId = config.defaultProfileId?.takeUnless {
+            it == SYSTEM_PROFILE_ID || it == BLOCK_PROFILE_ID || it == BYEDPI_PROFILE_ID
+        }
+        return config.copy(
+            version = CURRENT_ROUTING_CONFIG_VERSION,
+            profiles = config.profiles + required,
+            defaultProfileId = providerProfileId,
+            rules = config.rules.map { rule ->
+                if (rule.type == RouteRuleType.DEFAULT) {
+                    rule.copy(
+                        targetProfileId = providerProfileId ?: BLOCK_PROFILE_ID,
+                        name = if (providerProfileId == null) "Provider tunnel not selected" else "Provider tunnel",
+                        reason = if (providerProfileId == null) {
+                            "Traffic stays blocked until a provider tunnel is selected."
+                        } else {
+                            "Traffic without a more specific rule uses the provider tunnel."
+                        },
+                        technicalDetails = "DEFAULT, priority ${rule.priority}. Explicit app, domain, IP, and CIDR rules override this route.",
+                        recommendedAction = if (providerProfileId == null) {
+                            "Add a working VPN profile and choose it as the provider tunnel."
+                        } else {
+                            "Add specific rules only for traffic that needs another route."
+                        },
+                    )
+                } else {
+                    rule
+                }
+            },
+        )
+    }
 
     private fun defaultDnsPolicies(): List<DnsPolicy> = listOf(
         DnsPolicy(
             id = SYSTEM_DNS_ID,
             name = "Android system DNS",
             type = DnsPolicyType.System,
-            resolveThroughProfileId = SYSTEM_PROFILE_ID,
-            description = "Uses Android system DNS through the ViRouteFS policy model unless the user explicitly configures DNS.",
+            resolveThroughProfileId = null,
+            description = "Uses Android system DNS through the selected provider tunnel unless the user explicitly configures another DNS server.",
         ),
     )
 
     private fun defaultRules(): List<RouteRule> = listOf(
         RouteRule(
             id = "default_system",
-            name = "Default System",
+            name = "Provider tunnel not selected",
             type = RouteRuleType.DEFAULT,
-            targetProfileId = SYSTEM_PROFILE_ID,
+            targetProfileId = BLOCK_PROFILE_ID,
             dnsPolicyId = SYSTEM_DNS_ID,
             priority = 1000,
             matchers = emptyList(),
-            reason = "Apps without explicit rules use the built-in System route inside ViRouteFS.",
-            technicalDetails = "DEFAULT, priority 1000. When network control is active, unmatched apps use System inside ViRouteFS; matched app/domain/IP rules are exclusive. If a chosen profile is unavailable, the safe behavior is Block / fail closed and never silent fallback to another VPN profile.",
-            recommendedAction = "Add a specific rule when a destination needs a separate profile, block action, or DNS policy.",
+            reason = "Traffic stays blocked until a provider tunnel is selected.",
+            technicalDetails = "DEFAULT, priority 1000. When network control is active, every unmatched flow must use the selected provider tunnel. Explicit app/domain/IP/CIDR rules override it.",
+            recommendedAction = "Add a working VPN profile and choose it as the provider tunnel.",
         ),
     )
 }

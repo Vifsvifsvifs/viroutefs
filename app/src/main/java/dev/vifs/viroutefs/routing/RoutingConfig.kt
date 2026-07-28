@@ -7,11 +7,12 @@ import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.validateVlessProfile
 import java.util.Locale
 
-const val CURRENT_ROUTING_CONFIG_VERSION = 2
+const val CURRENT_ROUTING_CONFIG_VERSION = 6
 const val MOCK_PROFILE_LIMITATION = "Профиль пока не подключает реальный тоннель. Он используется для симуляции маршрутов."
-const val SOCKS5_RUNTIME_LIMITATION = "Selected profile: SOCKS5. Runtime forwarding is not enabled yet."
-const val VLESS_ROUTE_DECISION_LIMITATION = "Selected profile is VLESS. Runtime forwarding is not enabled yet."
-const val DNS_POLICY_LIMITATION = "DNS-политика пока используется для объяснения и проверки риска утечки. Реальное DNS-маршрутизирование будет добавлено позже."
+const val SOCKS5_RUNTIME_STATUS = "SOCKS5 forwarding is available through the local sing-box TUN runtime."
+const val VLESS_ROUTE_DECISION_STATUS = "VLESS forwarding is available through the local sing-box TUN runtime."
+const val DNS_POLICY_LIMITATION =
+    "Custom DNS is enforced for domain and Android app policies by the local sing-box runtime. Per-app matching requires Android 10 or newer."
 
 data class RoutingConfig(
     val version: Int = CURRENT_ROUTING_CONFIG_VERSION,
@@ -20,7 +21,54 @@ data class RoutingConfig(
     val rules: List<RouteRule>,
     val defaultProfileId: String? = null,
     val hostOverrides: List<DnsHostOverride> = emptyList(),
+    val emergencyBlockEnabled: Boolean = false,
 )
+
+/**
+ * Selects the provider tunnel used by every flow that has no more specific rule.
+ *
+ * Keeping the persisted DEFAULT rule in sync makes exported configurations
+ * readable by older builds, while defaultProfileId remains authoritative.
+ */
+fun RoutingConfig.withProviderTunnel(profileId: String): RoutingConfig = copy(
+    defaultProfileId = profileId,
+    rules = rules.map { rule ->
+        if (rule.type == RouteRuleType.DEFAULT) {
+            rule.copy(
+                targetProfileId = profileId,
+                name = "Provider tunnel",
+                reason = "Traffic without a more specific app, domain, IP, or CIDR rule uses the provider tunnel.",
+                technicalDetails = "DEFAULT, priority ${rule.priority}. Explicit rules override this route. An unavailable provider tunnel blocks activation.",
+                recommendedAction = "Create specific rules only for traffic that must use another tunnel, System, Block, or ByeDPI.",
+            )
+        } else {
+            rule
+        }
+    },
+)
+
+fun providerTunnelActivationError(config: RoutingConfig): String? {
+    val profileId = config.defaultProfileId
+        ?: return "Сначала выберите туннель провайдера. Без него контроль сети не запускается, чтобы трафик случайно не пошёл напрямую."
+    val profile = config.profiles.firstOrNull { it.id == profileId }
+        ?: return "Выбранный туннель провайдера не найден. Выберите существующий VPN-профиль."
+    if (!profile.enabled) {
+        return "Туннель провайдера «${profile.name}» выключен. Включите его или выберите другой."
+    }
+    if (profile.type in setOf(TunnelType.Direct, TunnelType.Block, TunnelType.ByeDpi)) {
+        return "Маршрут «${profile.name}» нельзя назначить туннелем провайдера. Выберите настоящий VPN или прокси-туннель."
+    }
+    val hasRuntimeConfiguration = when (profile.type) {
+        TunnelType.Socks5 -> profile.socks5 != null
+        TunnelType.VLESS,
+        TunnelType.XrayVlessReality -> profile.vless != null
+        else -> profile.singBox != null
+    }
+    if (!hasRuntimeConfiguration) {
+        return "Для профиля «${profile.name}» ещё нет рабочего движка или полной конфигурации. Выберите готовый туннель."
+    }
+    return null
+}
 
 data class TunnelProfile(
     val id: String,
@@ -33,6 +81,7 @@ data class TunnelProfile(
     val dnsPolicyId: String? = null,
     val socks5: Socks5ProfileConfig? = null,
     val vless: VlessProfileConfig? = null,
+    val singBox: SingBoxProfileConfig? = null,
 ) {
     val warningText: String?
         get() = when (type) {
@@ -54,6 +103,7 @@ data class DnsHostOverride(
 enum class TunnelType(val label: String, val isMockOnly: Boolean) {
     Direct("System", false),
     Block("Block", false),
+    ByeDpi("ByeDPI", true),
     WireGuard("WireGuard", true),
     OpenVpn("OpenVPN", true),
     OpenConnectAnyConnect("OpenConnect / AnyConnect", true),
@@ -67,8 +117,11 @@ enum class TunnelType(val label: String, val isMockOnly: Boolean) {
     Trojan("Trojan", true),
     Shadowsocks("Shadowsocks", true),
     Shadowsocks2022("Shadowsocks 2022", true),
+    Hysteria("Hysteria", true),
     Hysteria2("Hysteria2", true),
+    Snell("Snell", true),
     Tuic("TUIC", true),
+    AnyTls("AnyTLS", true),
     NaiveProxy("NaiveProxy", true),
     Brook("Brook", true),
     ShadowTls("ShadowTLS", true),
@@ -77,6 +130,7 @@ enum class TunnelType(val label: String, val isMockOnly: Boolean) {
     HttpProxy("HTTP proxy", true),
     HttpsProxy("HTTPS proxy", true),
     SshTunnel("SSH tunnel", true),
+    Tor("Tor", true),
     L2tpIpSec("L2TP/IPSec", true),
     L2tp("L2TP", true),
     Pptp("PPTP", true),
@@ -159,18 +213,18 @@ data class RouteDecision(
 ) {
     val dnsPolicySummary: String = dnsPolicy?.name ?: "Не выбрана"
     val profileMockSummary: String = if (tunnelProfile.type == TunnelType.Socks5) {
-        SOCKS5_RUNTIME_LIMITATION
+        SOCKS5_RUNTIME_STATUS
     } else if (tunnelProfile.type == TunnelType.VLESS) {
-        VLESS_ROUTE_DECISION_LIMITATION
+        VLESS_ROUTE_DECISION_STATUS
     } else if (tunnelProfile.mockOnly) {
         MOCK_PROFILE_LIMITATION
     } else {
         "Профиль не является mock-тоннелем."
     }
     val dnsLeakSummary: String = if (dnsPolicy == null || dnsPolicy.type == DnsPolicyType.System) {
-        "Uses Android system DNS through the ViRouteFS policy model; real DNS enforcement is not implemented yet."
+        "Uses the configured system DNS path through the active ViRouteFS TUN router."
     } else {
-        "DNS-политика описывает желаемое поведение, но реальное DNS-маршрутизирование пока не реализовано."
+        "The runtime intercepts DNS and applies custom upstream rules to domains and Android packages."
     }
 }
 
@@ -190,34 +244,39 @@ class RouteEngine(
             rule.type != RouteRuleType.DEFAULT && rule.matches(comparableInput)
         } ?: enabledRules.firstOrNull { it.type == RouteRuleType.DEFAULT }
         ?: config.rules.first { it.type == RouteRuleType.DEFAULT }
+        val effectiveRule = if (matchedRule.type == RouteRuleType.DEFAULT) {
+            matchedRule.copy(
+                targetProfileId = config.defaultProfileId ?: RoutingConfigDefaults.BLOCK_PROFILE_ID,
+            )
+        } else {
+            matchedRule
+        }
 
-        val targetProfile = profilesById[matchedRule.targetProfileId]
+        val targetProfile = profilesById[effectiveRule.targetProfileId]
         val blockProfile = profilesById[RoutingConfigDefaults.BLOCK_PROFILE_ID]
             ?: config.profiles.firstOrNull { it.type == TunnelType.Block }
-        val fallbackProfile = blockProfile?.takeIf { matchedRule.type != RouteRuleType.DEFAULT }
-            ?: config.defaultProfileId?.let { profilesById[it] }?.takeIf { it.enabled }
-            ?: config.profiles.firstOrNull { it.enabled && it.type == TunnelType.Direct }
+        val fallbackProfile = blockProfile
             ?: config.profiles.first()
         val selectedProfile = targetProfile?.takeIf { it.enabled } ?: fallbackProfile
-        val dnsPolicy = matchedRule.dnsPolicyId?.let { dnsPoliciesById[it] }?.takeIf { it.enabled }
-        val warnings = buildWarnings(matchedRule, targetProfile, selectedProfile, dnsPolicy)
+        val dnsPolicy = effectiveRule.dnsPolicyId?.let { dnsPoliciesById[it] }?.takeIf { it.enabled }
+        val warnings = buildWarnings(effectiveRule, targetProfile, selectedProfile, dnsPolicy)
 
         return RouteDecision(
             input = normalizedInput,
             tunnelProfile = selectedProfile,
             dnsPolicy = dnsPolicy,
-            matchedRule = matchedRule,
-            plainReason = matchedRule.reason,
-            technicalDetails = buildTechnicalDetails(matchedRule, selectedProfile, dnsPolicy, warnings),
-            recommendedAction = matchedRule.recommendedAction,
+            matchedRule = effectiveRule,
+            plainReason = effectiveRule.reason,
+            technicalDetails = buildTechnicalDetails(effectiveRule, selectedProfile, dnsPolicy, warnings),
+            recommendedAction = effectiveRule.recommendedAction,
             warnings = warnings,
         )
     }
 
     private fun RouteRule.matches(input: String): Boolean = when (type) {
         RouteRuleType.APP_GROUP,
-        RouteRuleType.APP,
-        RouteRuleType.DOMAIN -> textMatchers().any { matcher -> wildcardContains(input, matcher) }
+        RouteRuleType.APP -> textMatchers().any { matcher -> input == matcher }
+        RouteRuleType.DOMAIN -> textMatchers().any { matcher -> domainMatches(input, matcher) }
         RouteRuleType.CIDR -> matchers.any { cidr -> ipv4InCidr(input, cidr) }
         RouteRuleType.DEFAULT -> true
     }
@@ -228,9 +287,24 @@ class RouteEngine(
         addAll(appMatchers.mapNotNull { it.displayName })
     }.map { it.lowercase(Locale.ROOT).trim() }.filter { it.isNotBlank() && it != "*" }
 
-    private fun wildcardContains(input: String, matcher: String): Boolean {
-        val normalizedMatcher = matcher.removePrefix("*.")
-        return input.contains(normalizedMatcher)
+    private fun domainMatches(input: String, matcher: String): Boolean {
+        val host = input
+            .substringAfter("://", input)
+            .substringBefore('/')
+            .substringBefore(':')
+            .trim()
+            .trimEnd('.')
+        return when {
+            matcher.startsWith("full:") -> host == matcher.removePrefix("full:").trimEnd('.')
+            matcher.startsWith("keyword:") -> host.contains(matcher.removePrefix("keyword:"))
+            matcher.startsWith("regexp:") -> runCatching {
+                Regex(matcher.removePrefix("regexp:")).matches(host)
+            }.getOrDefault(false)
+            else -> {
+                val domain = matcher.removePrefix("domain:").removePrefix("*.").trimEnd('.')
+                host == domain || host.endsWith(".$domain")
+            }
+        }
     }
 
     private fun buildWarnings(
@@ -244,27 +318,31 @@ class RouteEngine(
         } else if (!targetProfile.enabled) {
             add("Профиль правила отключён. Модель безопасного поведения: Block / fail closed; без тихого fallback на другой профиль.")
         }
-        if (selectedProfile.type == TunnelType.Socks5) {
-            add(SOCKS5_RUNTIME_LIMITATION)
-        } else if (selectedProfile.type == TunnelType.VLESS) {
-            add(VLESS_ROUTE_DECISION_LIMITATION)
-            add(VLESS_RUNTIME_LIMITATION)
-        } else if (selectedProfile.mockOnly) {
+        if (selectedProfile.mockOnly &&
+            selectedProfile.type != TunnelType.Socks5 &&
+            selectedProfile.type != TunnelType.VLESS &&
+            selectedProfile.singBox == null
+        ) {
             add(MOCK_PROFILE_LIMITATION)
         }
         if (dnsPolicy == null && matchedRule.dnsPolicyId != null) {
             add("DNS-политика правила не найдена или отключена. Возможна утечка DNS через системные настройки.")
         }
-        dnsPolicy?.resolveThroughProfileId?.let { expectedProfileId ->
-            if (expectedProfileId != selectedProfile.id) {
-                val expectedName = profilesById[expectedProfileId]?.name ?: expectedProfileId
-                add("Маршрут выбран через ${selectedProfile.name}, но DNS-политика ожидает резолвинг через $expectedName. В текущей версии это только предупреждение о риске утечки.")
-            }
+        if (dnsPolicy != null && dnsPolicy.type != DnsPolicyType.System &&
+            (matchedRule.type == RouteRuleType.APP || matchedRule.type == RouteRuleType.APP_GROUP)
+        ) {
+            add("Custom DNS will be matched to the Android package by the local sing-box runtime. Android 10 or newer is required.")
         }
-        if (dnsPolicy != null && dnsPolicy.type != DnsPolicyType.System) {
-            add("Маршрут выбран через ${selectedProfile.name}, но DNS-политика пока не применяется реально. В будущей версии DNS должен резолвиться через выбранную политику.")
+        if (selectedProfile.type !in setOf(
+                TunnelType.Direct,
+                TunnelType.Block,
+                TunnelType.Socks5,
+                TunnelType.VLESS,
+                TunnelType.XrayVlessReality,
+            ) && selectedProfile.singBox == null
+        ) {
+            add("The selected protocol is not connected to the current stable runtime. Activation maps it to Block / fail closed.")
         }
-        add("Реальное VPN-маршрутизирование пока не реализовано; решение используется для симуляции и диагностики конфигурации.")
     }
 
     private fun buildTechnicalDetails(
@@ -277,10 +355,11 @@ class RouteEngine(
         appendLine("Приоритет: ${rule.priority} (меньше — важнее)")
         appendLine("Матчеры: ${rule.matchers.joinToString().ifBlank { "не требуются" }}")
         appendLine("Профиль: ${profile.name} (${profile.type.label})")
-        if (profile.type == TunnelType.Socks5) appendLine(SOCKS5_RUNTIME_LIMITATION)
-        if (profile.type == TunnelType.VLESS) appendLine(VLESS_ROUTE_DECISION_LIMITATION)
+        if (profile.type == TunnelType.Socks5) appendLine(SOCKS5_RUNTIME_STATUS)
+        if (profile.type == TunnelType.VLESS) appendLine(VLESS_ROUTE_DECISION_STATUS)
+        if (profile.singBox != null) appendLine("Профиль подключён к локальному sing-box runtime.")
         appendLine("DNS-политика: ${dnsPolicy?.name ?: "не выбрана"}")
-        appendLine("DNS default: ${if (dnsPolicy == null || dnsPolicy.type == DnsPolicyType.System) "Android system DNS" else "configured policy, not enforced yet"}")
+        appendLine("DNS default: ${if (dnsPolicy == null || dnsPolicy.type == DnsPolicyType.System) "Android system DNS through TUN" else "custom policy compiled into runtime"}")
         if (warnings.isNotEmpty()) {
             appendLine("Предупреждения:")
             warnings.forEach { appendLine("- $it") }
@@ -334,6 +413,11 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
                 add("VLESS profile ${profile.name} has no VLESS configuration.")
             } else {
                 validateVlessProfile(vless).forEach { add("Профиль ${profile.name}: $it") }
+            }
+        }
+        profile.singBox?.let { singBox ->
+            validateSingBoxProfile(profile.type, singBox).forEach {
+                add("Профиль ${profile.name}: $it")
             }
         }
         profile.dnsPolicyId?.takeIf { it !in dnsPolicyIds }?.let { add("Профиль ${profile.name}: DNS-политика $it не найдена.") }

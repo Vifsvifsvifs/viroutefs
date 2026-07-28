@@ -10,7 +10,7 @@ The user should be able to define rules like:
 
 - 10.0.0.0/8 -> OpenVPN Corp
 - 172.16.1.0/22 -> OpenVPN Site B
-- Telegram -> Xray
+- Telegram -> VLESS/Reality
 - Banking apps -> System
 - Everything else -> System by default, or explicit selected profile only when a rule matches
 
@@ -22,7 +22,7 @@ The user should be able to define rules like:
 - Internal route engine
 - System outbound (default Android/system path inside ViRouteFS)
 - Block outbound / fail closed
-- Xray outbound
+- sing-box outbounds and endpoints
 - OpenVPN outbound
 
 ### DNS Engine
@@ -43,7 +43,7 @@ The app should explain traffic in simple terms.
 Example:
 
 Telegram connected to 149.154.167.91:443.
-Example future rule shape: selected app/domain/IP -> selected actual profile, with fail-closed behavior if that profile is unavailable.
+Current rule shape: selected app/domain/IP/CIDR -> selected actual profile, with fail-closed behavior if that profile is unavailable.
 Status: success.
 Latency: 84 ms.
 

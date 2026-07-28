@@ -2,6 +2,8 @@
 
 package dev.vifs.viroutefs.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
@@ -9,6 +11,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Icon
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Card
@@ -16,7 +19,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Add
@@ -33,12 +36,14 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -47,7 +52,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -56,8 +60,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import android.os.Handler
-import android.os.Looper
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
@@ -72,11 +74,21 @@ import dev.vifs.viroutefs.ScreenList
 import dev.vifs.viroutefs.StatusChip
 import dev.vifs.viroutefs.UiText
 import dev.vifs.viroutefs.WarningText
+import dev.vifs.viroutefs.engine.EngineCatalog
+import dev.vifs.viroutefs.engine.ProtocolAvailability
+import dev.vifs.viroutefs.engine.ProtocolDescriptor
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.RouteRuleType
+import dev.vifs.viroutefs.routing.SingBoxProfileConfig
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
+import dev.vifs.viroutefs.routing.importOpenVpnProfile
+import dev.vifs.viroutefs.routing.providerTunnelActivationError
+import dev.vifs.viroutefs.routing.singBoxProfileTemplate
+import dev.vifs.viroutefs.routing.singBoxProtocolSchema
+import dev.vifs.viroutefs.routing.validateSingBoxProfile
+import dev.vifs.viroutefs.routing.withProviderTunnel
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_NOTICE
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_SECRET_NOTICE
 import dev.vifs.viroutefs.runtime.tcp.DevTcpBridgeSnapshot
@@ -124,10 +136,9 @@ import dev.vifs.viroutefs.vpn.Ipv4Protocol
 import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreview
 import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreviewer
 import dev.vifs.viroutefs.vpn.PacketSummary
+import dev.vifs.viroutefs.vpn.SingBoxRuntimeValidator
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
-import dev.vifs.viroutefs.vpn.XrayEngineRunner
-import dev.vifs.viroutefs.vpn.minimalSmokeConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -142,8 +153,9 @@ internal fun VpnScreen(
     text: UiText,
     config: RoutingConfig,
     vpnState: VpnServiceUiState,
+    developerMode: Boolean,
     @Suppress("UNUSED_PARAMETER") tunTestRoutePreviewEnabled: Boolean,
-    @Suppress("UNUSED_PARAMETER") onVpnSwitch: (Boolean) -> Unit,
+    onVpnSwitch: (Boolean) -> Unit,
     @Suppress("UNUSED_PARAMETER") onTunTestRoutePreview: (Boolean) -> Unit,
     onClearPacketList: () -> Unit,
     onPausePacketInspector: (Boolean) -> Unit,
@@ -152,25 +164,16 @@ internal fun VpnScreen(
     var selectedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
     var addSocks5 by rememberSaveable { mutableStateOf(false) }
     var addVless by rememberSaveable { mutableStateOf(false) }
+    var addSingBoxTypeName by rememberSaveable { mutableStateOf<String?>(null) }
+    val addSingBoxType = addSingBoxTypeName?.let { name ->
+        TunnelType.entries.firstOrNull { it.name == name }
+    }
     val selectedProfile = selectedProfileId?.let { id -> config.profiles.firstOrNull { it.id == id } }
-    val visibleProfiles = config.profiles.filter { !it.mockOnly || it.type == TunnelType.Socks5 || it.type == TunnelType.VLESS }
+    val visibleProfiles = config.profiles.filter {
+        !it.mockOnly || it.type == TunnelType.Socks5 || it.type == TunnelType.VLESS || it.singBox != null
+    }
     val routeDecisionPreviewer = remember(config) { LiveRouteDecisionPreviewer(config) }
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    val mainHandler = remember { Handler(Looper.getMainLooper()) }
-    var xrayLogs by remember { mutableStateOf(listOf("Xray smoke test idle. No VPN/TUN traffic is attached.")) }
-    var xrayRunning by remember { mutableStateOf(false) }
-    fun appendXrayLog(message: String) {
-        mainHandler.post {
-            xrayLogs = (xrayLogs + message).takeLast(6)
-        }
-    }
-    val xrayEngineRunner = remember(context.applicationContext) {
-        XrayEngineRunner(context.applicationContext) { message -> appendXrayLog(message) }
-    }
-    DisposableEffect(xrayEngineRunner) {
-        onDispose { xrayEngineRunner.stop() }
-    }
     val devTcpBridge = remember(config.profiles) {
         VlessDevTcpBridge(
             profiles = {
@@ -207,6 +210,19 @@ internal fun VpnScreen(
         return
     }
 
+    if (addSingBoxType != null) {
+        SingBoxProfileEditorScreen(
+            padding = padding,
+            text = text,
+            config = config,
+            type = addSingBoxType,
+            profile = null,
+            onBack = { addSingBoxTypeName = null },
+            onConfig = { next, message -> onConfig(next, message) },
+        )
+        return
+    }
+
     if (selectedProfile != null) {
         NetworkProfileDetailsScreen(
             padding = padding,
@@ -222,7 +238,6 @@ internal fun VpnScreen(
         return
     }
 
-    var controlActive by remember { mutableStateOf(vpnState.switchChecked) }
     var showAddVpnSheet by remember { mutableStateOf(false) }
     val addVpnSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -241,6 +256,10 @@ internal fun VpnScreen(
                     showAddVpnSheet = false
                     addVless = true
                 },
+                onAddSingBox = { type ->
+                    showAddVpnSheet = false
+                    addSingBoxTypeName = type.name
+                },
             )
         }
     }
@@ -248,12 +267,59 @@ internal fun VpnScreen(
     ScreenList(padding) {
         item { Header(text.networks, text.networksSubtitle) }
         item {
-            // Redesigned hero: local UI state only, so this visual control does not mutate VpnService runtime behavior yet.
+            ProviderTunnelCard(
+                config = config,
+                activationError = providerTunnelActivationError(config),
+                onAddVpn = { showAddVpnSheet = true },
+            )
+        }
+        item {
             NetworkControlHero(
-                active = controlActive,
+                active = vpnState.switchChecked,
                 serviceLabel = vpnState.label(text),
                 serviceDetail = vpnState.detail,
-                onToggle = { controlActive = !controlActive },
+                onToggle = { onVpnSwitch(!vpnState.switchChecked) },
+            )
+        }
+        item {
+            SecurityControlsCard(
+                emergencyBlockEnabled = config.emergencyBlockEnabled,
+                byeDpiEnabled = config.profiles.firstOrNull {
+                    it.id == RoutingConfigDefaults.BYEDPI_PROFILE_ID
+                }?.enabled == true,
+                vpnActive = vpnState.switchChecked,
+                onEmergencyBlockEnabled = { enabled ->
+                    onConfig(
+                        config.copy(emergencyBlockEnabled = enabled),
+                        if (enabled) {
+                            "Аварийный запрет сети включён. Весь трафик будет направлен в Block."
+                        } else {
+                            "Аварийный запрет сети снят. Действуют обычные правила маршрутизации."
+                        },
+                    )
+                },
+                onByeDpiEnabled = { enabled ->
+                    val existing = config.profiles.firstOrNull {
+                        it.id == RoutingConfigDefaults.BYEDPI_PROFILE_ID
+                    }
+                    val nextProfile = (existing ?: RoutingConfigDefaults.byeDpiProfile())
+                        .copy(enabled = enabled, mockOnly = false)
+                    val nextProfiles = if (existing == null) {
+                        config.profiles + nextProfile
+                    } else {
+                        config.profiles.map {
+                            if (it.id == RoutingConfigDefaults.BYEDPI_PROFILE_ID) nextProfile else it
+                        }
+                    }
+                    onConfig(
+                        config.copy(profiles = nextProfiles),
+                        if (enabled) {
+                            "ByeDPI включён. Он доступен как отдельный маршрут и не заменяет VPN-шифрование."
+                        } else {
+                            "ByeDPI выключен. Правила, которые указывают на него, будут заблокированы."
+                        },
+                    )
+                },
             )
         }
         item {
@@ -266,113 +332,97 @@ internal fun VpnScreen(
                 onClick = { showAddVpnSheet = true },
             )
         }
-        item {
-            CardBlock {
-                Text(text.vpnPacketsRead, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                CounterLine(text.vpnPacketsRead, vpnState.packetsRead)
-                CounterLine(text.vpnBytesRead, vpnState.bytesRead)
-                CounterLine(text.vpnIpv4PacketsRead, vpnState.ipv4PacketsRead)
-                CounterLine(text.vpnTcpPacketsRead, vpnState.tcpPacketsRead)
-                CounterLine(text.vpnUdpPacketsRead, vpnState.udpPacketsRead)
-                CounterLine(text.vpnIcmpPacketsRead, vpnState.icmpPacketsRead)
+        if (vpnState.tunTestRouteActive || vpnState.packetSummaries.isNotEmpty()) {
+            item {
+                CardBlock {
+                    Text(text.vpnPacketsRead, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    CounterLine(text.vpnPacketsRead, vpnState.packetsRead)
+                    CounterLine(text.vpnBytesRead, vpnState.bytesRead)
+                    CounterLine(text.vpnIpv4PacketsRead, vpnState.ipv4PacketsRead)
+                    CounterLine(text.vpnTcpPacketsRead, vpnState.tcpPacketsRead)
+                    CounterLine(text.vpnUdpPacketsRead, vpnState.udpPacketsRead)
+                    CounterLine(text.vpnIcmpPacketsRead, vpnState.icmpPacketsRead)
+                }
             }
         }
-        item {
-            XrayEngineSmokeCard(
-                running = xrayRunning,
-                logs = xrayLogs,
-                onStart = {
-                    scope.launch {
-                        appendXrayLog("Starting dev smoke test…")
-                        val result = withContext(Dispatchers.IO) { xrayEngineRunner.start(minimalSmokeConfig()) }
-                        xrayRunning = xrayEngineRunner.isRunning()
-                        result.onFailure { error ->
-                            appendXrayLog(error.localizedMessage ?: "Xray smoke start failed.")
-                        }
-                    }
-                },
-                onStop = {
-                    scope.launch {
-                        withContext(Dispatchers.IO) { xrayEngineRunner.stop() }
-                        xrayRunning = xrayEngineRunner.isRunning()
-                    }
-                },
-            )
-        }
-        item {
-            TcpSessionRuntimeCard(
-                config = config,
-                vpnState = vpnState,
-                devSnapshot = devBridgeSnapshot,
-                message = devBridgeMessage,
-                onOpenDevSession = { profileId, targetHost, targetPort ->
-                    scope.launch {
-                        devBridgeMessage = "Opening dev TCP session…"
-                        runCatching {
-                            withContext(Dispatchers.IO) { devTcpBridge.openDevSession(profileId, targetHost, targetPort) }
-                        }.onSuccess {
-                            devBridgeSnapshot = devTcpBridge.snapshot()
-                            devBridgeMessage = "Dev TCP session open."
-                        }.onFailure { error ->
-                            devBridgeSnapshot = devTcpBridge.snapshot()
-                            devBridgeMessage = error.localizedMessage ?: "Could not open dev TCP session."
-                        }
-                    }
-                },
-                onCloseDevSession = { sessionId ->
-                    scope.launch {
-                        withContext(Dispatchers.IO) { devTcpBridge.closeDevSession(sessionId) }
-                        devBridgeSnapshot = devTcpBridge.snapshot()
-                        devBridgeMessage = "Dev TCP session closed."
-                    }
-                },
-                onSendTestData = { sessionId ->
-                    scope.launch {
-                        runCatching {
-                            withContext(Dispatchers.IO) {
-                                devTcpBridge.sendTestData(sessionId, "ViRouteFS dev TCP test".encodeToByteArray())
-                                devTcpBridge.receiveTestData(sessionId)
+        if (developerMode && !vpnState.switchChecked) {
+            item {
+                TcpSessionRuntimeCard(
+                    config = config,
+                    vpnState = vpnState,
+                    devSnapshot = devBridgeSnapshot,
+                    message = devBridgeMessage,
+                    onOpenDevSession = { profileId, targetHost, targetPort ->
+                        scope.launch {
+                            devBridgeMessage = "Opening dev TCP session…"
+                            runCatching {
+                                withContext(Dispatchers.IO) { devTcpBridge.openDevSession(profileId, targetHost, targetPort) }
+                            }.onSuccess {
+                                devBridgeSnapshot = devTcpBridge.snapshot()
+                                devBridgeMessage = "Dev TCP session open."
+                            }.onFailure { error ->
+                                devBridgeSnapshot = devTcpBridge.snapshot()
+                                devBridgeMessage = error.localizedMessage ?: "Could not open dev TCP session."
                             }
-                        }.onSuccess { received ->
-                            devBridgeSnapshot = devTcpBridge.snapshot()
-                            devBridgeMessage = "Received ${received.size} bytes."
-                        }.onFailure { error ->
-                            devBridgeSnapshot = devTcpBridge.snapshot()
-                            devBridgeMessage = error.localizedMessage ?: "Dev TCP send/read failed."
                         }
-                    }
-                },
-            )
+                    },
+                    onCloseDevSession = { sessionId ->
+                        scope.launch {
+                            withContext(Dispatchers.IO) { devTcpBridge.closeDevSession(sessionId) }
+                            devBridgeSnapshot = devTcpBridge.snapshot()
+                            devBridgeMessage = "Dev TCP session closed."
+                        }
+                    },
+                    onSendTestData = { sessionId ->
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) {
+                                    devTcpBridge.sendTestData(sessionId, "ViRouteFS dev TCP test".encodeToByteArray())
+                                    devTcpBridge.receiveTestData(sessionId)
+                                }
+                            }.onSuccess { received ->
+                                devBridgeSnapshot = devTcpBridge.snapshot()
+                                devBridgeMessage = "Received ${received.size} bytes."
+                            }.onFailure { error ->
+                                devBridgeSnapshot = devTcpBridge.snapshot()
+                                devBridgeMessage = error.localizedMessage ?: "Dev TCP send/read failed."
+                            }
+                        }
+                    },
+                )
+            }
         }
-        item {
-            CardBlock {
-                Text(text.vpnPacketInspector, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                Text(text.vpnPacketInspectorPrivacy, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(text.vpnPausePacketInspector, style = MaterialTheme.typography.bodySmall)
-                        Text(
-                            "${text.vpnPacketListLastUpdate}: ${vpnState.packetSummaryUpdatedAt.formatPacketTime(text)}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+        if (vpnState.tunTestRouteActive || vpnState.packetSummaries.isNotEmpty()) {
+            item {
+                CardBlock {
+                    Text(text.vpnPacketInspector, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    Text(text.vpnPacketInspectorPrivacy, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(text.vpnPausePacketInspector, style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                "${text.vpnPacketListLastUpdate}: ${vpnState.packetSummaryUpdatedAt.formatPacketTime(text)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = vpnState.packetInspectorPaused, onCheckedChange = onPausePacketInspector)
                     }
-                    Switch(checked = vpnState.packetInspectorPaused, onCheckedChange = onPausePacketInspector)
-                }
-                if (vpnState.packetInspectorPaused) WarningText(text.vpnPacketInspectorPaused)
-                OutlinedButton(onClick = onClearPacketList) { Text(text.vpnClearPacketList) }
-                if (vpnState.packetSummaries.isEmpty()) {
-                    Text(text.vpnPacketInspectorEmpty, style = MaterialTheme.typography.bodySmall)
-                } else {
-                    vpnState.packetSummaries.forEach { summary ->
-                        PacketSummaryLine(
-                            summary = summary,
-                            routeDecisionPreview = routeDecisionPreviewer.preview(summary),
-                        )
+                    if (vpnState.packetInspectorPaused) WarningText(text.vpnPacketInspectorPaused)
+                    OutlinedButton(onClick = onClearPacketList) { Text(text.vpnClearPacketList) }
+                    if (vpnState.packetSummaries.isEmpty()) {
+                        Text(text.vpnPacketInspectorEmpty, style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        vpnState.packetSummaries.forEach { summary ->
+                            PacketSummaryLine(
+                                summary = summary,
+                                routeDecisionPreview = routeDecisionPreviewer.preview(summary),
+                            )
+                        }
                     }
                 }
             }
@@ -380,8 +430,8 @@ internal fun VpnScreen(
         item {
             CardBlock {
                 Text("Runtime notes", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                Text("SOCKS5-профиль добавлен. Проверка подключения запускается только вручную. Полная маршрутизация трафика устройства через SOCKS5 будет добавлена позже.", style = MaterialTheme.typography.bodySmall)
-                Text("SOCKS5 profile added. Connectivity testing runs only manually. Full device traffic routing through SOCKS5 will be added later.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("SOCKS5 и VLESS-профили участвуют в реальной маршрутизации, когда включён VPN-маршрутизатор.", style = MaterialTheme.typography.bodySmall)
+                Text("Недоступный или некорректный профиль блокирует выбранный трафик вместо скрытого перехода на System.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(VLESS_RUNTIME_LIMITATION, style = MaterialTheme.typography.bodySmall)
                 Text(VLESS_ROUTE_PREVIEW_ONLY, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -443,7 +493,7 @@ private fun NetworkControlHero(
                     )
                     Text(
                         text = if (active) {
-                            "Весь трафик проходит через приложение. Правила маршрутизации видны ниже."
+                            "VPN-служба запущена. Реальный режим и состояние движка показаны в строке статуса ниже."
                         } else {
                             "Приложения используют обычное подключение. Маршруты готовы к настройке."
                         },
@@ -532,22 +582,155 @@ private fun StatusStrip(active: Boolean, serviceLabel: String, serviceDetail: St
 }
 
 @Composable
+private fun SecurityControlsCard(
+    emergencyBlockEnabled: Boolean,
+    byeDpiEnabled: Boolean,
+    vpnActive: Boolean,
+    onEmergencyBlockEnabled: (Boolean) -> Unit,
+    onByeDpiEnabled: (Boolean) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (emergencyBlockEnabled) {
+                MaterialTheme.colorScheme.errorContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            },
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(
+                "Быстрая защита",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("Запретить всю сеть", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (emergencyBlockEnabled) {
+                            "Аварийный режим активен: DNS и весь TCP/UDP-трафик направляются в Block."
+                        } else {
+                            "Мгновенный kill switch поверх всех правил. Конфигурация профилей не удаляется."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = emergencyBlockEnabled,
+                    onCheckedChange = onEmergencyBlockEnabled,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("ByeDPI", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (byeDpiEnabled) {
+                            "Локальный MIT-движок включён и доступен как маршрут ByeDPI. Он не шифрует трафик и не скрывает IP."
+                        } else {
+                            "Локальная совместимость для сетей, где DPI мешает TCP/TLS. Это не VPN и не средство анонимности."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = byeDpiEnabled,
+                    onCheckedChange = onByeDpiEnabled,
+                )
+            }
+            Text(
+                if (vpnActive) {
+                    "Изменение сохраняется и автоматически перезапускает активный VPN-движок."
+                } else {
+                    "Настройка применится при следующем включении контроля сети."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProviderTunnelCard(
+    config: RoutingConfig,
+    activationError: String?,
+    onAddVpn: () -> Unit,
+) {
+    val profile = config.defaultProfileId?.let { id ->
+        config.profiles.firstOrNull { it.id == id }
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (activationError == null) {
+                Color(0xFF193D2B)
+            } else {
+                MaterialTheme.colorScheme.errorContainer
+            },
+        ),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                "Туннель провайдера",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                profile?.let { "${it.name} • ${it.type.label}" }
+                    ?: "Не выбран",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                activationError
+                    ?: "Весь трафик без отдельного правила идёт через этот туннель. Правила приложений, доменов и сетей имеют приоритет.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (activationError != null) {
+                FilledTonalButton(onClick = onAddVpn) {
+                    Text(if (profile == null) "Добавить VPN и выбрать его" else "Открыть список VPN")
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun DefaultRoutesSection() {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            "Дефолтные маршруты",
+            "Служебные маршруты для отдельных правил",
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.SemiBold,
         )
         Text(
-            "Эти варианты всегда доступны: отправить приложение напрямую через Android или полностью закрыть ему интернет.",
+            "System и Block никогда не становятся туннелем провайдера. Их можно назначить только конкретному приложению, домену или диапазону сети.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         DefaultRouteCard(
             title = "System / Система",
-            subtitle = "Приложения по умолчанию идут через системное подключение.",
-            detail = "Используйте для банков, госуслуг и сервисов, которым нужен прямой доступ без туннеля.",
+            subtitle = "Явный выход через обычную сеть Android.",
+            detail = "Используйте только как осознанное исключение: такой трафик не идёт через туннель провайдера.",
             icon = Icons.Filled.Public,
             accent = MaterialTheme.colorScheme.primary,
         )
@@ -629,7 +812,7 @@ private fun AddVpnCard(profileCount: Int, onClick: () -> Unit) {
                 )
                 AssistChip(onClick = {}, label = { Text("Профилей: $profileCount") })
             }
-            Icon(Icons.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -639,9 +822,22 @@ private fun AddVpnTypeSheet(
     onClose: () -> Unit,
     onAddSocks5: () -> Unit,
     onAddVless: () -> Unit,
+    onAddSingBox: (TunnelType) -> Unit,
 ) {
+    var search by rememberSaveable { mutableStateOf("") }
+    val protocols = remember(search) {
+        val query = search.trim()
+        EngineCatalog.selectableProtocols.filter { descriptor ->
+            query.isBlank() ||
+                descriptor.type.label.contains(query, ignoreCase = true) ||
+                descriptor.backend.label.contains(query, ignoreCase = true) ||
+                descriptor.summary.contains(query, ignoreCase = true)
+        }
+    }
     Column(
-        modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 28.dp),
+        modifier = Modifier
+            .verticalScroll(rememberScrollState())
+            .padding(start = 18.dp, end = 18.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(
@@ -663,47 +859,105 @@ private fun AddVpnTypeSheet(
                 Text("Закрыть")
             }
         }
-        FilledTonalButton(onClick = onAddSocks5, modifier = Modifier.fillMaxWidth()) {
-            Text("SOCKS5 (ручная проверка подключения)")
-        }
-        Button(onClick = onAddVless, modifier = Modifier.fillMaxWidth()) {
-            Text("VLESS / REALITY")
-        }
+        OutlinedTextField(
+            value = search,
+            onValueChange = { search = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Найти протокол") },
+            placeholder = { Text("Например: OpenVPN, WireGuard, IKEv2") },
+            singleLine = true,
+        )
         Text(
-            "Остальные типы пока показаны как UI-заглушка. Добавление не запускает скрытую передачу логов или PCAP.",
+            "В списке показано реальное состояние движков и лицензий. Неработающий протокол нельзя случайно сохранить как активный.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        protocols.forEach { protocol ->
+            ProtocolCatalogRow(
+                protocol = protocol,
+                onAdd = when (protocol.type) {
+                    TunnelType.Socks5 -> onAddSocks5
+                    TunnelType.VLESS -> onAddVless
+                    else -> if (
+                        protocol.availability == ProtocolAvailability.RuntimeReady &&
+                        singBoxProtocolSchema(protocol.type) != null
+                    ) {
+                        { onAddSingBox(protocol.type) }
+                    } else {
+                        null
+                    }
+                },
+            )
+        }
     }
 }
 
 @Composable
-private fun XrayEngineSmokeCard(
-    running: Boolean,
-    logs: List<String>,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
+private fun ProtocolCatalogRow(
+    protocol: ProtocolDescriptor,
+    onAdd: (() -> Unit)?,
 ) {
-    CardBlock {
-        Text("Xray engine smoke test", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-        Text(
-            "Dev/diagnostic lifecycle test only. Starts a local SOCKS listener on 127.0.0.1:10808 and does not create VPN, TUN, or route device traffic.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        WarningText("Dev-only diagnostic: no payload logging, no VPN service, no Android traffic routing.")
-        Text(
-            "Status: ${if (running) "running" else "stopped"}",
-            fontWeight = FontWeight.SemiBold,
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Button(enabled = !running, onClick = onStart) { Text("Start") }
-            OutlinedButton(enabled = running, onClick = onStop) { Text("Stop") }
-        }
-        Text("Recent engine logs", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
-        logs.forEach { logLine ->
-            Text("• $logLine", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val ready = protocol.availability == ProtocolAvailability.RuntimeReady && onAdd != null
+    val accent = when (protocol.availability) {
+        ProtocolAvailability.RuntimeReady -> Color(0xFF1B7F46)
+        ProtocolAvailability.AuditedPlanned -> MaterialTheme.colorScheme.primary
+        ProtocolAvailability.LegacyDisabled -> Color(0xFFB3261E)
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    protocol.type.label,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(accent.copy(alpha = 0.14f))
+                        .padding(horizontal = 9.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        when (protocol.availability) {
+                            ProtocolAvailability.RuntimeReady -> "Работает"
+                            ProtocolAvailability.AuditedPlanned -> "Подключается"
+                            ProtocolAvailability.LegacyDisabled -> "Устарел"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = accent,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+            Text(protocol.summary, style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Движок: ${protocol.backend.label} • лицензия: ${protocol.backend.licenseDecision}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (ready) {
+                FilledTonalButton(onClick = requireNotNull(onAdd), modifier = Modifier.fillMaxWidth()) {
+                    Text("Добавить профиль")
+                }
+            } else {
+                Text(
+                    protocol.availability.userLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = accent,
+                )
+            }
         }
     }
 }
@@ -725,7 +979,7 @@ private fun TcpSessionRuntimeCard(
     CardBlock {
         Text("Dev VLESS TCP bridge", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
         Text(
-            "Safe dev-only TCP stream for validating one VLESS profile. Runtime forwarding is not enabled.",
+            "Safe developer-only TCP stream for validating one VLESS profile. This card is separate from the active VPN router.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -885,9 +1139,21 @@ private fun NetworkProfileDetailsScreen(
         )
         return
     }
+    if (profile.singBox != null) {
+        SingBoxProfileEditorScreen(
+            padding = padding,
+            text = text,
+            config = config,
+            type = profile.type,
+            profile = profile,
+            onBack = onBack,
+            onConfig = onConfig,
+        )
+        return
+    }
     val dns = config.dnsPolicies.firstOrNull { it.id == profile.dnsPolicyId }
     val usedRuleNames = config.rules.filter { it.targetProfileId == profile.id }.map { it.name }
-    val protectedProfile = profile.type in listOf(TunnelType.Direct, TunnelType.Block)
+    val protectedProfile = profile.type in listOf(TunnelType.Direct, TunnelType.Block, TunnelType.ByeDpi)
     val canDelete = !protectedProfile && usedRuleNames.isEmpty()
 
     ScreenList(padding) {
@@ -908,7 +1174,7 @@ private fun NetworkProfileDetailsScreen(
                 if (config.defaultProfileId == profile.id) {
                     StatusChip(text.defaultProfile)
                 } else {
-                    OutlinedButton(onClick = { onConfig(config.copy(defaultProfileId = profile.id), text.defaultChanged) }) { Text(text.makeDefault) }
+                    OutlinedButton(onClick = { onConfig(config.withProviderTunnel(profile.id), text.defaultChanged) }) { Text(text.makeDefault) }
                 }
                 StatusChip("DNS: ${dns?.name ?: text.noDns}")
             }
@@ -951,6 +1217,7 @@ private fun NetworkProfileDetailsScreen(
 
 private val VpnServiceUiState.switchChecked: Boolean
     get() = status == VpnServiceStatus.Starting ||
+        status == VpnServiceStatus.RuntimeActive ||
         status == VpnServiceStatus.ServiceActiveNoTun ||
         status == VpnServiceStatus.TunPreviewActive ||
         status == VpnServiceStatus.TunTestRouteActive
@@ -960,11 +1227,275 @@ private fun VpnServiceUiState.label(text: UiText): String = when (status) {
     VpnServiceStatus.PermissionRequired -> text.vpnPermissionRequired
     VpnServiceStatus.NotificationPermissionRequired -> text.vpnNotificationPermissionRequired
     VpnServiceStatus.Starting -> text.vpnStarting
+    VpnServiceStatus.RuntimeActive -> "VPN router active"
     VpnServiceStatus.ServiceActiveNoTun -> text.vpnLocalServiceActive
     VpnServiceStatus.TunPreviewActive -> text.vpnTunPreviewActive
     VpnServiceStatus.TunTestRouteActive -> text.vpnTunPreviewActive
     VpnServiceStatus.Stopped -> text.vpnStopped
     VpnServiceStatus.Error -> text.vpnError
+}
+
+@Composable
+private fun SingBoxProfileEditorScreen(
+    padding: PaddingValues,
+    text: UiText,
+    config: RoutingConfig,
+    type: TunnelType,
+    profile: TunnelProfile?,
+    onBack: () -> Unit,
+    onConfig: (RoutingConfig, String?) -> Unit,
+) {
+    val schema = requireNotNull(singBoxProtocolSchema(type))
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var name by rememberSaveable(profile?.id ?: "new-${type.name}") {
+        mutableStateOf(profile?.name ?: type.label)
+    }
+    var enabled by rememberSaveable(profile?.id ?: "new-${type.name}-enabled") {
+        mutableStateOf(profile?.enabled ?: true)
+    }
+    var dnsPolicyId by rememberSaveable(profile?.id ?: "new-${type.name}-dns") {
+        mutableStateOf(profile?.dnsPolicyId ?: RoutingConfigDefaults.SYSTEM_DNS_ID)
+    }
+    var optionsJson by rememberSaveable(profile?.id ?: "new-${type.name}-json") {
+        mutableStateOf(profile?.singBox?.optionsJson ?: singBoxProfileTemplate(type))
+    }
+    var errors by remember(profile?.id ?: "new-${type.name}-errors") {
+        mutableStateOf(emptyList<String>())
+    }
+    var nativeCheckMessage by remember(profile?.id ?: "new-${type.name}-native-check") {
+        mutableStateOf<String?>(null)
+    }
+    var checking by remember(profile?.id ?: "new-${type.name}-checking") {
+        mutableStateOf(false)
+    }
+    val openVpnImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val imported = withContext(Dispatchers.IO) {
+                runCatching {
+                    val source = context.contentResolver.openInputStream(uri)
+                        ?.bufferedReader(Charsets.UTF_8)
+                        ?.use { it.readText() }
+                        ?: error("Android не смог прочитать выбранный файл.")
+                    importOpenVpnProfile(source)
+                }
+            }
+            imported.onSuccess { result ->
+                optionsJson = result.optionsJson
+                errors = emptyList()
+                nativeCheckMessage = if (result.warnings.isEmpty()) {
+                    "Профиль .ovpn импортирован. Нажмите «Проверить»."
+                } else {
+                    "Профиль импортирован. Проверьте замечания: ${result.warnings.joinToString(" ")}"
+                }
+            }.onFailure { error ->
+                nativeCheckMessage = "Не удалось импортировать .ovpn: ${error.localizedMessage ?: "неизвестная ошибка"}"
+            }
+        }
+    }
+    val usedRules = profile?.let { current ->
+        config.rules.filter { it.targetProfileId == current.id }.map { it.name }
+    }.orEmpty()
+
+    fun validateDraft(): SingBoxProfileConfig {
+        val draft = SingBoxProfileConfig(schema.kind, optionsJson.trim())
+        errors = validateSingBoxProfile(type, draft)
+        return draft
+    }
+
+    fun configWithDraft(draft: SingBoxProfileConfig): RoutingConfig {
+        val nextProfile = TunnelProfile(
+            id = profile?.id ?: "engine_${UUID.randomUUID()}",
+            name = name.trim().ifBlank { type.label },
+            type = type,
+            description = "${type.label} через локальный sing-box runtime.",
+            enabled = enabled,
+            mockOnly = false,
+            platformNotes = "Проверенный ${schema.kind.name.lowercase()} sing-box ${schema.engineType}.",
+            dnsPolicyId = dnsPolicyId,
+            singBox = draft,
+        )
+        val nextProfiles = if (profile == null) {
+            config.profiles + nextProfile
+        } else {
+            config.profiles.map { if (it.id == profile.id) nextProfile else it }
+        }
+        return config.copy(profiles = nextProfiles)
+    }
+
+    fun runNativeCheck(saveAfterCheck: Boolean) {
+        val draft = validateDraft()
+        if (errors.isNotEmpty()) return
+        val nextConfig = configWithDraft(draft)
+        checking = true
+        nativeCheckMessage = "Проверка всей конфигурации движком…"
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                SingBoxRuntimeValidator.validate(context.applicationContext, nextConfig)
+            }
+            checking = false
+            result.onSuccess { warnings ->
+                nativeCheckMessage = if (warnings.isEmpty()) {
+                    "Движок принял профиль и полную конфигурацию маршрутов."
+                } else {
+                    "Движок принял профиль. Предупреждения: ${warnings.take(2).joinToString(" ")}"
+                }
+                if (saveAfterCheck) {
+                    onConfig(
+                        nextConfig,
+                        "${type.label}: профиль проверен движком и сохранён. При активном VPN маршрутизатор перезагрузится.",
+                    )
+                    onBack()
+                }
+            }.onFailure { error ->
+                nativeCheckMessage = "Движок отклонил профиль: ${error.localizedMessage ?: "неизвестная ошибка"}"
+            }
+        }
+    }
+
+    ScreenList(padding) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onBack) { Text(text.back) }
+                Header(type.label, "Профиль локального sing-box runtime")
+            }
+        }
+        item {
+            CardBlock {
+                Text("Что нужно", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Text(schema.beginnerHint, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "Вставляется один объект ${schema.kind.name.lowercase()}; полная конфигурация с route/dns/inbounds не принимается. ViRouteFS сам добавит TUN, DNS и правила.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                WarningText(
+                    "Ключи и пароли остаются только в локальной конфигурации приложения. Резервное копирование Android отключено; в журнал они не выводятся.",
+                )
+                if (type == TunnelType.OpenVpn) {
+                    OutlinedButton(
+                        onClick = {
+                            openVpnImportLauncher.launch(
+                                arrayOf(
+                                    "application/x-openvpn-profile",
+                                    "text/plain",
+                                    "application/octet-stream",
+                                ),
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Импортировать файл .ovpn")
+                    }
+                    Text(
+                        "Обычные remote/proto, сертификаты и ключи из inline-блоков будут перенесены автоматически. Перед сохранением результат всё равно проверит нативный движок.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        item {
+            CardBlock {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(text.name) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(text.enabled, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (enabled) "Профиль может использоваться правилами." else "Правила на него сработают как Block.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = enabled, onCheckedChange = { enabled = it })
+                }
+                Text("DNS этого VPN", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    config.dnsPolicies.filter { it.enabled }.forEach { policy ->
+                        FilterChip(
+                            selected = dnsPolicyId == policy.id,
+                            onClick = { dnsPolicyId = policy.id },
+                            label = { Text(policy.name) },
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = optionsJson,
+                    onValueChange = {
+                        optionsJson = it
+                        errors = emptyList()
+                        nativeCheckMessage = null
+                    },
+                    label = { Text("${schema.kind.name} JSON") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 10,
+                    maxLines = 20,
+                    supportingText = {
+                        Text("Ожидаемый type: ${schema.engineType}. Поле tag будет назначено автоматически.")
+                    },
+                )
+                errors.forEach { WarningText(it) }
+                nativeCheckMessage?.let { message ->
+                    if (message.startsWith("Движок принял")) {
+                        Text(message, style = MaterialTheme.typography.bodySmall, color = Color(0xFF1B7F46))
+                    } else {
+                        WarningText(message)
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        enabled = !checking,
+                        onClick = { runNativeCheck(saveAfterCheck = false) },
+                    ) { Text(if (checking) "Проверка…" else "Проверить") }
+                    Button(
+                        enabled = !checking,
+                        onClick = { runNativeCheck(saveAfterCheck = true) },
+                    ) { Text(text.save) }
+                }
+            }
+        }
+        if (profile != null) {
+            item {
+                CardBlock {
+                    if (config.defaultProfileId == profile.id) {
+                        StatusChip(text.defaultProfile)
+                    } else {
+                        OutlinedButton(
+                            onClick = {
+                                onConfig(config.withProviderTunnel(profile.id), text.defaultChanged)
+                            },
+                        ) { Text(text.makeDefault) }
+                    }
+                    if (usedRules.isNotEmpty()) {
+                        WarningText(text.profileUsedMessage(usedRules.joinToString(" • ")))
+                    }
+                    OutlinedButton(
+                        enabled = usedRules.isEmpty(),
+                        onClick = {
+                            onConfig(
+                                config.copy(profiles = config.profiles.filterNot { it.id == profile.id }),
+                                text.profileDeleted,
+                            )
+                            onBack()
+                        },
+                    ) { Text(text.delete) }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -999,6 +1530,9 @@ private fun VlessProfileEditorScreen(
     var alpn by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.alpn.orEmpty()) }
     var serviceName by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.serviceName.orEmpty()) }
     var enabled by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.enabled ?: profile?.enabled ?: true) }
+    var dnsPolicyId by rememberSaveable(profile?.id ?: "new-vless-dns") {
+        mutableStateOf(profile?.dnsPolicyId ?: RoutingConfigDefaults.SYSTEM_DNS_ID)
+    }
     var importUri by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf("") }
     var pendingImport by remember(profile?.id ?: "new-vless") { mutableStateOf<VlessProfileConfig?>(null) }
     var importPreview by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf<String?>(null) }
@@ -1116,7 +1650,7 @@ private fun VlessProfileEditorScreen(
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(onClick = onBack) { Text(text.back) }
-                Header(if (profile == null) "Add VLESS profile" else "Edit VLESS profile", "Local-only VLESS configuration for route decision preview")
+                Header(if (profile == null) "Add VLESS profile" else "Edit VLESS profile", "Local VLESS/TLS/REALITY profile for the VPN router")
             }
         }
         item {
@@ -1126,13 +1660,13 @@ private fun VlessProfileEditorScreen(
                 Text(VLESS_NO_HANDSHAKE_NOTICE, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(VLESS_TCP_REACHABILITY_NOTICE, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 WarningText("UUID is stored locally in routing_config.json and is hidden from summaries, logs, and diagnostics text.")
-                Text("Security mode supports none/tls/reality as configuration placeholders only. REALITY/XTLS runtime is not implemented.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Security mode supports none, TLS and REALITY. Incomplete REALITY parameters fail closed at activation.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         item {
             CardBlock {
                 Text("Import / Export VLESS URI", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                Text("Paste a vless:// URI to preview and fill this local config form. ViRouteFS does not connect, test, proxy DNS, or forward packets for VLESS.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Paste a vless:// URI to fill this local profile. Connection tests run only on request; routing starts only with the main VPN switch.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     importUri,
                     { value ->
@@ -1193,7 +1727,7 @@ private fun VlessProfileEditorScreen(
                 if (profile == null) {
                     Text("Save the VLESS profile first so the manual result can be stored in local no-backup history.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Text("TCP reachability only: no VLESS handshake, no TLS, no REALITY, no runtime forwarding, and no packets are written back to TUN.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("This button checks TCP reachability only: it does not perform a VLESS/TLS/REALITY handshake. The saved profile is used separately by the VPN router.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
 
@@ -1311,6 +1845,16 @@ private fun VlessProfileEditorScreen(
                     Text(text.enabled, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
+                Text("DNS этого VPN", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    config.dnsPolicies.filter { it.enabled }.forEach { policy ->
+                        FilterChip(
+                            selected = dnsPolicyId == policy.id,
+                            onClick = { dnsPolicyId = policy.id },
+                            label = { Text(policy.name) },
+                        )
+                    }
+                }
                 errors.forEach { WarningText(it) }
                 OutlinedButton(onClick = {
                     val candidate = draft()
@@ -1335,13 +1879,13 @@ private fun VlessProfileEditorScreen(
                             type = TunnelType.VLESS,
                             description = vlessDescription(readyVless),
                             enabled = readyVless.enabled,
-                            mockOnly = true,
-                            platformNotes = "VLESS config-only profile. Runtime forwarding is not implemented yet; route decision preview only.",
-                            dnsPolicyId = RoutingConfigDefaults.SYSTEM_DNS_ID,
+                            mockOnly = false,
+                            platformNotes = "VLESS/TLS/REALITY outbound compiled into the local sing-box TUN runtime.",
+                            dnsPolicyId = dnsPolicyId,
                             vless = readyVless,
                         )
                         val nextProfiles = if (profile == null) config.profiles + nextProfile else config.profiles.map { if (it.id == profile.id) nextProfile else it }
-                        onConfig(config.copy(profiles = nextProfiles), "VLESS profile saved. Runtime forwarding is not implemented yet.")
+                        onConfig(config.copy(profiles = nextProfiles), "VLESS profile saved for the local sing-box router.")
                         onBack()
                     }
                 }) { Text(text.save) }
@@ -1375,7 +1919,7 @@ private fun String.toVlessSecurityMode(): VlessSecurityMode = VlessSecurityMode.
 } ?: VlessSecurityMode.NONE
 
 private fun vlessDescription(profile: VlessProfileConfig): String =
-    "VLESS ${profile.host}:${profile.port} (${profile.securityMode.wireName}). Manual diagnostics only: TCP reachability and plain-TCP VLESS probe for security=none and manual TLS probe for security=tls; no REALITY/XTLS runtime, DNS proxying, Android traffic forwarding, TUN writes, or runtime forwarding is implemented. UUID is hidden from summaries and diagnostics."
+    "VLESS ${profile.host}:${profile.port} (${profile.securityMode.wireName}). The saved profile is available to the sing-box VPN router, including TLS/REALITY settings. Manual check buttons test the endpoint separately and do not prove that Android traffic crossed this tunnel. UUID is hidden from summaries and diagnostics."
 
 private fun vlessReadinessLabel(status: VlessProfileStatus, history: List<VlessTcpReachabilityHistoryItem>): String = when {
     status == VlessProfileStatus.TcpReachable || history.firstOrNull()?.state == VlessTcpReachabilityState.Reachable -> "TCP reachable"
@@ -1415,6 +1959,9 @@ private fun Socks5ProfileEditorScreen(
     var password by remember(profile?.id ?: "new-socks5") { mutableStateOf(socks5?.password.orEmpty()) }
     var revealPassword by remember(profile?.id ?: "new-socks5") { mutableStateOf(false) }
     var enabled by rememberSaveable(profile?.id ?: "new-socks5") { mutableStateOf(socks5?.enabled ?: profile?.enabled ?: true) }
+    var dnsPolicyId by rememberSaveable(profile?.id ?: "new-socks5-dns") {
+        mutableStateOf(profile?.dnsPolicyId ?: RoutingConfigDefaults.SYSTEM_DNS_ID)
+    }
     var status by remember(profile?.id ?: "new-socks5") { mutableStateOf<Socks5ProfileStatus>(socks5?.status ?: Socks5ProfileStatus.NotTested) }
     var errors by rememberSaveable(profile?.id ?: "new-socks5") { mutableStateOf<List<String>>(emptyList()) }
     var targetHost by rememberSaveable(profile?.id ?: "new-socks5-target-host") { mutableStateOf("example.com") }
@@ -1489,9 +2036,9 @@ private fun Socks5ProfileEditorScreen(
         }
         item {
             CardBlock {
-                Text("SOCKS5-профиль добавлен. Проверка подключения запускается только вручную. Полная маршрутизация трафика устройства через SOCKS5 будет добавлена позже.", style = MaterialTheme.typography.bodySmall)
-                Text("SOCKS5 profile added. Connectivity testing runs only manually. Full device traffic routing through SOCKS5 will be added later.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Runtime forwarding is not enabled yet. This test only verifies the SOCKS5 server and target CONNECT behavior.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("SOCKS5-профиль используется локальным VPN-маршрутизатором. Проверка самого сервера запускается только вручную.", style = MaterialTheme.typography.bodySmall)
+                Text("SOCKS5 is used by the router when selected by a rule. Connectivity testing still runs only when requested.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("The test below only verifies the SOCKS5 server and target CONNECT behavior; it does not change routes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 StatusChip(readiness.badgeLabel)
                 Text(readiness.userSafeMessage, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
                 readiness.lastHandshake?.let { Text("Last handshake: ${it.state.label} • ${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(it.timestamp))}", style = MaterialTheme.typography.bodySmall) }
@@ -1522,6 +2069,16 @@ private fun Socks5ProfileEditorScreen(
                     Text(text.enabled, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
+                Text("DNS этого VPN", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    config.dnsPolicies.filter { it.enabled }.forEach { policy ->
+                        FilterChip(
+                            selected = dnsPolicyId == policy.id,
+                            onClick = { dnsPolicyId = policy.id },
+                            label = { Text(policy.name) },
+                        )
+                    }
+                }
                 errors.forEach { WarningText(it) }
                 Button(onClick = {
                     val nextSocks5 = draft(Socks5ProfileStatus.NotTested)
@@ -1537,13 +2094,13 @@ private fun Socks5ProfileEditorScreen(
                             type = TunnelType.Socks5,
                             description = socks5Description(nextSocks5),
                             enabled = nextSocks5.enabled,
-                            mockOnly = true,
-                            platformNotes = "Configuration and manual SOCKS5 diagnostics only; runtime forwarding is not enabled yet.",
-                            dnsPolicyId = RoutingConfigDefaults.SYSTEM_DNS_ID,
+                            mockOnly = false,
+                            platformNotes = "SOCKS5 outbound compiled into the local sing-box TUN runtime. Manual diagnostics remain opt-in.",
+                            dnsPolicyId = dnsPolicyId,
                             socks5 = nextSocks5,
                         )
                         val nextProfiles = if (profile == null) config.profiles + nextProfile else config.profiles.map { if (it.id == profile.id) nextProfile else it }
-                        onConfig(config.copy(profiles = nextProfiles), "SOCKS5 profile saved. Manual diagnostics only; runtime forwarding is not enabled yet.")
+                        onConfig(config.copy(profiles = nextProfiles), "SOCKS5 profile saved for the local VPN runtime. Manual diagnostics remain opt-in.")
                         onBack()
                     }
                 }) { Text(text.save) }
@@ -1552,7 +2109,7 @@ private fun Socks5ProfileEditorScreen(
         item {
             CardBlock {
                 Text("Manual SOCKS5 diagnostics", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
-                Text("Runtime forwarding is not enabled yet. This test only verifies the SOCKS5 server and target CONNECT behavior.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("This manual test only verifies the SOCKS5 server and target CONNECT behavior; runtime routing uses the saved profile.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(targetHost, { targetHost = it }, label = { Text("Target host") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(targetPortText, { targetPortText = it.filter(Char::isDigit).take(5) }, label = { Text("Target port") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1653,4 +2210,4 @@ private fun String.sanitizeForHistoryLabel(): String = replace(Regex("(?i)(uuid|
     .replace(Regex("(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b"), "[uuid redacted]")
 
 private fun socks5Description(profile: Socks5ProfileConfig): String =
-    "SOCKS5 ${profile.host}:${profile.port}. Manual connectivity testing only; full device traffic routing through SOCKS5 will be added later. Passwords are stored locally and are not logged."
+    "SOCKS5 ${profile.host}:${profile.port}. Routed by the local sing-box TUN runtime when selected. Passwords are stored locally and are not logged."

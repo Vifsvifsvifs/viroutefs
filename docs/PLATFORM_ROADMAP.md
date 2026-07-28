@@ -4,7 +4,7 @@ ViRouteFS is designed as a cross-platform human-readable routing system, not onl
 
 ## Target platforms
 
-- Android first, using a future single `VpnService` entry point.
+- Android first, using the current single `VpnService` and sing-box runtime.
 - Linux later, with process/executable matchers and platform routing integration.
 - Windows later, with executable/process matchers and platform routing integration.
 - macOS is represented in the neutral matcher model for future compatibility.
@@ -27,11 +27,11 @@ Examples:
 - `windows / chrome.exe`;
 - `any / telegram`.
 
-Android `0.4.0-alpha` does not detect installed apps and does not request `QUERY_ALL_PACKAGES`. Matchers are text/config entries only.
+Android `0.11.0-alpha` reads the complete installed-app list locally and requests `QUERY_ALL_PACKAGES` because selecting any installed app is a core per-app VPN-routing feature. The list is used only by the route picker and Flow Scanner filters; it is never uploaded, sold, or used for advertising.
 
 ## Later work
 
-Future milestones can connect the model to real platform route engines, DNS policy enforcement, and tunnel implementations. Until then, all non-System/Block tunnel profiles are mock simulation entries.
+The Android build now has a real single-`VpnService` sing-box runtime, DNS enforcement, fail-closed app/domain/IP/CIDR routing and live per-connection metadata. Future milestones cover desktop platform adapters, IKEv2/IPsec and separately audited legacy adapters.
 
 ## 0.4.1-alpha UI milestone
 
@@ -41,6 +41,6 @@ The Android UI is reorganized around VPN, Routes, DNS, FS, Tools and Settings.
 - Protocol support is exposed at model/UI level for System, Block, modern VPN/tunnel protocols, proxy/tunnel protocols and legacy corporate protocols.
 - Routes become compact grouped cards for assigning apps, domains and IP/CIDR matchers to connection profiles.
 - DNS owns lookup checks, app DNS check concept, hosts-like overrides and DNS per connection.
-- FS becomes Flow Scanner: friendly traffic explanations after future explicit local VPN mode, with no hidden capture in this milestone.
+- FS is Flow Scanner: friendly live per-connection metadata, route explanations and filtering by installed application, without payload capture or HTTPS decryption.
 
-Future milestones must still implement real routing, DNS engine behavior and packet/flow observation explicitly and locally, without telemetry or cloud dependency.
+Future milestones must preserve explicit local processing without telemetry or cloud dependency.

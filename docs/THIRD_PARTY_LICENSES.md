@@ -1,23 +1,49 @@
-# ViRouteFS third-party license planning — 0.6.7-alpha
+# ViRouteFS third-party components
 
-ViRouteFS app code is GPL-3.0-or-later.
+ViRouteFS application code is `GPL-3.0-or-later`.
 
-Every bundled engine, library, or binary must be recorded here before integration. This file is a planning document for future license review, not an actual bundled engine license list yet.
+This file records actual APK inputs separately from future candidates.
 
-## Current state
+## Native files bundled in the APK
 
-No external VPN/proxy/DPI engine binaries are bundled yet.
+### sing-box libbox
 
-Do not claim a component is bundled unless it is actually shipped in the app, APK, source tree, or build inputs. Before any engine or binary is added, update this table with the exact license, source URL, bundled status, notices, source obligations, and any compatibility notes.
+- Upstream: https://github.com/SagerNet/sing-box
+- Tag: `v1.14.0-alpha.50`
+- Commit: `3fcfadd5ee45c460115243b55d48b438279aeacd`
+- Artifact: `app/libs/libbox.aar`
+- SHA-256: `f3729b42c247c257adc2c7d03b1134ed7139b6f77da174f69f036d4fa4c7b685`
+- native ELF alignment: 16 KiB
+- License: upstream `GPL-3.0-or-later` notice plus its additional naming/association condition
+- Rebuild: `tools/build-libbox.ps1`
+- Local build difference: upstream `with_openvpn` and `with_openconnect` are enabled, `with_naive_outbound` is omitted, and the product is branded only as ViRouteFS.
 
-## Planned candidates
+The exact upstream license text is included in `app/src/main/assets/licenses/sing-box-LICENSE.txt`. The application’s full GPL-3.0 text is included as `GPL-3.0.txt`.
 
-| Component | Purpose | License | Bundled? yes/no | Source URL | Notes / obligations |
-| --- | --- | --- | --- | --- | --- |
-| OpenVPN3 Core | Planned OpenVPN-compatible engine candidate | To be audited; prefer MPL-2.0 path | no | TBD | Planned candidate, not bundled. Preserve MPL notices/source obligations if integrated. Do not embed OpenVPN 2.x GPLv2-only core into the GPL-3.0-or-later app. |
-| ByeDPI-style implementation | Planned local DPI bypass profile candidate | To be audited | no | TBD | Planned candidate, not bundled. Must remain local, explicit, and fail closed if selected but unavailable. |
-| SOCKS5 implementation | Planned first real outbound candidate | To be audited | no | TBD | Planned candidate, not bundled. Implementation license must be checked before embedding. |
-| WireGuard userspace | Planned VPN profile candidate | To be audited; must be GPL-compatible | no | TBD | Planned candidate, not bundled. Prefer GPL-compatible userspace implementation; avoid embedding GPLv2-only wireguard-tools into the APK. |
-| Hysteria2 | Planned external tunnel candidate | To be audited | no | TBD | Planned candidate, not bundled. Audit Android feasibility, native dependencies, maintenance, and security. |
-| Xray-core | Planned Xray/VLESS/Reality/VMess/Trojan import and engine candidate | To be audited; MPL-2.0 style obligations expected | no | TBD | Planned candidate, not bundled. Preserve notices/source obligations if integrated. |
-| sing-box | Planned possible engine/core candidate | To be audited; GPL-3.0-or-later compatibility expected | no | TBD | Planned candidate, not bundled. Large dependency and architecture decision before integration. |
+### ByeDPI
+
+- Upstream: https://github.com/hufrea/byedpi
+- Commit: `ba532298de7b28cfe854aea83d061369d13ca290`
+- Artifact: `app/src/main/jniLibs/arm64-v8a/libbyedpi.so`
+- SHA-256: `abae93da6e426da5bbe5611f53a550eccb021d7be88b2c13865461024c4862d1`
+- native ELF alignment: 16 KiB
+- License: MIT
+- Rebuild: `tools/build-byedpi.ps1`
+
+The copyright and MIT permission notice are included in `app/src/main/assets/licenses/byedpi-MIT.txt`.
+
+### Android libraries
+
+AndroidX, Jetpack Compose, Kotlin coroutines and their exact Maven coordinates are declared in `app/build.gradle.kts`. They are primarily Apache-2.0 components. Their upstream notices and dependency metadata must remain available with any public distribution.
+
+## Not bundled
+
+- Xray-core / AndroidLibXrayLite;
+- separate OpenVPN 2 or OpenVPN 3 libraries (OpenVPN client support is supplied by bundled sing-box);
+- strongSwan;
+- WireGuard Android tunnel library;
+- Tor executable;
+- separate OpenConnect, ZeroTier and SoftEther adapters (OpenConnect client support is supplied by bundled sing-box);
+- Naive/Cronet.
+
+PPTP, L2TP and SSTP have no selected binary. See `ENGINE_LICENSE_MATRIX.md` for the security and compatibility boundary.

@@ -1,5 +1,7 @@
 # ViRouteFS engine candidates — 0.6.7-alpha
 
+> Historical planning snapshot. Current bundled and planned engines are recorded in `ENGINE_LICENSE_MATRIX.md`.
+
 This document records candidate network engines and profile families for future ViRouteFS work. It is planning documentation only: `0.6.7-alpha` does not add runtime VPN engines, proxy implementations, native binaries, packet forwarding, default-route capture, VPN builder DNS servers, or packet payload logging.
 
 ViRouteFS remains GPL-3.0-or-later and local-first. Every implementation must be audited before embedding for license compatibility, Android feasibility, security, maintenance, privacy, and source availability.

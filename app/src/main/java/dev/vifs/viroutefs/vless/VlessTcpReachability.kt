@@ -11,7 +11,7 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import kotlin.system.measureTimeMillis
 
-const val VLESS_TCP_REACHABILITY_NOTICE = "Manual TCP reachability only: no VLESS handshake, no UUID sent, no TLS/REALITY, and no runtime forwarding."
+const val VLESS_TCP_REACHABILITY_NOTICE = "This manual TCP check does not perform a VLESS handshake, send the UUID, or test TLS/REALITY. Saved profiles are routed separately by the VPN runtime."
 private const val DEFAULT_CONNECT_TIMEOUT_MS = 5_000
 
 sealed interface VlessTcpReachabilityState {

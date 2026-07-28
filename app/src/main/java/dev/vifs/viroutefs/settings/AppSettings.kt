@@ -7,6 +7,7 @@ import android.content.Context
 data class AppSettings(
     val themeMode: AppThemeMode = AppThemeMode.System,
     val language: AppLanguage = AppLanguage.Russian,
+    val developerMode: Boolean = false,
 )
 
 enum class AppThemeMode(val storageKey: String) {
@@ -36,12 +37,14 @@ class AppSettingsRepository(context: Context) {
     fun load(): AppSettings = AppSettings(
         themeMode = AppThemeMode.fromStorageKey(prefs.getString(KEY_THEME, null)),
         language = AppLanguage.fromStorageKey(prefs.getString(KEY_LANGUAGE, null)),
+        developerMode = prefs.getBoolean(KEY_DEVELOPER_MODE, false),
     )
 
     fun save(settings: AppSettings) {
         prefs.edit()
             .putString(KEY_THEME, settings.themeMode.storageKey)
             .putString(KEY_LANGUAGE, settings.language.storageKey)
+            .putBoolean(KEY_DEVELOPER_MODE, settings.developerMode)
             .apply()
     }
 
@@ -49,5 +52,6 @@ class AppSettingsRepository(context: Context) {
         private const val PREFS_NAME = "viroutefs_app_settings"
         private const val KEY_THEME = "theme_mode"
         private const val KEY_LANGUAGE = "language"
+        private const val KEY_DEVELOPER_MODE = "developer_mode"
     }
 }

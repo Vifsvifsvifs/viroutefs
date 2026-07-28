@@ -1,45 +1,36 @@
-# DNS policy metadata
+# DNS policy
 
-ViRouteFS keeps per-route DNS policy as local configuration metadata. It is not real DNS routing yet.
+ViRouteFS applies DNS policies inside the local sing-box TUN runtime.
 
-The app shows this limitation in Russian:
-
-> DNS-политика пока используется для объяснения и проверки риска утечки. Реальное DNS-маршрутизирование будет добавлено позже.
-
-## Fields
+## Policy fields
 
 A DNS policy contains:
 
-- `id`;
-- `name`;
-- `type`;
-- optional `serverText`;
+- local id and user-visible name;
+- enabled state;
+- one upstream server;
 - optional `resolveThroughProfileId`;
-- `description`;
-- `enabled`.
+- local description.
 
-The default policy is Android system DNS bound to the built-in System route in the model.
+Accepted server forms are a plain IP address or `udp://`, `tcp://`, `tls://`, `quic://`, `https://` and `h3://` URLs.
 
-## Default behavior
+## Selection
 
-If a route/profile has no explicit DNS configuration, ViRouteFS shows **Uses Android system DNS / Использует системный DNS Android**. Missing DNS must not be silently replaced with public resolvers such as `1.1.1.1` or `8.8.8.8`.
+A route may choose a DNS policy directly. Otherwise the target profile’s DNS policy is used. A profile and its DNS server may use different outbound profiles intentionally; this supports cases such as an app routed through one tunnel while DNS goes through another.
 
-User-defined DNS applies only where explicitly configured. If user-defined DNS is unavailable, future enforcement should show an error or fail-safe state rather than silently swapping to another resolver.
+Domain and Android package rules are compiled into sing-box DNS rules. Package matching requires Android 10 or newer. CIDR rules do not create a domain-name DNS matcher.
 
-## Route integration
+## Fail-closed behavior
 
-Rules can reference `dnsPolicyId`. The route decision shows the selected profile, matched rule, priority, DNS policy, mock-profile status, and DNS leak warning.
+- A custom DNS policy whose selected profile is missing or disabled rejects matching queries.
+- DNS assigned to `Block` rejects matching queries.
+- ViRouteFS does not silently substitute `1.1.1.1`, `8.8.8.8` or Android system DNS.
+- A disabled or invalid policy is not presented as an active custom DNS path.
 
-If a DNS policy expects a different profile from the selected route, ViRouteFS warns the user. Example: a route selected through a future OpenVPN Work profile with a DNS policy that is not actually applied yet warns that future DNS should resolve through the work route.
+## System DNS
+
+The built-in system policy asks Android’s current physical network resolver through the platform interface. It is not represented by a fake public resolver address.
 
 ## Privacy
 
-DNS policies are local metadata. The app does not run background DNS checks, upload DNS settings, or contact policy servers automatically.
-
-## DNS page concept
-
-The DNS tab stays compact and honest:
-
-1. **DNS lookup checker** — domain/address input and record type. Android system DNS is used unless a later feature explicitly implements selected-server querying.
-2. **hosts-like local overrides** — local hostname-to-IP metadata using `DnsHostOverride` (`id`, `hostname`, `ipAddress`, `enabled`, optional `note`). Overrides are configuration/simulation only until a DNS engine exists.
-3. **DNS per route/profile** — each real route/profile can point to Android system DNS or a user-defined policy when those flows are implemented.
+DNS settings remain local. ViRouteFS does not run background DNS checks, upload DNS configuration or persist query contents. Manual diagnostics run only after an explicit user action.

@@ -11,18 +11,25 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 data class RoutingConfigLoadResult(
     val config: RoutingConfig,
     val errorMessage: String?,
 )
 
-class RoutingConfigRepository(
-    private val context: Context,
-    private val credentialStore: Socks5CredentialStore = Socks5CredentialStore(context),
+class RoutingConfigRepository internal constructor(
+    filesDirectory: File,
+    private val credentialStore: Socks5CredentialStore,
 ) {
-    private val configFile: File
-        get() = File(context.filesDir, ROUTING_CONFIG_FILENAME)
+    private val configFile = File(filesDirectory, ROUTING_CONFIG_FILENAME)
+
+    constructor(
+        context: Context,
+        credentialStore: Socks5CredentialStore = Socks5CredentialStore(context),
+    ) : this(context.filesDir, credentialStore)
 
     suspend fun load(): RoutingConfigLoadResult = withContext(Dispatchers.IO) {
         val file = configFile
@@ -30,7 +37,15 @@ class RoutingConfigRepository(
             return@withContext RoutingConfigLoadResult(RoutingConfigDefaults.defaultConfig(), null)
         }
         runCatching {
-            val decodedConfig = RoutingConfigJson.decode(file.readText())
+            val rawConfig = RoutingConfigJson.decode(file.readText())
+            val requiresNormalization =
+                rawConfig.version != CURRENT_ROUTING_CONFIG_VERSION ||
+                    listOf(
+                        RoutingConfigDefaults.SYSTEM_PROFILE_ID,
+                        RoutingConfigDefaults.BLOCK_PROFILE_ID,
+                        RoutingConfigDefaults.BYEDPI_PROFILE_ID,
+                    ).any { requiredId -> rawConfig.profiles.none { it.id == requiredId } }
+            val decodedConfig = RoutingConfigDefaults.ensureRequiredProfiles(rawConfig)
             val legacyPasswords = decodedConfig.socks5PasswordsByProfileId()
             val storedPasswords = credentialStore.load()
             val mergedPasswords = storedPasswords + legacyPasswords
@@ -39,9 +54,9 @@ class RoutingConfigRepository(
             if (errors.isNotEmpty()) {
                 RoutingConfigLoadResult(RoutingConfigDefaults.defaultConfig(), "Сохранённая конфигурация некорректна: ${errors.joinToString()}")
             } else {
-                if (legacyPasswords.isNotEmpty()) {
+                if (legacyPasswords.isNotEmpty() || requiresNormalization) {
                     credentialStore.save(mergedPasswords.onlyProfilesIn(config))
-                    file.writeText(RoutingConfigJson.encode(config, includeSocks5Passwords = false))
+                    file.writeTextAtomically(RoutingConfigJson.encode(config, includeSocks5Passwords = false))
                 }
                 RoutingConfigLoadResult(config, null)
             }
@@ -52,13 +67,15 @@ class RoutingConfigRepository(
 
     suspend fun save(config: RoutingConfig) = withContext(Dispatchers.IO) {
         credentialStore.save(config.socks5PasswordsByProfileId())
-        configFile.writeText(RoutingConfigJson.encode(config, includeSocks5Passwords = false))
+        configFile.writeTextAtomically(RoutingConfigJson.encode(config, includeSocks5Passwords = false))
     }
 
     fun exportJson(config: RoutingConfig): String = RoutingConfigJson.encode(config, includeSocks5Passwords = false)
 
     fun importJson(json: String): Result<RoutingConfig> = runCatching {
-        val config = RoutingConfigJson.decode(json).withoutSocks5Passwords()
+        val config = RoutingConfigDefaults.ensureRequiredProfiles(
+            RoutingConfigJson.decode(json),
+        ).withoutSocks5Passwords()
         val errors = validateRoutingConfig(config)
         require(errors.isEmpty()) { errors.joinToString("\n") }
         config
@@ -94,7 +111,7 @@ class Socks5CredentialStore(
             .filterValues { it.isNotEmpty() }
             .toSortedMap()
             .forEach { (profileId, password) -> root.put(profileId, password) }
-        credentialsFile.writeText(root.toString(2))
+        credentialsFile.writeTextAtomically(root.toString(2))
         credentialsFile.setReadable(false, false)
         credentialsFile.setWritable(false, false)
         credentialsFile.setReadable(true, true)
@@ -114,6 +131,7 @@ object RoutingConfigJson {
         put("rules", JSONArray(config.rules.map { it.toJson() }))
         put("defaultProfileId", config.defaultProfileId)
         put("hostOverrides", JSONArray(config.hostOverrides.map { it.toJson() }))
+        put("emergencyBlockEnabled", config.emergencyBlockEnabled)
     }.toString(2)
 
     fun decode(json: String): RoutingConfig {
@@ -125,6 +143,7 @@ object RoutingConfigJson {
             rules = root.getJSONArray("rules").mapObjects { it.toRouteRule() },
             defaultProfileId = root.optNullableString("defaultProfileId"),
             hostOverrides = root.optJSONArray("hostOverrides")?.mapObjects { it.toDnsHostOverride() }.orEmpty(),
+            emergencyBlockEnabled = root.optBoolean("emergencyBlockEnabled", false),
         )
     }
 
@@ -139,6 +158,7 @@ object RoutingConfigJson {
         put("dnsPolicyId", dnsPolicyId)
         put("socks5", socks5?.toJson(includeSocks5Password))
         put("vless", vless?.toJson())
+        put("singBox", singBox?.toJson())
     }
 
     private fun JSONObject.toTunnelProfile(): TunnelProfile {
@@ -154,8 +174,19 @@ object RoutingConfigJson {
             dnsPolicyId = optNullableString("dnsPolicyId"),
             socks5 = optJSONObject("socks5")?.toSocks5ProfileConfig(),
             vless = optJSONObject("vless")?.toVlessProfileConfig(),
+            singBox = optJSONObject("singBox")?.toSingBoxProfileConfig(),
         )
     }
+
+    private fun SingBoxProfileConfig.toJson(): JSONObject = JSONObject().apply {
+        put("kind", kind.name)
+        put("optionsJson", optionsJson)
+    }
+
+    private fun JSONObject.toSingBoxProfileConfig(): SingBoxProfileConfig = SingBoxProfileConfig(
+        kind = optEnum("kind", SingBoxProfileKind.Outbound),
+        optionsJson = getString("optionsJson"),
+    )
 
     private fun Socks5ProfileConfig.toJson(includePassword: Boolean): JSONObject = JSONObject().apply {
         put("name", name)
@@ -403,3 +434,27 @@ private fun <T> JSONArray.mapObjects(transform: (JSONObject) -> T): List<T> =
     (0 until length()).map { index -> transform(getJSONObject(index)) }
 
 private fun JSONObject.optNullableString(name: String): String? = if (isNull(name)) null else optString(name).takeIf { it.isNotBlank() }
+
+private fun File.writeTextAtomically(content: String) {
+    val directory = requireNotNull(parentFile) { "Atomic config file must have a parent directory." }
+    directory.mkdirs()
+    val temporary = File(directory, ".$name.tmp")
+    FileOutputStream(temporary).use { output ->
+        output.write(content.toByteArray(Charsets.UTF_8))
+        output.fd.sync()
+    }
+    runCatching {
+        Files.move(
+            temporary.toPath(),
+            toPath(),
+            StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING,
+        )
+    }.recoverCatching {
+        Files.move(
+            temporary.toPath(),
+            toPath(),
+            StandardCopyOption.REPLACE_EXISTING,
+        )
+    }.getOrThrow()
+}
