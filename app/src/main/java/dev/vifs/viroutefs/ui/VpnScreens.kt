@@ -17,11 +17,9 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -68,7 +66,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import dev.vifs.viroutefs.CardBlock
-import dev.vifs.viroutefs.BuildConfig
 import dev.vifs.viroutefs.Details
 import dev.vifs.viroutefs.Header
 import dev.vifs.viroutefs.ScreenList
@@ -137,10 +134,6 @@ import dev.vifs.viroutefs.vless.VlessUriParseResult
 import dev.vifs.viroutefs.vless.exportVlessUri
 import dev.vifs.viroutefs.vless.parseVlessUri
 import dev.vifs.viroutefs.vless.validateVlessProfile
-import dev.vifs.viroutefs.vpn.Ipv4Protocol
-import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreview
-import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreviewer
-import dev.vifs.viroutefs.vpn.PacketSummary
 import dev.vifs.viroutefs.vpn.SingBoxRuntimeValidator
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
@@ -162,8 +155,8 @@ internal fun VpnScreen(
     @Suppress("UNUSED_PARAMETER") tunTestRoutePreviewEnabled: Boolean,
     onVpnSwitch: (Boolean) -> Unit,
     @Suppress("UNUSED_PARAMETER") onTunTestRoutePreview: (Boolean) -> Unit,
-    onClearPacketList: () -> Unit,
-    onPausePacketInspector: (Boolean) -> Unit,
+    @Suppress("UNUSED_PARAMETER") onClearPacketList: () -> Unit,
+    @Suppress("UNUSED_PARAMETER") onPausePacketInspector: (Boolean) -> Unit,
     onConfig: (RoutingConfig, String?) -> Unit,
 ) {
     var selectedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -174,17 +167,20 @@ internal fun VpnScreen(
         TunnelType.entries.firstOrNull { it.name == name }
     }
     val selectedProfile = selectedProfileId?.let { id -> config.profiles.firstOrNull { it.id == id } }
-    val visibleProfiles = config.profiles.filter {
-        !it.mockOnly || it.type == TunnelType.Socks5 || it.type == TunnelType.VLESS || it.singBox != null
+    val userProfiles = config.profiles.filter {
+        it.id !in setOf(
+            RoutingConfigDefaults.SYSTEM_PROFILE_ID,
+            RoutingConfigDefaults.BLOCK_PROFILE_ID,
+            RoutingConfigDefaults.BYEDPI_PROFILE_ID,
+        ) && (!it.mockOnly || it.type == TunnelType.Socks5 || it.type == TunnelType.VLESS || it.singBox != null)
     }
-    val routeDecisionPreviewer = remember(config) { LiveRouteDecisionPreviewer(config) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val readinessReport = remember(config) { evaluateReleaseReadiness(config) }
     var readinessExpanded by rememberSaveable { mutableStateOf(false) }
     var nativeCheckRunning by remember { mutableStateOf(false) }
     var nativeCheckMessage by remember(config) {
-        mutableStateOf("Полная нативная проверка этой конфигурации ещё не запускалась.")
+        mutableStateOf("")
     }
     val devTcpBridge = remember(config.profiles) {
         VlessDevTcpBridge(
@@ -277,11 +273,20 @@ internal fun VpnScreen(
     }
 
     ScreenList(padding) {
-        item { Header(text.networks, text.networksSubtitle) }
+        item {
+            NetworkControlHero(
+                active = vpnState.switchChecked,
+                serviceLabel = vpnState.label(text),
+                serviceDetail = vpnState.detail,
+                onToggle = { onVpnSwitch(!vpnState.switchChecked) },
+            )
+        }
         item {
             PrimaryInternetCard(
                 config = config,
                 activationError = defaultRouteActivationError(config),
+                ruleCount = config.rules.count { it.enabled && it.type != RouteRuleType.DEFAULT },
+                profileCount = userProfiles.size,
                 onAddVpn = { showAddVpnSheet = true },
                 onUseSystem = {
                     onConfig(
@@ -289,44 +294,6 @@ internal fun VpnScreen(
                         "Основной маршрут возвращён на обычный интернет телефона: System.",
                     )
                 },
-            )
-        }
-        item {
-            ReleaseReadinessCard(
-                report = readinessReport,
-                expanded = readinessExpanded,
-                nativeCheckRunning = nativeCheckRunning,
-                nativeCheckMessage = nativeCheckMessage,
-                onToggleExpanded = { readinessExpanded = !readinessExpanded },
-                onRunNativeCheck = {
-                    nativeCheckRunning = true
-                    nativeCheckMessage = "Проверяем всю конфигурацию локальным движком…"
-                    scope.launch {
-                        val result = withContext(Dispatchers.IO) {
-                            SingBoxRuntimeValidator.validate(context.applicationContext, config)
-                        }
-                        result
-                            .onSuccess { warnings ->
-                                nativeCheckMessage = if (warnings.isEmpty()) {
-                                    "Готово: нативный движок принял всю конфигурацию."
-                                } else {
-                                    "Движок принял конфигурацию с предупреждениями: ${warnings.size}. Недоступные цели остаются fail-closed."
-                                }
-                            }
-                            .onFailure {
-                                nativeCheckMessage = "Движок отклонил конфигурацию. Исправьте пункты со статусом «Нужно исправить» или проверьте обязательные поля изменённого профиля."
-                            }
-                        nativeCheckRunning = false
-                    }
-                },
-            )
-        }
-        item {
-            NetworkControlHero(
-                active = vpnState.switchChecked,
-                serviceLabel = vpnState.label(text),
-                serviceDetail = vpnState.detail,
-                onToggle = { onVpnSwitch(!vpnState.switchChecked) },
             )
         }
         item {
@@ -371,25 +338,50 @@ internal fun VpnScreen(
             )
         }
         item {
-            // Default routes are always visible and intentionally less dominant than user VPN profiles.
-            DefaultRoutesSection()
-        }
-        item {
-            AddVpnCard(
-                profileCount = visibleProfiles.size,
-                onClick = { showAddVpnSheet = true },
+            ReleaseReadinessCard(
+                report = readinessReport,
+                expanded = readinessExpanded,
+                nativeCheckRunning = nativeCheckRunning,
+                nativeCheckMessage = nativeCheckMessage,
+                onToggleExpanded = { readinessExpanded = !readinessExpanded },
+                onRunNativeCheck = {
+                    nativeCheckRunning = true
+                    nativeCheckMessage = "Проверяем конфигурацию…"
+                    scope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            SingBoxRuntimeValidator.validate(context.applicationContext, config)
+                        }
+                        result
+                            .onSuccess { warnings ->
+                                nativeCheckMessage = if (warnings.isEmpty()) {
+                                    "Конфигурация готова к запуску."
+                                } else {
+                                    "Конфигурация принята с предупреждениями: ${warnings.size}."
+                                }
+                            }
+                            .onFailure {
+                                nativeCheckMessage = "Конфигурация отклонена. Откройте подробности и исправьте отмеченные пункты."
+                            }
+                        nativeCheckRunning = false
+                    }
+                },
             )
         }
-        if (vpnState.tunTestRouteActive || vpnState.packetSummaries.isNotEmpty()) {
+        item {
+            ProfilesHeader(
+                profileCount = userProfiles.size,
+                onAdd = { showAddVpnSheet = true },
+            )
+        }
+        if (userProfiles.isEmpty()) {
             item {
                 CardBlock {
-                    Text(text.vpnPacketsRead, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                    CounterLine(text.vpnPacketsRead, vpnState.packetsRead)
-                    CounterLine(text.vpnBytesRead, vpnState.bytesRead)
-                    CounterLine(text.vpnIpv4PacketsRead, vpnState.ipv4PacketsRead)
-                    CounterLine(text.vpnTcpPacketsRead, vpnState.tcpPacketsRead)
-                    CounterLine(text.vpnUdpPacketsRead, vpnState.udpPacketsRead)
-                    CounterLine(text.vpnIcmpPacketsRead, vpnState.icmpPacketsRead)
+                    Text("VPN-профили не добавлены", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Это нормально: контроль сети работает через обычный интернет телефона. Добавьте VPN только для нужных правил.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -440,51 +432,7 @@ internal fun VpnScreen(
                 )
             }
         }
-        if (vpnState.tunTestRouteActive || vpnState.packetSummaries.isNotEmpty()) {
-            item {
-                CardBlock {
-                    Text(text.vpnPacketInspector, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                    Text(text.vpnPacketInspectorPrivacy, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(text.vpnPausePacketInspector, style = MaterialTheme.typography.bodySmall)
-                            Text(
-                                "${text.vpnPacketListLastUpdate}: ${vpnState.packetSummaryUpdatedAt.formatPacketTime(text)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(checked = vpnState.packetInspectorPaused, onCheckedChange = onPausePacketInspector)
-                    }
-                    if (vpnState.packetInspectorPaused) WarningText(text.vpnPacketInspectorPaused)
-                    OutlinedButton(onClick = onClearPacketList) { Text(text.vpnClearPacketList) }
-                    if (vpnState.packetSummaries.isEmpty()) {
-                        Text(text.vpnPacketInspectorEmpty, style = MaterialTheme.typography.bodySmall)
-                    } else {
-                        vpnState.packetSummaries.forEach { summary ->
-                            PacketSummaryLine(
-                                summary = summary,
-                                routeDecisionPreview = routeDecisionPreviewer.preview(summary),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        item {
-            CardBlock {
-                Text("Runtime notes", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                Text("SOCKS5 и VLESS-профили участвуют в реальной маршрутизации, когда включён VPN-маршрутизатор.", style = MaterialTheme.typography.bodySmall)
-                Text("Недоступный или некорректный профиль блокирует выбранный трафик вместо скрытого перехода на System.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(VLESS_RUNTIME_LIMITATION, style = MaterialTheme.typography.bodySmall)
-                Text(VLESS_ROUTE_PREVIEW_ONLY, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        items(visibleProfiles, key = { it.id }) { profile ->
+        items(userProfiles, key = { it.id }) { profile ->
             CompactNetworkProfileCard(
                 text = text,
                 profile = profile,
@@ -512,20 +460,20 @@ private fun NetworkControlHero(
         label = "network-control-accent",
     )
     val buttonColor by animateColorAsState(
-        targetValue = if (active) Color(0xFF8B1E23) else Color(0xFFB3261E),
+        targetValue = if (active) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
         label = "network-control-button",
     )
-    val iconSize by animateDpAsState(targetValue = if (active) 64.dp else 56.dp, label = "network-control-icon-size")
-    val buttonScale by animateFloatAsState(targetValue = if (active) 1.02f else 1f, label = "network-control-button-scale")
+    val iconSize by animateDpAsState(targetValue = if (active) 52.dp else 48.dp, label = "network-control-icon-size")
+    val buttonScale by animateFloatAsState(targetValue = if (active) 1.01f else 1f, label = "network-control-button-scale")
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = containerColor),
     ) {
         Column(
-            modifier = Modifier.padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -541,9 +489,9 @@ private fun NetworkControlHero(
                     )
                     Text(
                         text = if (active) {
-                            "VPN-служба запущена. Реальный режим и состояние движка показаны в строке статуса ниже."
+                            "Правила маршрутизации применяются ко всему трафику телефона."
                         } else {
-                            "Приложения используют обычное подключение. Маршруты готовы к настройке."
+                            "Сейчас используется обычное подключение без контроля правил."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = if (active) Color(0xFFC5D8CC) else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -569,12 +517,12 @@ private fun NetworkControlHero(
                 onClick = onToggle,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(84.dp)
+                    .height(64.dp)
                     .graphicsLayer {
                         scaleX = buttonScale
                         scaleY = buttonScale
                     },
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = buttonColor),
             ) {
                 Row(
@@ -633,7 +581,7 @@ private fun StatusStrip(active: Boolean, serviceLabel: String, serviceDetail: St
 private fun SecurityControlsCard(
     emergencyBlockEnabled: Boolean,
     byeDpiEnabled: Boolean,
-    vpnActive: Boolean,
+    @Suppress("UNUSED_PARAMETER") vpnActive: Boolean,
     onEmergencyBlockEnabled: (Boolean) -> Unit,
     onByeDpiEnabled: (Boolean) -> Unit,
 ) {
@@ -650,67 +598,46 @@ private fun SecurityControlsCard(
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "Быстрая защита",
+                "Быстрые действия",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
             )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("Запретить всю сеть", fontWeight = FontWeight.SemiBold)
-                    Text(
-                        if (emergencyBlockEnabled) {
-                            "Аварийный режим активен: DNS и весь TCP/UDP-трафик направляются в Block."
-                        } else {
-                            "Мгновенный kill switch поверх всех правил. Конфигурация профилей не удаляется."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(
-                    checked = emergencyBlockEnabled,
-                    onCheckedChange = onEmergencyBlockEnabled,
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("ByeDPI", fontWeight = FontWeight.SemiBold)
-                    Text(
-                        if (byeDpiEnabled) {
-                            "Локальный MIT-движок включён и доступен как маршрут ByeDPI. Он не шифрует трафик и не скрывает IP."
-                        } else {
-                            "Локальная совместимость для сетей, где DPI мешает TCP/TLS. Это не VPN и не средство анонимности."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(
-                    checked = byeDpiEnabled,
-                    onCheckedChange = onByeDpiEnabled,
-                )
-            }
-            Text(
-                if (vpnActive) {
-                    "Изменение сохраняется и автоматически перезапускает активный VPN-движок."
-                } else {
-                    "Настройка применится при следующем включении контроля сети."
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            QuickControlRow(
+                title = "Запретить всю сеть",
+                subtitle = if (emergencyBlockEnabled) "Весь трафик заблокирован" else "Аварийный kill switch",
+                checked = emergencyBlockEnabled,
+                onCheckedChange = onEmergencyBlockEnabled,
+            )
+            QuickControlRow(
+                title = "ByeDPI",
+                subtitle = if (byeDpiEnabled) "Доступен как отдельный маршрут" else "Совместимость TCP/TLS, не VPN",
+                checked = byeDpiEnabled,
+                onCheckedChange = onByeDpiEnabled,
             )
         }
+    }
+}
+
+@Composable
+private fun QuickControlRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
@@ -718,6 +645,8 @@ private fun SecurityControlsCard(
 private fun PrimaryInternetCard(
     config: RoutingConfig,
     activationError: String?,
+    ruleCount: Int,
+    profileCount: Int,
     onAddVpn: () -> Unit,
     onUseSystem: () -> Unit,
 ) {
@@ -726,10 +655,10 @@ private fun PrimaryInternetCard(
     }
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (activationError == null) {
-                Color(0xFF193D2B)
+                MaterialTheme.colorScheme.secondaryContainer
             } else {
                 MaterialTheme.colorScheme.errorContainer
             },
@@ -737,26 +666,37 @@ private fun PrimaryInternetCard(
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(
-                "Основной интернет телефона",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                profile?.let { "${it.name} • ${it.type.label}" }
-                    ?: "Не выбран",
-                style = MaterialTheme.typography.bodyMedium,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Основной маршрут", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        profile?.let { "${it.name} • ${it.type.label}" } ?: "Не выбран",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                StatusChip(if (activationError == null) "Готов" else "Ошибка")
+            }
             Text(
                 activationError
                     ?: if (profile?.type == TunnelType.Direct) {
-                        "Контроль сети можно включать без VPN. Весь трафик идёт через обычный мобильный интернет или Wi‑Fi, пока отдельное правило не назначит VPN, Block или ByeDPI."
+                        "Обычный мобильный интернет или Wi‑Fi. VPN-профиль не обязателен."
                     } else {
-                        "Выбран пользовательский основной маршрут. Отдельные правила приложений, доменов и сетей имеют приоритет."
+                        "Трафик без отдельного правила идёт через этот профиль."
                     },
                 style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                "Правил: $ruleCount • VPN-профилей: $profileCount",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (activationError != null) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -781,6 +721,11 @@ private fun ReleaseReadinessCard(
     onToggleExpanded: () -> Unit,
     onRunNativeCheck: () -> Unit,
 ) {
+    val statusLabel = when {
+        report.blockingCount > 0 -> "Ошибок: ${report.blockingCount}"
+        report.attentionCount > 0 -> "Нужна проверка"
+        else -> "Готово"
+    }
     CardBlock {
         Row(
             modifier = Modifier
@@ -793,32 +738,29 @@ private fun ReleaseReadinessCard(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-                Text("Центр готовности", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("Состояние настройки", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "ViRouteFS ${BuildConfig.VERSION_NAME}: работает ${report.readyCount}, требует внимания ${report.attentionCount}, исправить ${report.blockingCount}.",
+                    "Маршруты, профили и DNS проверяются перед запуском.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            StatusChip("Beta")
+            StatusChip(statusLabel)
         }
-        Text(
-            "Здесь отдельно показаны возможности приложения и готовность текущих настроек. Статус «Работает» не заменяет тест конкретного VPN-сервера.",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             FilledTonalButton(
                 enabled = !nativeCheckRunning,
                 onClick = onRunNativeCheck,
             ) {
-                Text(if (nativeCheckRunning) "Проверяем…" else "Проверить конфигурацию")
+                Text(if (nativeCheckRunning) "Проверяем…" else "Проверить")
             }
             OutlinedButton(onClick = onToggleExpanded) {
-                Text(if (expanded) "Скрыть список" else "Что работает / осталось")
+                Text(if (expanded) "Скрыть" else "Подробности")
             }
         }
-        Text(nativeCheckMessage, style = MaterialTheme.typography.bodySmall)
+        if (nativeCheckMessage.isNotBlank()) {
+            Text(nativeCheckMessage, style = MaterialTheme.typography.bodySmall)
+        }
         if (expanded) {
             report.items.forEach { item ->
                 ReadinessItemRow(item)
@@ -865,104 +807,26 @@ private fun ReadinessItemRow(item: ReadinessItem) {
 }
 
 @Composable
-private fun DefaultRoutesSection() {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            "Встроенные маршруты",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Text(
-            "System — обычное подключение телефона и безопасный маршрут по умолчанию. Block назначается только отдельным правилам или аварийному запрету.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        DefaultRouteCard(
-            title = "System / Система",
-            subtitle = "Обычный мобильный интернет или Wi‑Fi телефона.",
-            detail = "Работает как маршрут по умолчанию без обязательного VPN. Его также можно назначать отдельным правилам.",
-            icon = Icons.Filled.Public,
-            accent = MaterialTheme.colorScheme.primary,
-        )
-        DefaultRouteCard(
-            title = "Block / Блокировать",
-            subtitle = "Полная блокировка интернета для выбранных приложений.",
-            detail = "Безопасный способ запретить сеть приложению без скрытого перехвата трафика.",
-            icon = Icons.Filled.Block,
-            accent = Color(0xFFB3261E),
-        )
-    }
-}
-
-@Composable
-private fun DefaultRouteCard(
-    title: String,
-    subtitle: String,
-    detail: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    accent: Color,
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(CircleShape)
-                    .background(accent.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(icon, contentDescription = null, tint = accent)
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall)
-                Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
-}
-
-@Composable
-private fun AddVpnCard(profileCount: Int, onClick: () -> Unit) {
-    Card(
+private fun ProfilesHeader(profileCount: Int, onAdd: () -> Unit) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+            .padding(top = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(50.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFFB3261E).copy(alpha = 0.14f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = null, tint = Color(0xFFB3261E), modifier = Modifier.size(30.dp))
-            }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Добавить VPN", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "OpenVPN, VLESS+REALITY, Hysteria2 и другие профили будут подключаться отсюда.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                AssistChip(onClick = {}, label = { Text("Профилей: $profileCount") })
-            }
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("VPN-профили", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                if (profileCount == 0) "Пока нет" else "Добавлено: $profileCount",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        FilledTonalButton(onClick = onAdd) {
+            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.size(6.dp))
+            Text("Добавить")
         }
     }
 }
@@ -1177,44 +1041,6 @@ private fun CounterLine(label: String, value: Long) = Row(
 ) {
     Text(label, style = MaterialTheme.typography.bodySmall)
     Text(value.toString(), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
-}
-
-@Composable
-private fun PacketSummaryLine(summary: PacketSummary, routeDecisionPreview: LiveRouteDecisionPreview) {
-    val time = DateFormat.getTimeInstance(DateFormat.MEDIUM).format(Date(summary.timestamp))
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(
-            "${summary.protocol.safeLabel()}  ${summary.endpointLine()}  ${summary.packetSize} B",
-            fontWeight = FontWeight.SemiBold,
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Text(time, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(routeDecisionPreview.decisionLine, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(routeDecisionPreview.safetyLine, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        routeDecisionPreview.tcpSessionObservationLine?.let { observation ->
-            Text(observation, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        routeDecisionPreview.warnings.forEach { warning ->
-            WarningText(warning)
-        }
-    }
-}
-
-private fun Long?.formatPacketTime(text: UiText): String = this?.let {
-    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(Date(it))
-} ?: text.flowNever
-
-private fun PacketSummary.endpointLine(): String = if (srcPort != null && dstPort != null) {
-    "$srcIp:$srcPort → $dstIp:$dstPort"
-} else {
-    "$srcIp → $dstIp"
-}
-
-private fun Ipv4Protocol.safeLabel(): String = when (this) {
-    Ipv4Protocol.Tcp -> "TCP"
-    Ipv4Protocol.Udp -> "UDP"
-    Ipv4Protocol.Icmp -> "ICMP"
-    Ipv4Protocol.Other -> "OTHER"
 }
 
 @Composable

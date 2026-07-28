@@ -103,7 +103,6 @@ private fun DnsMainScreen(
     onAddPolicy: () -> Unit,
     onHostOverrides: () -> Unit,
 ) = ScreenList(padding) {
-    item { Header(text.dns, text.dnsSubtitle) }
     item { DnsLookupCheckerCard(text) }
     item {
         SectionHeader(

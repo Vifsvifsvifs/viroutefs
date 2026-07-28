@@ -169,7 +169,6 @@ private fun FlowScannerListScreen(
     onLiveEvent: () -> Unit,
     onEvent: (Int) -> Unit,
 ) = ScreenList(padding) {
-    item { Header(text.flowScannerTitle, text.flowScannerSubtitle) }
     item { FlowControlCard(text, vpnState, onClear, onPause) }
     if (appFilters.isNotEmpty()) {
         item {
@@ -208,7 +207,6 @@ private fun FlowScannerListScreen(
             FlowEventRow(text = text, event = events[index], onClick = { onEvent(index) })
         }
     }
-    item { FlowLimitCard(text) }
 }
 
 @Composable
@@ -218,14 +216,24 @@ private fun FlowControlCard(
     onClear: () -> Unit,
     onPause: (Boolean) -> Unit,
 ) = CardBlock {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.fillMaxWidth()) {
-        Text("Что показывает сканер", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Соединения приложений", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Адрес, приложение, правило и выбранный маршрут.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            StatusChip(if (vpnState.packetInspectorPaused) "Пауза" else "В эфире")
+        }
         Text(
-            "Для полученных событий: адрес назначения, порт, тип соединения, выбранное правило, VPN-профиль, риск и понятную рекомендацию.",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        Text(
-            "Содержимое сайтов, сообщения, пароли и файлы не записываются. События поступают только от локального VPN-движка. Статус службы: ${vpnState.status.name}.",
+            "Содержимое сайтов, сообщения, пароли и файлы не записываются.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -27,7 +27,7 @@ Examples:
 - `windows / chrome.exe`;
 - `any / telegram`.
 
-Android `0.12.0-beta.1` reads the complete installed-app list locally and requests `QUERY_ALL_PACKAGES` because selecting any installed app is a core per-app VPN-routing feature. The list is used only by the route picker and Flow Scanner filters; it is never uploaded, sold, or used for advertising.
+Android `0.12.0-beta.2` reads the complete installed-app list locally and requests `QUERY_ALL_PACKAGES` because selecting any installed app is a core per-app VPN-routing feature. The list is used only by the route picker and Flow Scanner filters; it is never uploaded, sold, or used for advertising.
 
 ## Later work
 
@@ -35,12 +35,12 @@ The Android build now has a real single-`VpnService` sing-box runtime, DNS enfor
 
 ## 0.4.1-alpha UI milestone
 
-The Android UI is reorganized around VPN, Routes, DNS, FS, Tools and Settings.
+The Android UI uses four primary destinations: Control, Routes, Scanner and More. DNS, Tools and Settings are available from More.
 
 - VPN becomes the added connection profile manager, not a full protocol catalog on the main page.
 - Protocol support is exposed at model/UI level for System, Block, modern VPN/tunnel protocols, proxy/tunnel protocols and legacy corporate protocols.
 - Routes become compact grouped cards for assigning apps, domains and IP/CIDR matchers to connection profiles.
 - DNS owns lookup checks, app DNS check concept, hosts-like overrides and DNS per connection.
-- FS is Flow Scanner: friendly live per-connection metadata, route explanations and filtering by installed application, without payload capture or HTTPS decryption.
+- Scanner is Flow Scanner: friendly live per-connection metadata, route explanations and filtering by installed application, without payload capture or HTTPS decryption.
 
 Future milestones must preserve explicit local processing without telemetry or cloud dependency.
