@@ -246,9 +246,16 @@ jobs:
             "release-apk/$RELEASE_APK.sha256"
             --title "$RELEASE_NAME"
             --notes-file release-notes.md
+            --target "$GITHUB_SHA"
           )
           if [ "$PRERELEASE" = "true" ]; then
             args+=(--prerelease)
           fi
 
           gh release create "${args[@]}"
+
+          TAG_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq '.object.sha')"
+          if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+            echo "Release tag points to $TAG_SHA instead of the built commit $GITHUB_SHA." >&2
+            exit 1
+          fi
