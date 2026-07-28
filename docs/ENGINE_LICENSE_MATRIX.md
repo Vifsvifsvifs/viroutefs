@@ -9,7 +9,7 @@ The Android app uses one `VpnService`. App, domain, IP and CIDR rules select a l
 | Component | Role | Upstream license | Exact build | Decision |
 | --- | --- | --- | --- | --- |
 | sing-box | TUN, routing, DNS, Direct/Block, OpenVPN, OpenConnect, VLESS, SOCKS5, VMess, Trojan, Shadowsocks, Hysteria v1/v2, Snell, TUIC, AnyTLS, HTTP(S), SSH, WireGuard and Tailscale/Headscale | GPL-3.0-or-later plus upstream condition prohibiting derivative branding or implied association | `v1.14.0-alpha.50`, commit `3fcfadd5ee45c460115243b55d48b438279aeacd`; `with_openvpn` and `with_openconnect`; 16 KiB-aligned `libbox.aar` SHA-256 `f3729b42c247c257adc2c7d03b1134ed7139b6f77da174f69f036d4fa4c7b685` | Bundled. Product name remains ViRouteFS. Preserve exact license, source pointer and reproducible build script. |
-| ByeDPI | App-private local SOCKS5 compatibility route for networks where DPI disrupts TCP/TLS | MIT | commit `ba532298de7b28cfe854aea83d061369d13ca290`; 16 KiB-aligned `libbyedpi.so` SHA-256 `abae93da6e426da5bbe5611f53a550eccb021d7be88b2c13865461024c4862d1` | Bundled for arm64. Include MIT notice. Never describe it as encryption, IP hiding, anonymity or a VPN. |
+| ByeDPI | Implements the user-facing **Совместимость TCP/TLS** app-private SOCKS5 route | MIT | commit `ba532298de7b28cfe854aea83d061369d13ca290`; 16 KiB-aligned `libbyedpi.so` SHA-256 `abae93da6e426da5bbe5611f53a550eccb021d7be88b2c13865461024c4862d1` | Bundled for arm64. Keep the upstream name in licenses and technical details. Never describe it as encryption, IP hiding, anonymity or a VPN. |
 | AndroidX, Jetpack Compose, Kotlin coroutines | Android application/runtime libraries | Primarily Apache-2.0 | Maven coordinates are pinned in `app/build.gradle.kts` | Bundled. Preserve dependency notices and metadata with distributed source. |
 
 The APK contains `GPL-3.0.txt`, the exact sing-box license notice and the ByeDPI MIT notice under `assets/licenses/`.
@@ -19,6 +19,7 @@ The APK contains `GPL-3.0.txt`, the exact sing-box license notice and the ByeDPI
 | Component | Purpose | License path | Current decision |
 | --- | --- | --- | --- |
 | strongSwan Android | IKEv2/IPsec, IPsec XAuth and IPsec PSK | GPL-2.0-or-later | Planned only after adaptation into the single-router architecture. |
+| zapret2 | Optional packet-processing compatibility adapter | MIT; audited at `v1.0.3`, commit `b78b52c4cd7f843da3ff0848a3430afbd401bdf2` | Not bundled. Upstream Android execution expects NFQUEUE/root; a separate rootless adapter inside the existing `VpnService` is required. |
 | WireGuard Android tunnel library | Optional fallback WireGuard adapter | Apache-2.0 | Not needed while the bundled sing-box WireGuard endpoint satisfies the architecture. |
 | Tor | Local Tor outbound | Requires a separately audited Android Tor executable and its license set | sing-box configuration support alone is not sufficient; disabled until the executable is bundled and tested. |
 | ZeroTier, SoftEther | Additional enterprise/mesh adapters | No binary selected | Planned or research only. |
@@ -53,6 +54,7 @@ Primary sources:
 - https://sing-box.sagernet.org/configuration/endpoint/wireguard/
 - https://sing-box.sagernet.org/configuration/endpoint/tailscale/
 - https://github.com/hufrea/byedpi
+- https://github.com/bol-van/zapret2
 - https://github.com/OpenVPN/openvpn3
 - https://github.com/strongswan/strongswan
 - https://git.zx2c4.com/wireguard-android/about/

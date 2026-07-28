@@ -32,11 +32,11 @@ internal class ByeDpiProcessManager(context: Context) {
     fun start(): Result<Int> = runCatching {
         stop()
         check(Build.SUPPORTED_ABIS.any { it == "arm64-v8a" }) {
-            "ByeDPI in this build requires an arm64-v8a device."
+            "The TCP/TLS compatibility engine in this build requires an arm64-v8a device."
         }
         val executable = File(applicationContext.applicationInfo.nativeLibraryDir, BINARY_NAME)
         check(executable.isFile) {
-            "The pinned ByeDPI executable is missing from the installed APK."
+            "The pinned TCP/TLS compatibility engine is missing from the installed APK."
         }
 
         val port = findAvailableLoopbackPort()
@@ -72,10 +72,10 @@ internal class ByeDpiProcessManager(context: Context) {
         }
 
         waitUntilListening(child, port)
-        lastMessage = "ByeDPI is listening on the app-private loopback proxy."
+        lastMessage = "TCP/TLS compatibility is listening on the app-private loopback proxy."
         port
     }.onFailure {
-        lastMessage = it.localizedMessage ?: "ByeDPI could not be started."
+        lastMessage = it.localizedMessage ?: "TCP/TLS compatibility could not be started."
         stop()
     }
 
@@ -110,7 +110,7 @@ internal class ByeDpiProcessManager(context: Context) {
         var lastError: Throwable? = null
         while (System.nanoTime() < deadline) {
             check(child.isAlive) {
-                lastMessage ?: "ByeDPI exited before opening its local proxy."
+                lastMessage ?: "The TCP/TLS compatibility engine exited before opening its local proxy."
             }
             val connected = runCatching {
                 Socket().use { socket ->
@@ -122,11 +122,11 @@ internal class ByeDpiProcessManager(context: Context) {
                 Thread.sleep(50)
             } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
-                error("Interrupted while waiting for ByeDPI to start.")
+                error("Interrupted while waiting for TCP/TLS compatibility to start.")
             }
         }
         throw IllegalStateException(
-            "ByeDPI did not open its local proxy in time.",
+            "TCP/TLS compatibility did not open its local proxy in time.",
             lastError,
         )
     }

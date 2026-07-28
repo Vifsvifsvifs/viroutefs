@@ -263,7 +263,7 @@ class ViRouteVpnService : VpnService() {
                 append(it.joinToString(" "))
             }
             byeDpiStart?.exceptionOrNull()?.let {
-                append(" ByeDPI error: ")
+                append(" TCP/TLS compatibility error: ")
                 append(it.localizedMessage ?: "the local proxy did not start")
                 append(". Its routes remain fail-closed.")
             }
@@ -273,7 +273,7 @@ class ViRouteVpnService : VpnService() {
 
         while (!runtimeStopping && runner.isRunning()) {
             if (byeDpiStart?.isSuccess == true && byeDpiProcessManager?.isRunning() != true) {
-                failRuntime("ByeDPI stopped unexpectedly. The VPN router was stopped to keep its routes fail-closed.")
+                failRuntime("The TCP/TLS compatibility engine stopped unexpectedly. The VPN router was stopped to keep its routes fail-closed.")
                 return
             }
             try {

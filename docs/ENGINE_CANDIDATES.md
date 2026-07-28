@@ -17,9 +17,9 @@ ViRouteFS remains GPL-3.0-or-later and local-first. Every implementation must be
   - Status: useful early outbound candidate.
   - License note: implementation must be checked before embedding.
 
-- **ByeDPI-style local DPI bypass**
+- **Local TCP/TLS compatibility route**
   - Status: important future local profile type.
-  - Role: local DPI bypass profile, not a full VPN.
+  - Role: local compatibility profile for networks where middleboxes disrupt standard TCP/TLS, not a full VPN.
   - UI model: can appear as a Network profile and be used as route target.
   - Safety: if selected for an app/domain and unavailable, fail closed / Block; never fallback to another profile.
   - License note: preferred implementation must be audited before embedding.

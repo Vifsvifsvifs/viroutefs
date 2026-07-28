@@ -1,10 +1,10 @@
-# ViRouteFS UI concept — 0.12.0-beta.2
+# ViRouteFS UI concept — 0.12.0-beta.3
 
 ViRouteFS 0.12 beta organizes the Android app around four primary tasks:
 
 1. **Control / Контроль** — one primary network-control action, the phone's default route, quick safety actions, configuration health, and user VPN profiles.
-2. **Routes / Маршруты** — assign installed apps, domains, IP addresses, or CIDR networks to a VPN/proxy, `System`, `Block`, or `ByeDPI`.
-3. **Scanner / Сканер** — live local connection metadata and per-app filtering without payload capture.
+2. **Routes / Маршруты** — assign installed apps, domains, IP addresses, or CIDR networks to a VPN/proxy, `System`, `Block`, or **Совместимость TCP/TLS**.
+3. **Scanner / Сканер** — live local connection metadata and per-app filtering without payload capture. Installed-app icons appear in the picker, filters and connection rows.
 4. **More / Ещё** — DNS policies, diagnostics/tools, settings, updates, help, licensing, and developer controls.
 
 DNS and Settings remain full screens, but no longer compete with daily network-control tasks in the bottom navigation.

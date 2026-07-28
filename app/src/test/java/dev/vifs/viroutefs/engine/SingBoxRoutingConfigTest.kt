@@ -272,6 +272,6 @@ class SingBoxRoutingConfigTest {
             SING_BOX_BLOCK_TAG,
             JSONObject(compiled.json).getJSONObject("route").getString("final"),
         )
-        assertTrue(compiled.warnings.any { it.contains("ByeDPI") && it.contains("fail closed") })
+        assertTrue(compiled.warnings.any { it.contains("TCP/TLS compatibility") && it.contains("fail closed") })
     }
 }

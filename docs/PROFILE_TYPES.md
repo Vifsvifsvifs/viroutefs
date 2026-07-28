@@ -7,7 +7,7 @@ The UI uses one catalog so a protocol name is never confused with working runtim
 | Type | Runtime |
 | --- | --- |
 | System / Block | Built into ViRouteFS/sing-box |
-| ByeDPI | Pinned MIT-licensed local SOCKS process |
+| Совместимость TCP/TLS | Pinned MIT-licensed ByeDPI local SOCKS process; upstream name remains in technical and license details |
 | OpenVPN client | sing-box 1.14 alpha endpoint |
 | OpenConnect / AnyConnect family | sing-box 1.14 alpha endpoint |
 | VLESS, TLS, REALITY | sing-box |

@@ -41,6 +41,15 @@ class EngineCatalogTest {
     }
 
     @Test
+    fun zapret2IsAuditedButNotClaimedAsRuntimeReady() {
+        val descriptor = EngineCatalog.descriptor(TunnelType.Zapret2)
+
+        assertEquals(ProtocolAvailability.AuditedPlanned, descriptor?.availability)
+        assertEquals(EngineBackend.Zapret2, descriptor?.backend)
+        assertTrue(descriptor?.summary.orEmpty().contains("NFQUEUE"))
+    }
+
+    @Test
     fun everySelectableProtocolSupportsRoutingAndCustomDnsInTheProductModel() {
         assertTrue(EngineCatalog.selectableProtocols.isNotEmpty())
         EngineCatalog.selectableProtocols.forEach { protocol ->

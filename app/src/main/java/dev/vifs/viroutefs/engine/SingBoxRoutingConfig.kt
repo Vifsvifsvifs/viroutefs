@@ -207,7 +207,7 @@ internal class SingBoxRoutingConfigCompiler(
             TunnelType.ByeDpi -> {
                 val localPort = byeDpiPort
                 if (localPort == null) {
-                    warnings += "ByeDPI profile '$name' is enabled, but the local process is unavailable; matching traffic will fail closed."
+                    warnings += "TCP/TLS compatibility profile '$name' is enabled, but its local engine is unavailable; matching traffic will fail closed."
                     null
                 } else {
                     JSONObject()

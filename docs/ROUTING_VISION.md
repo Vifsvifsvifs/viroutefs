@@ -12,13 +12,13 @@ Rules can match:
 - all remaining traffic.
 
 Every rule selects one profile. The profile may be a VPN/proxy tunnel, `Direct`,
-`Block` or the built-in ByeDPI local proxy. Rules are ordered, and the first
+`Block` or the built-in **Совместимость TCP/TLS** local route. Rules are ordered, and the first
 matching rule wins.
 
 When network control is enabled, every flow without a more specific rule uses
 `System`: the phone's normal mobile-data or Wi-Fi uplink. A VPN profile is not
 required to start network control. Explicit rules send only selected traffic to
-a VPN/proxy tunnel, `Block`, ByeDPI or an explicit `System` route.
+a VPN/proxy tunnel, `Block`, **Совместимость TCP/TLS** or an explicit `System` route.
 
 ## DNS
 
@@ -39,8 +39,9 @@ resolver.
 The current sing-box-backed profile model covers OpenVPN,
 OpenConnect/AnyConnect, VLESS, SOCKS5, VMess, Trojan, Shadowsocks, Hysteria
 v1/v2, Snell, TUIC, AnyTLS, HTTP/HTTPS proxy, SSH, WireGuard and
-Tailscale/Headscale. ByeDPI is an embedded local SOCKS process with a dedicated
-toggle.
+Tailscale/Headscale. The compatibility route is implemented by an embedded
+ByeDPI local SOCKS process with a dedicated toggle; the upstream name remains
+in technical and license details.
 
 Tor, ShadowTLS chains, Naive, IKEv2/IPsec, L2TP, PPTP and SSTP remain outside
 the current working runtime. The UI must not present these as active tunnels.

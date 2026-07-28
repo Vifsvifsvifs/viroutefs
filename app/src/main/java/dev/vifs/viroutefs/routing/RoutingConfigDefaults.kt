@@ -7,6 +7,7 @@ object RoutingConfigDefaults {
     const val DIRECT_PROFILE_ID = SYSTEM_PROFILE_ID
     const val BLOCK_PROFILE_ID = "block"
     const val BYEDPI_PROFILE_ID = "byedpi"
+    const val NETWORK_COMPATIBILITY_PROFILE_NAME = "Совместимость TCP/TLS"
 
     const val SYSTEM_DNS_ID = "system_dns"
 
@@ -49,19 +50,28 @@ object RoutingConfigDefaults {
 
     fun byeDpiProfile(enabled: Boolean = false): TunnelProfile = TunnelProfile(
         id = BYEDPI_PROFILE_ID,
-        name = "ByeDPI",
+        name = NETWORK_COMPATIBILITY_PROFILE_NAME,
         type = TunnelType.ByeDpi,
-        description = "Локальный SOCKS-прокси совместимости для сетей, где DPI мешает нормальной передаче TCP/TLS.",
+        description = "Локальный обработчик совместимости для сетей, где промежуточное оборудование нарушает стандартную передачу TCP/TLS.",
         enabled = enabled,
         mockOnly = false,
-        platformNotes = "Встроенный ByeDPI (MIT). Это не VPN: он не шифрует весь трафик и не скрывает IP-адрес.",
+        platformNotes = "Техническая реализация: встроенный движок ByeDPI по лицензии MIT. Это не VPN, не шифрование и не средство сокрытия IP-адреса.",
         dnsPolicyId = SYSTEM_DNS_ID,
     )
 
     fun ensureRequiredProfiles(config: RoutingConfig): RoutingConfig {
-        val existingIds = config.profiles.mapTo(mutableSetOf()) { it.id }
+        val normalizedProfiles = config.profiles.map { profile ->
+            if (profile.id == BYEDPI_PROFILE_ID) {
+                byeDpiProfile(enabled = profile.enabled).copy(
+                    dnsPolicyId = profile.dnsPolicyId ?: SYSTEM_DNS_ID,
+                )
+            } else {
+                profile
+            }
+        }
+        val existingIds = normalizedProfiles.mapTo(mutableSetOf()) { it.id }
         val required = defaultProfiles().filterNot { it.id in existingIds }
-        val profileIds = config.profiles.mapTo(mutableSetOf()) { it.id }.apply {
+        val profileIds = normalizedProfiles.mapTo(mutableSetOf()) { it.id }.apply {
             addAll(required.map { it.id })
         }
         val defaultRouteProfileId = config.defaultProfileId
@@ -70,7 +80,7 @@ object RoutingConfigDefaults {
             ?: SYSTEM_PROFILE_ID
         return config.copy(
             version = CURRENT_ROUTING_CONFIG_VERSION,
-            profiles = config.profiles + required,
+            profiles = normalizedProfiles + required,
             defaultProfileId = defaultRouteProfileId,
             rules = config.rules.map { rule ->
                 if (rule.type == RouteRuleType.DEFAULT) {
@@ -84,7 +94,7 @@ object RoutingConfigDefaults {
                         reason = "Traffic without a more specific rule uses the selected default route.",
                         technicalDetails = "DEFAULT, priority ${rule.priority}. Explicit app, domain, IP, and CIDR rules override this route.",
                         recommendedAction = if (defaultRouteProfileId == SYSTEM_PROFILE_ID) {
-                            "Add rules only for apps, domains, IPs, or networks that must use a VPN, Block, or ByeDPI."
+                            "Add rules only for apps, domains, IPs, or networks that must use a VPN, Block, or TCP/TLS compatibility mode."
                         } else {
                             "Keep the custom default profile available or return the default route to System."
                         },
@@ -117,7 +127,7 @@ object RoutingConfigDefaults {
             matchers = emptyList(),
             reason = "Traffic without a more specific rule uses the phone's normal mobile data or Wi-Fi connection.",
             technicalDetails = "DEFAULT, priority 1000. Network control remains active, while explicit app/domain/IP/CIDR rules can override this route.",
-            recommendedAction = "Add rules only for traffic that must use a VPN, another tunnel, Block, or ByeDPI.",
+            recommendedAction = "Add rules only for traffic that must use a VPN, another tunnel, Block, or TCP/TLS compatibility mode.",
         ),
     )
 }

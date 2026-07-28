@@ -16,6 +16,11 @@ internal object EngineCatalog {
         ready(TunnelType.Direct, "Встроенный маршрут через сеть Android.", EngineBackend.BuiltIn),
         ready(TunnelType.Block, "Запрет сети с безопасным поведением fail-closed.", EngineBackend.BuiltIn),
         ready(TunnelType.ByeDpi, "Локальный режим совместимости TCP/TLS для сетей с мешающим DPI; это не VPN и не скрывает IP-адрес.", EngineBackend.ByeDpi),
+        planned(
+            TunnelType.Zapret2,
+            "Актуальный zapret2 v1.0.3 проверен по исходникам и лицензии MIT. Его Android-движок ожидает NFQUEUE/root, поэтому для обычного телефона нужен отдельный адаптер внутри единственного VpnService.",
+            EngineBackend.Zapret2,
+        ),
 
         ready(TunnelType.VLESS, "VLESS, включая TLS и REALITY.", EngineBackend.SingBox),
         planned(TunnelType.XrayVlessReality, "Совместимый импорт старых Xray/VLESS-профилей.", EngineBackend.SingBox),
@@ -105,7 +110,8 @@ internal enum class EngineBackend(val label: String, val licenseDecision: String
     BuiltIn("ViRouteFS", "GPL-3.0-or-later"),
     SingBox("sing-box", "GPL-3.0-or-later"),
     StrongSwan("strongSwan", "GPL-2.0-or-later"),
-    ByeDpi("ByeDPI", "MIT"),
+    ByeDpi("Движок совместимости ByeDPI", "MIT"),
+    Zapret2("zapret2", "MIT; v1.0.3 audited, not bundled"),
     LegacyAdapter("Legacy adapter", "No binary selected"),
     ExternalAdapter("External adapter", "Requires separate audit"),
 }
