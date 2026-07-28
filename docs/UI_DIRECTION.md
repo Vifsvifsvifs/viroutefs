@@ -1,18 +1,17 @@
 # UI direction
 
-## Navigation direction for 0.6.5-alpha
+## Navigation direction for 0.12.0-beta.2
 
 The main bottom navigation is:
 
-- Networks / Сети
+- Control / Контроль
 - Routes / Маршруты
-- DNS
-- FS
-- Settings / Настройки
+- Scanner / Сканер
+- More / Ещё
 
-Home / Главная is no longer a bottom tab. Its useful overview text moved into **Settings → Help / Справка**.
+DNS, Tools and Settings are full screens opened from **More / Ещё**. They do not occupy the bottom bar because they are not primary daily destinations.
 
-The VPN-facing user concept is now **Networks / Сети** because ViRouteFS should be useful even without external VPN profiles: local network analysis, Flow Scanner visibility, route planning, DNS policy planning, and diagnostics remain useful.
+The primary concept is **Control / Контроль** because the app can start without an external VPN profile. `System` uses the phone's normal mobile-data or Wi-Fi connection, and explicit rules override it only for selected apps or addresses.
 
 ## Product UI principles
 

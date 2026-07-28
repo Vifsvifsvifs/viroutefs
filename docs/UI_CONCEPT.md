@@ -1,19 +1,21 @@
-# ViRouteFS UI concept — 0.12.0-beta.1
+# ViRouteFS UI concept — 0.12.0-beta.2
 
-ViRouteFS 0.6.5-alpha organizes the Android app around five compact product tasks:
+ViRouteFS 0.12 beta organizes the Android app around four primary tasks:
 
-1. **Networks / Сети** — real network profiles and safe local network control.
-2. **Routes** — assign apps, domains/sites and IP/CIDR matchers to connection profiles.
-3. **DNS** — run DNS lookup checks, preview app DNS behavior, manage hosts-like overrides and assign DNS policies per connection.
-4. **FS** — Flow Scanner: live local connection metadata and per-app filtering without payload capture.
-5. **Settings / Настройки** — language, theme, Help / Справка, project support, and developer diagnostics.
+1. **Control / Контроль** — one primary network-control action, the phone's default route, quick safety actions, configuration health, and user VPN profiles.
+2. **Routes / Маршруты** — assign installed apps, domains, IP addresses, or CIDR networks to a VPN/proxy, `System`, `Block`, or `ByeDPI`.
+3. **Scanner / Сканер** — live local connection metadata and per-app filtering without payload capture.
+4. **More / Ещё** — DNS policies, diagnostics/tools, settings, updates, help, licensing, and developer controls.
 
-The main navigation is: Networks / Сети, Routes / Маршруты, DNS, FS, and Settings / Настройки. Home / Главная content moved into Settings → Help / Справка.
+DNS and Settings remain full screens, but no longer compete with daily network-control tasks in the bottom navigation.
 
 ## Compact rules
 
 - One screen focuses on one main task.
 - One card presents one idea.
+- The Control screen does not duplicate the packet inspector or repeat built-in `System`/`Block` explanations.
+- Content pages use 16 dp horizontal padding, calmer surfaces, and four stable bottom destinations.
+- Horizontal choices scroll instead of wrapping or clipping on narrow phones.
 - Raw advanced fields such as priority, technical details and recommended action are hidden from the primary Routes view.
 - Russian-first labels are used for user-facing concepts.
 - Technical details remain available in result cards and documentation.

@@ -15,6 +15,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -28,6 +30,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.AltRoute
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Dns
@@ -35,13 +38,13 @@ import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -149,7 +152,8 @@ internal enum class AppScreen(val icon: ImageVector) {
     Settings(Icons.Outlined.Settings),
 }
 
-private val bottomScreens = listOf(AppScreen.Vpn, AppScreen.Routes, AppScreen.Dns, AppScreen.Fs, AppScreen.Settings)
+private val bottomScreens = listOf(AppScreen.Vpn, AppScreen.Routes, AppScreen.Fs, AppScreen.More)
+private val moreScreens = setOf(AppScreen.Dns, AppScreen.Tools, AppScreen.Settings)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -297,18 +301,27 @@ private fun ViRouteFsApp(settings: AppSettings, onSettings: (AppSettings) -> Uni
 
     Scaffold(
         topBar = {
-            TopAppBar(title = {
-                Column {
-                    Text("ViRouteFS", style = MaterialTheme.typography.titleMedium)
-                    Text("Visual Route & Flow Scanner", style = MaterialTheme.typography.labelSmall)
-                }
-            })
+            TopAppBar(
+                title = {
+                    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                        Text(text.screen(selectedScreen), style = MaterialTheme.typography.titleMedium)
+                        Text("ViRouteFS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
+                navigationIcon = {
+                    if (selectedScreen in moreScreens) {
+                        IconButton(onClick = { selectedScreen = AppScreen.More }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = text.back)
+                        }
+                    }
+                },
+            )
         },
         bottomBar = {
             NavigationBar {
                 bottomScreens.forEach { screen ->
                     NavigationBarItem(
-                        selected = selectedScreen == screen,
+                        selected = selectedScreen == screen || (screen == AppScreen.More && selectedScreen in moreScreens),
                         onClick = { selectedScreen = screen },
                         icon = { Icon(screen.icon, contentDescription = null) },
                         label = { Text(text.screen(screen), maxLines = 1, style = MaterialTheme.typography.labelSmall) },
@@ -392,7 +405,6 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
     }
 
     ScreenList(padding) {
-        item { Header(text.routes, text.routesSubtitle) }
         item {
             CardBlock {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -414,9 +426,11 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
                 val defaultRouteName = config.defaultProfileId
                     ?.let { id -> config.profiles.firstOrNull { it.id == id }?.name }
                     ?: "не выбран"
-                Text("По умолчанию: $defaultRouteName", style = MaterialTheme.typography.bodySmall)
-                Text("Доступно приложений: ${installedApps.size} • правил: ${userRules.size}", style = MaterialTheme.typography.labelSmall)
-                Details(text.details, text.routeIsolationNote)
+                Text(
+                    "По умолчанию: $defaultRouteName • правил: ${userRules.size}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
         if (userRules.isEmpty()) {
@@ -636,19 +650,16 @@ private fun RouteDetailsScreen(
                 }
                 Text("${text.targetProfile}: ${targetProfile?.name ?: targetProfileId}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (targetProfile?.type == TunnelType.Socks5) {
-                    Text("Selected profile: SOCKS5. Matching traffic is forwarded by the local VPN runtime.")
-                    Text(selectedSocks5Readiness?.routeExplanationLine ?: "SOCKS5 profile has not been tested yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        selectedSocks5Readiness?.routeExplanationLine ?: "SOCKS5 ещё не проверен.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-            }
-        }
-        item {
-            CardBlock {
-                Text(text.details, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
-                RouteDetailLine(text.matcherType, matcherKind.label(text))
-                RouteDetailLine(text.selectedMatcher, matcherSummary(draft))
-                RouteDetailLine(text.targetProfile, routeTargetName(config, targetProfileId))
-                RouteDetailLine("DNS", config.dnsPolicies.firstOrNull { it.id == dnsPolicyId }?.name ?: "По профилю")
-                Details(text.advanced, "${text.routeIsolationNote}\n\n${text.runtimeRoutingFuture}\n\n${rule.reason}\n${rule.technicalDetails}\n${rule.recommendedAction}")
+                Details(
+                    text.advanced,
+                    "${text.routeIsolationNote}\n\n${rule.reason}\n${rule.technicalDetails}\n${rule.recommendedAction}",
+                )
             }
         }
         if (liveConflicts.isNotEmpty() || saveErrors.isNotEmpty()) {
@@ -749,7 +760,7 @@ private fun RouteMatcherEditor(
                                     Text(app.packageName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 if (app.isSystem) StatusChip("Системное")
-                                StatusChip(if (app.packageName in selectedAppPackages) "Выбрано" else "Выбрать")
+                                if (app.packageName in selectedAppPackages) StatusChip("Выбрано")
                             }
                         }
                     }
@@ -786,17 +797,9 @@ private fun RouteMatcherEditor(
     }
 }
 
-@Composable
-private fun RouteDetailLine(label: String, value: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.bodySmall)
-    }
-}
-
 private fun newRouteDraft(config: RoutingConfig): RouteRule = RouteRule(
     id = "route_${UUID.randomUUID()}",
-    name = "New route",
+    name = "Новое правило",
     type = RouteRuleType.APP,
     targetProfileId = config.defaultProfileId ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID,
     dnsPolicyId = RoutingConfigDefaults.SYSTEM_DNS_ID,
@@ -896,7 +899,6 @@ private fun ToolsScreen(padding: PaddingValues, text: UiText, config: RoutingCon
     var tls by remember { mutableStateOf<DiagnosticResult?>(null) }
     var http by remember { mutableStateOf<DiagnosticResult?>(null) }
     ScreenList(padding) {
-        item { Header(text.tools, text.toolsSubtitle) }
         item {
             CardBlock {
                 Text(text.tcpTls, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
@@ -943,20 +945,26 @@ private fun ToolsScreen(padding: PaddingValues, text: UiText, config: RoutingCon
 
 @Composable
 private fun MoreScreen(padding: PaddingValues, text: UiText, onOpen: (AppScreen) -> Unit) = ScreenList(padding) {
-    item { Header(text.more, text.moreSubtitle) }
+    item { MoreEntry(text.dns, text.dnsSubtitle, Icons.Outlined.Dns) { onOpen(AppScreen.Dns) } }
     item { MoreEntry(text.tools, text.toolsSubtitle, Icons.Outlined.Build) { onOpen(AppScreen.Tools) } }
     item { MoreEntry(text.settings, text.settingsSubtitle, Icons.Outlined.Settings) { onOpen(AppScreen.Settings) } }
 }
 
 @Composable
 private fun MoreEntry(title: String, subtitle: String, icon: ImageVector, onClick: () -> Unit) = CardBlock {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+    ) {
         Icon(icon, contentDescription = null)
         Column(Modifier.weight(1f)) {
             Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Button(onClick = onClick) { Text("›") }
+        Text("›", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -990,7 +998,6 @@ private fun SettingsScreen(
         }
     }
     ScreenList(padding) {
-        item { Header(text.settings, text.settingsSubtitle) }
         item {
             CardBlock {
                 Row(
@@ -1357,22 +1364,32 @@ private fun CompactCard(text: UiText, title: String, simple: String, details: St
 @Composable
 internal fun CardBlock(content: @Composable ColumnScope.() -> Unit) = Card(
     modifier = Modifier.fillMaxWidth(),
-    shape = RoundedCornerShape(12.dp),
-    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHighest),
+    shape = RoundedCornerShape(20.dp),
+    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
 ) {
-    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp), content = content)
+    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp), content = content)
 }
 
 @Composable
 internal fun ScreenList(padding: PaddingValues, content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) = LazyColumn(
     modifier = Modifier.fillMaxSize(),
-    contentPadding = PaddingValues(start = 10.dp, top = padding.calculateTopPadding() + 8.dp, end = 10.dp, bottom = padding.calculateBottomPadding() + 8.dp),
-    verticalArrangement = Arrangement.spacedBy(8.dp),
+    contentPadding = PaddingValues(start = 16.dp, top = padding.calculateTopPadding() + 12.dp, end = 16.dp, bottom = padding.calculateBottomPadding() + 16.dp),
+    verticalArrangement = Arrangement.spacedBy(12.dp),
     content = content,
 )
 
 @Composable
-internal fun StatusChip(label: String) = AssistChip(onClick = {}, label = { Text(label, style = MaterialTheme.typography.labelSmall) })
+internal fun StatusChip(label: String) = Surface(
+    shape = RoundedCornerShape(999.dp),
+    color = MaterialTheme.colorScheme.primaryContainer,
+) {
+    Text(
+        label,
+        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onPrimaryContainer,
+    )
+}
 
 @Composable
 internal fun WarningText(value: String) = Text(value, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -1385,17 +1402,25 @@ internal fun Details(label: String, text: String) {
 }
 
 @Composable
-private fun ChipRow(content: @Composable () -> Unit) = Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) { content() }
+private fun ChipRow(content: @Composable () -> Unit) = Row(
+    modifier = Modifier
+        .fillMaxWidth()
+        .horizontalScroll(rememberScrollState()),
+    horizontalArrangement = Arrangement.spacedBy(6.dp),
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    content()
+}
 
 
 @Suppress("TooManyFunctions")
 internal class UiText(private val language: AppLanguage) {
     val dashboard = t("Главная", "Home", "主页")
-    val networks = t("Сети", "Networks", "网络")
+    val networks = t("Контроль", "Control", "控制")
     val vpn = networks
     val routes = t("Маршруты", "Routes", "路由")
     val dns = "DNS"
-    val fs = "FS"
+    val fs = t("Сканер", "Scanner", "扫描器")
     val tools = t("Инструменты", "Tools", "工具")
     val settings = t("Настройки", "Settings", "设置")
     val more = t("Ещё", "More", "更多")
@@ -1404,7 +1429,7 @@ internal class UiText(private val language: AppLanguage) {
     val vpnSubtitle = networksSubtitle
     val routesSubtitle = t("Какой тоннель используется. Нажмите маршрут для деталей.", "Which tunnel is used. Tap a route for details.", "查看使用哪个隧道。点按路由查看详情。")
     val dnsSubtitle = t("Проверка DNS и локальные политики.", "DNS checks and local policies.", "DNS 检查和本地策略。")
-    val fsSubtitle = t("Понятное состояние маршрутизатора; события отдельных соединений появятся только после безопасной интеграции с движком.", "Readable router state; per-connection events will appear only after safe engine integration.", "清晰显示路由器状态；单连接事件仅会在与引擎安全集成后出现。")
+    val fsSubtitle = t("Живые соединения по приложениям, адресам и маршрутам.", "Live connections by app, address, and route.", "按应用、地址和路由显示实时连接。")
     val toolsSubtitle = t("TCP, TLS, HTTP и маршрутная диагностика.", "TCP, TLS, HTTP, and route diagnostics.", "TCP、TLS、HTTP 和路由诊断。")
     val settingsSubtitle = t("Язык, тема, справка и расширенная диагностика.", "Language, theme, help, and advanced diagnostics.", "语言、主题、帮助和高级诊断。")
     val moreSubtitle = t("Инструменты и настройки без перегруза навигации.", "Tools and settings without crowded navigation.", "工具和设置不再挤占导航栏。")
