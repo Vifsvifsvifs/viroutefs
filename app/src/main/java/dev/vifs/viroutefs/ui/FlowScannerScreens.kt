@@ -757,16 +757,23 @@ private fun VpnConnectionFlow.toFlowEvent(context: Context, config: RoutingConfi
         SING_BOX_BLOCK_TAG -> "Block / Блокировать"
         SING_BOX_DIRECT_TAG -> "System / Система"
         else -> config.profiles.firstOrNull { runtimeProfileTag(it.id) == outboundTag }?.name
+            ?: config.profileGroups.firstOrNull { runtimeProfileTag(it.id) == outboundTag }?.name
             ?: outboundTag.ifBlank { decision.tunnelProfile.name }
     }
     val blocked = outboundTag == SING_BOX_BLOCK_TAG || outboundType.equals("block", true)
     val direct = outboundTag == SING_BOX_DIRECT_TAG || outboundType.equals("direct", true)
-    val expectedTag = runtimeProfileTag(decision.tunnelProfile.id)
-    val routeMatches = outboundTag == expectedTag
+    val expectedTags = expectedRuntimeTags(config, decision)
+    val expectedRouteName = config.profileGroups.firstOrNull { it.id == decision.targetId }?.name
+        ?: decision.tunnelProfile.name
+    val routeMatches = outboundTag in expectedTags
     val routeCheck = if (routeMatches) {
-        "Совпадает: правило «${decision.matchedRule.name}» рассчитало тот же маршрут."
+        if (decision.targetId in config.profileGroups.map { it.id }) {
+            "Совпадает: правило «${decision.matchedRule.name}» выбрало группу «$expectedRouteName», её активный участник — «$routeName»."
+        } else {
+            "Совпадает: правило «${decision.matchedRule.name}» рассчитало тот же маршрут."
+        }
     } else {
-        "Требует проверки: правило «${decision.matchedRule.name}» ожидало «${decision.tunnelProfile.name}», фактически выбран «$routeName»."
+        "Требует проверки: правило «${decision.matchedRule.name}» ожидало «$expectedRouteName», фактически выбран «$routeName»."
     }
     val routeMismatchWarning = routeCheck.takeUnless { routeMatches }
     val service = destinationService(destinationPort, network)
@@ -815,7 +822,7 @@ private fun VpnConnectionFlow.toFlowEvent(context: Context, config: RoutingConfi
             appendLine("Пакеты приложений: ${appPackages.joinToString().ifBlank { "не определены" }}")
             appendLine("Процесс: ${processPath.ifBlank { "не определён" }}")
             appendLine("Outbound: $outboundTag ($outboundType)")
-            appendLine("Ожидаемый outbound: $expectedTag")
+            appendLine("Допустимые outbound: ${expectedTags.joinToString()}")
             appendLine("Проверка: $routeCheck")
             appendLine("Отправлено: $uplinkBytes байт")
             appendLine("Получено: $downlinkBytes байт")
@@ -825,6 +832,15 @@ private fun VpnConnectionFlow.toFlowEvent(context: Context, config: RoutingConfi
         routeCheck = routeCheck,
         appPackages = appPackages,
     )
+}
+
+internal fun expectedRuntimeTags(config: RoutingConfig, decision: RouteDecision): Set<String> {
+    val group = config.profileGroups.firstOrNull { it.id == decision.targetId }
+        ?: return setOf(runtimeProfileTag(decision.targetId))
+    return buildSet {
+        add(runtimeProfileTag(group.id))
+        group.memberProfileIds.forEach { add(runtimeProfileTag(it)) }
+    }
 }
 
 internal fun explainFlowRoute(

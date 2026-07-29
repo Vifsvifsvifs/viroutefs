@@ -5,6 +5,7 @@ package dev.vifs.viroutefs.engine
 import dev.vifs.viroutefs.routing.AppMatcherPlatform
 import dev.vifs.viroutefs.routing.DnsPolicy
 import dev.vifs.viroutefs.routing.DnsPolicyType
+import dev.vifs.viroutefs.routing.ProfileGroupMode
 import dev.vifs.viroutefs.routing.RouteRule
 import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.RouteTransport
@@ -79,6 +80,52 @@ internal class SingBoxRoutingConfigCompiler(
                         runtimeProfileIds += profile.id
                     }
                 }
+            }
+        }
+
+        config.profileGroups.filter { it.enabled }.forEach { group ->
+            val memberIds = group.memberProfileIds.distinct()
+            val memberTags = memberIds.mapNotNull(profileTags::get)
+            val groupTag = runtimeProfileTag(group.id)
+            val runtimeGroup = when (group.mode) {
+                ProfileGroupMode.Manual -> {
+                    val selectedTag = group.selectedProfileId?.let(profileTags::get)
+                    if (memberTags.size != memberIds.size || selectedTag == null) {
+                        warnings += "Manual group '${group.name}' has an unavailable member or selection and will fail closed."
+                        null
+                    } else {
+                        JSONObject()
+                            .put("type", "selector")
+                            .put("tag", groupTag)
+                            .put("outbounds", JSONArray(memberTags))
+                            .put("default", selectedTag)
+                            .put("interrupt_exist_connections", false)
+                    }
+                }
+                ProfileGroupMode.Latency -> {
+                    if (memberTags.size < 2) {
+                        warnings += "Latency group '${group.name}' has fewer than two available members and will fail closed."
+                        null
+                    } else {
+                        if (memberTags.size != memberIds.size) {
+                            warnings += "Latency group '${group.name}' excludes unavailable members from its explicit fallback set."
+                        }
+                        warnings += "Latency group '${group.name}' performs an explicit HTTPS availability check at ${group.testUrl}."
+                        JSONObject()
+                            .put("type", "urltest")
+                            .put("tag", groupTag)
+                            .put("outbounds", JSONArray(memberTags))
+                            .put("url", group.testUrl)
+                            .put("interval", "${group.testIntervalSeconds}s")
+                            .put("tolerance", group.toleranceMs)
+                            .put("interrupt_exist_connections", false)
+                    }
+                }
+            }
+            runtimeGroup?.let { outbound ->
+                outbounds += outbound
+                profileTags[group.id] = groupTag
+                runtimeProfileIds += group.id
             }
         }
 

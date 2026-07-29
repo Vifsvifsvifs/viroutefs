@@ -3,10 +3,15 @@
 package dev.vifs.viroutefs.ui
 
 import dev.vifs.viroutefs.routing.DestinationPortRange
+import dev.vifs.viroutefs.routing.ProfileGroup
+import dev.vifs.viroutefs.routing.ProfileGroupMode
+import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.routing.RouteRule
 import dev.vifs.viroutefs.routing.RouteRuleType
+import dev.vifs.viroutefs.routing.RouteQuery
 import dev.vifs.viroutefs.routing.RouteTransport
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
+import dev.vifs.viroutefs.engine.runtimeProfileTag
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -111,6 +116,28 @@ class FlowScannerFilterTest {
 
         assertEquals("secure-api", tcp.matchedRule.id)
         assertEquals(RouteRuleType.DEFAULT, udp.matchedRule.type)
+    }
+
+    @Test
+    fun profileGroupAcceptsGroupAndSelectedMemberAsExpectedRuntimeTags() {
+        val defaults = RoutingConfigDefaults.defaultConfig()
+        val group = ProfileGroup(
+            id = "preferred-route",
+            name = "Preferred route",
+            mode = ProfileGroupMode.Manual,
+            memberProfileIds = listOf("direct", "work-vpn"),
+            selectedProfileId = "direct",
+        )
+        val config = defaults.copy(
+            profileGroups = listOf(group),
+            defaultProfileId = group.id,
+        )
+        val decision = RouteEngine(config).simulate(RouteQuery("default"))
+        val tags = expectedRuntimeTags(config, decision)
+
+        assertTrue(runtimeProfileTag(group.id) in tags)
+        assertTrue(runtimeProfileTag("direct") in tags)
+        assertTrue(runtimeProfileTag("work-vpn") in tags)
     }
 
     private fun event(

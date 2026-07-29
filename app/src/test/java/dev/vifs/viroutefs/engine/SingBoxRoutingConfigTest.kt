@@ -8,6 +8,8 @@ import dev.vifs.viroutefs.routing.DnsPolicy
 import dev.vifs.viroutefs.routing.DnsServerConfig
 import dev.vifs.viroutefs.routing.DnsPolicyType
 import dev.vifs.viroutefs.routing.DestinationPortRange
+import dev.vifs.viroutefs.routing.ProfileGroup
+import dev.vifs.viroutefs.routing.ProfileGroupMode
 import dev.vifs.viroutefs.routing.RouteRule
 import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.RouteTransport
@@ -27,6 +29,77 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SingBoxRoutingConfigTest {
+    @Test
+    fun manualGroupCompilesToExplicitSelectorAndRoutesThroughGroupTag() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val first = socksProfile("group-first", 1081)
+        val second = socksProfile("group-second", 1082)
+        val group = ProfileGroup(
+            id = "manual-group",
+            name = "Manual group",
+            mode = ProfileGroupMode.Manual,
+            memberProfileIds = listOf(first.id, second.id),
+            selectedProfileId = second.id,
+        )
+        val rule = base.rules.first().copy(
+            id = "manual-group-default",
+            targetProfileId = group.id,
+        )
+        val compiled = SingBoxRoutingConfigCompiler().compile(
+            base.copy(
+                profiles = base.profiles + first + second,
+                profileGroups = listOf(group),
+                rules = listOf(rule),
+                defaultProfileId = group.id,
+            ),
+        )
+        val root = JSONObject(compiled.json)
+        val outbounds = root.getJSONArray("outbounds")
+        val selector = (0 until outbounds.length())
+            .map(outbounds::getJSONObject)
+            .first { it.optString("type") == "selector" }
+
+        assertEquals(runtimeProfileTag(group.id), selector.getString("tag"))
+        assertEquals(runtimeProfileTag(second.id), selector.getString("default"))
+        assertEquals(runtimeProfileTag(group.id), root.getJSONObject("route").getString("final"))
+        assertTrue(group.id in compiled.runtimeProfileIds)
+    }
+
+    @Test
+    fun latencyGroupCompilesToExplicitHttpsUrlTestWithoutSystemFallback() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val first = socksProfile("latency-first", 1083)
+        val second = socksProfile("latency-second", 1084)
+        val group = ProfileGroup(
+            id = "latency-group",
+            name = "Fastest office",
+            mode = ProfileGroupMode.Latency,
+            memberProfileIds = listOf(first.id, second.id),
+            testUrl = "https://example.com/health",
+            testIntervalSeconds = 120,
+            toleranceMs = 75,
+        )
+        val compiled = SingBoxRoutingConfigCompiler().compile(
+            base.copy(
+                profiles = base.profiles + first + second,
+                profileGroups = listOf(group),
+            ),
+        )
+        val outbounds = JSONObject(compiled.json).getJSONArray("outbounds")
+        val urlTest = (0 until outbounds.length())
+            .map(outbounds::getJSONObject)
+            .first { it.optString("type") == "urltest" }
+        val members = urlTest.getJSONArray("outbounds")
+            .let { array -> (0 until array.length()).map(array::getString) }
+
+        assertEquals(listOf(runtimeProfileTag(first.id), runtimeProfileTag(second.id)), members)
+        assertEquals("https://example.com/health", urlTest.getString("url"))
+        assertEquals("120s", urlTest.getString("interval"))
+        assertEquals(75, urlTest.getInt("tolerance"))
+        assertFalse(members.contains(SING_BOX_DIRECT_TAG))
+        assertTrue(compiled.warnings.any { it.contains("explicit HTTPS availability check") })
+    }
+
     @Test
     fun routeConstraintsCompileToSingBoxNetworkPortsAndRanges() {
         val base = RoutingConfigDefaults.defaultConfig()
@@ -61,6 +134,20 @@ class SingBoxRoutingConfigTest {
         assertEquals(443, compiledRule.getJSONArray("port").getInt(0))
         assertEquals("8000:8100", compiledRule.getJSONArray("port_range").getString(0))
     }
+
+    private fun socksProfile(id: String, port: Int): TunnelProfile = TunnelProfile(
+        id = id,
+        name = id,
+        type = TunnelType.Socks5,
+        description = "group fixture",
+        enabled = true,
+        mockOnly = false,
+        socks5 = Socks5ProfileConfig(
+            name = id,
+            host = "192.0.2.10",
+            port = port,
+        ),
+    )
 
     @Test
     fun customDnsServersCompileInPriorityOrderWithoutDeprecatedCacheFlag() {

@@ -176,7 +176,14 @@ private fun DnsPolicySummaryCard(text: UiText, policy: DnsPolicy, config: Routin
                 val boundProfile = policy.resolveThroughProfileId?.let { id ->
                     config.profiles.firstOrNull { it.id == id && (!it.mockOnly || it.singBox != null) }
                 }
-                Text("${text.targetProfile}: ${boundProfile?.name ?: text.none}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val boundGroup = policy.resolveThroughProfileId?.let { id ->
+                    config.profileGroups.firstOrNull { it.id == id && it.enabled }
+                }
+                Text(
+                    "${text.targetProfile}: ${boundProfile?.name ?: boundGroup?.let { "Группа: ${it.name}" } ?: text.none}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text(
                     policy.orderedServers()
                         .joinToString(" → ") { it.address }
@@ -248,6 +255,15 @@ private fun DnsPolicyDetailsScreen(
                                     selected = resolveThroughProfileId == profile.id,
                                     onClick = { resolveThroughProfileId = profile.id },
                                     label = { Text(profile.name) },
+                                )
+                            }
+                        config.profileGroups
+                            .filter { it.enabled }
+                            .forEach { group ->
+                                FilterChip(
+                                    selected = resolveThroughProfileId == group.id,
+                                    onClick = { resolveThroughProfileId = group.id },
+                                    label = { Text("Группа: ${group.name}") },
                                 )
                             }
                     }

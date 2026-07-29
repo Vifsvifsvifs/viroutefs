@@ -167,6 +167,7 @@ object RoutingConfigJson {
     fun encode(config: RoutingConfig, includeSocks5Passwords: Boolean = false): String = JSONObject().apply {
         put("version", config.version)
         put("profiles", JSONArray(config.profiles.map { it.toJson(includeSocks5Passwords) }))
+        put("profileGroups", JSONArray(config.profileGroups.map { it.toJson() }))
         put("dnsPolicies", JSONArray(config.dnsPolicies.map { it.toJson() }))
         put("rules", JSONArray(config.rules.map { it.toJson() }))
         put("defaultProfileId", config.defaultProfileId)
@@ -179,6 +180,7 @@ object RoutingConfigJson {
         return RoutingConfig(
             version = root.optInt("version", CURRENT_ROUTING_CONFIG_VERSION),
             profiles = root.getJSONArray("profiles").mapObjects { it.toTunnelProfile() },
+            profileGroups = root.optJSONArray("profileGroups")?.mapObjects { it.toProfileGroup() }.orEmpty(),
             dnsPolicies = root.getJSONArray("dnsPolicies").mapObjects { it.toDnsPolicy() },
             rules = root.getJSONArray("rules").mapObjects { it.toRouteRule() },
             defaultProfileId = root.optNullableString("defaultProfileId"),
@@ -224,6 +226,30 @@ object RoutingConfigJson {
             singBox = optJSONObject("singBox")?.toSingBoxProfileConfig(),
         )
     }
+
+    private fun ProfileGroup.toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("name", name)
+        put("mode", mode.name)
+        put("memberProfileIds", JSONArray(memberProfileIds))
+        put("selectedProfileId", selectedProfileId)
+        put("testUrl", testUrl)
+        put("testIntervalSeconds", testIntervalSeconds)
+        put("toleranceMs", toleranceMs)
+        put("enabled", enabled)
+    }
+
+    private fun JSONObject.toProfileGroup(): ProfileGroup = ProfileGroup(
+        id = getString("id"),
+        name = getString("name"),
+        mode = optEnum("mode", ProfileGroupMode.Manual),
+        memberProfileIds = optJSONArray("memberProfileIds")?.mapStrings().orEmpty(),
+        selectedProfileId = optNullableString("selectedProfileId"),
+        testUrl = optString("testUrl", "https://www.gstatic.com/generate_204"),
+        testIntervalSeconds = optInt("testIntervalSeconds", 180),
+        toleranceMs = optInt("toleranceMs", 50),
+        enabled = optBoolean("enabled", true),
+    )
 
     private fun SingBoxProfileConfig.toJson(includeSecrets: Boolean): JSONObject = JSONObject().apply {
         put("kind", kind.name)

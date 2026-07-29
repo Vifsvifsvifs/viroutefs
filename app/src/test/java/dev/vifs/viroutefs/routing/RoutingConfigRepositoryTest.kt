@@ -17,6 +17,29 @@ import kotlin.test.assertTrue
 
 class RoutingConfigRepositoryTest {
     @Test
+    fun profileGroupsRoundTripAndOldConfigsDefaultToEmptyList() {
+        val defaults = RoutingConfigDefaults.defaultConfig()
+        val group = ProfileGroup(
+            id = "office-group",
+            name = "Office group",
+            mode = ProfileGroupMode.Latency,
+            memberProfileIds = listOf(
+                RoutingConfigDefaults.SYSTEM_PROFILE_ID,
+                RoutingConfigDefaults.BYEDPI_PROFILE_ID,
+            ),
+            testUrl = "https://example.com/health",
+            testIntervalSeconds = 90,
+            toleranceMs = 100,
+        )
+        val encoded = RoutingConfigJson.encode(defaults.copy(profileGroups = listOf(group)))
+        val oldJson = RoutingConfigJson.encode(defaults)
+            .replace(Regex(",?\\s*\"profileGroups\"\\s*:\\s*\\[\\s*]"), "")
+
+        assertEquals(listOf(group), RoutingConfigJson.decode(encoded).profileGroups)
+        assertTrue(RoutingConfigJson.decode(oldJson).profileGroups.isEmpty())
+    }
+
+    @Test
     fun routeConstraintsAndDnsServersRoundTrip() {
         val defaults = RoutingConfigDefaults.defaultConfig()
         val constrainedRule = defaults.rules.first { it.type == RouteRuleType.DEFAULT }.copy(

@@ -27,7 +27,9 @@ DNS and Settings remain full screens, but no longer compete with daily network-c
 - IKEv2/IPsec and legacy L2TP/PPTP/SSTP do not have audited Android adapters and must not be shown as working.
 - Flow Scanner shows metadata, not decrypted HTTPS or packet contents.
 - DNS per profile/rule is enforced by the runtime and fails closed when its selected detour is unavailable.
-- There is no telemetry, analytics, ads, tracking, cloud log upload or background monitoring.
+- There is no telemetry, analytics, ads, tracking, cloud log upload or hidden
+  background monitoring. A user-created latency group may run its explicitly
+  disclosed HTTPS availability check.
 
 
 See also docs/UI_DIRECTION.md for placeholder and icon direction.

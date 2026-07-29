@@ -100,6 +100,7 @@ import dev.vifs.viroutefs.routing.singBoxProfileTemplate
 import dev.vifs.viroutefs.routing.singBoxProtocolSchema
 import dev.vifs.viroutefs.routing.validateSingBoxProfile
 import dev.vifs.viroutefs.routing.withDefaultRoute
+import dev.vifs.viroutefs.routing.withoutProfile
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_NOTICE
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_SECRET_NOTICE
 import dev.vifs.viroutefs.runtime.tcp.DevTcpBridgeSnapshot
@@ -718,6 +719,9 @@ private fun PrimaryInternetCard(
     val profile = config.defaultProfileId?.let { id ->
         config.profiles.firstOrNull { it.id == id }
     }
+    val group = config.defaultProfileId?.let { id ->
+        config.profileGroups.firstOrNull { it.id == id }
+    }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -741,7 +745,17 @@ private fun PrimaryInternetCard(
                 Column(Modifier.weight(1f)) {
                     Text("Основной маршрут", style = MaterialTheme.typography.labelMedium)
                     Text(
-                        profile?.let { "${it.name} • ${it.type.label}" } ?: "Не выбран",
+                        profile?.let { "${it.name} • ${it.type.label}" }
+                            ?: group?.let {
+                                "${it.name} • ${
+                                    if (it.mode == dev.vifs.viroutefs.routing.ProfileGroupMode.Manual) {
+                                        "ручная группа"
+                                    } else {
+                                        "минимальная задержка"
+                                    }
+                                }"
+                            }
+                            ?: "Не выбран",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -752,6 +766,8 @@ private fun PrimaryInternetCard(
                 activationError
                     ?: if (profile?.type == TunnelType.Direct) {
                         "Обычный мобильный интернет или Wi‑Fi. VPN-профиль не обязателен."
+                    } else if (group != null) {
+                        "Трафик без отдельного правила идёт через явно настроенную группу."
                     } else {
                         "Трафик без отдельного правила идёт через этот профиль."
                     },
@@ -1148,7 +1164,7 @@ private fun ConfigBackupScreen(
                 CardBlock {
                     Text("Предварительный просмотр", fontWeight = FontWeight.SemiBold)
                     Text(
-                        "Профилей: ${restored.profiles.size}; правил: ${restored.rules.size}; DNS-политик: ${restored.dnsPolicies.size}.",
+                        "Профилей: ${restored.profiles.size}; групп: ${restored.profileGroups.size}; правил: ${restored.rules.size}; DNS-политик: ${restored.dnsPolicies.size}.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     restored.profiles
@@ -1874,7 +1890,7 @@ private fun NetworkProfileDetailsScreen(
                 if (usedRuleNames.isNotEmpty()) WarningText(text.profileUsedMessage(usedRuleNames.joinToString(" • ")))
                 OutlinedButton(
                     enabled = canDelete,
-                    onClick = { onConfig(config.copy(profiles = config.profiles.filterNot { it.id == profile.id }), text.profileDeleted) },
+                    onClick = { onConfig(config.withoutProfile(profile.id), text.profileDeleted) },
                 ) { Text(text.delete) }
             }
         }
@@ -2293,7 +2309,7 @@ private fun SingBoxProfileEditorScreen(
                         enabled = usedRules.isEmpty(),
                         onClick = {
                             onConfig(
-                                config.copy(profiles = config.profiles.filterNot { it.id == profile.id }),
+                                config.withoutProfile(profile.id),
                                 text.profileDeleted,
                             )
                             onBack()
@@ -2843,12 +2859,7 @@ private fun VlessProfileEditorScreen(
                     OutlinedButton(
                         onClick = {
                             onConfig(
-                                config.copy(
-                                    profiles = config.profiles.filterNot { it.id == profile.id },
-                                    rules = config.rules.map { rule ->
-                                        if (rule.targetProfileId == profile.id) rule.copy(targetProfileId = RoutingConfigDefaults.BLOCK_PROFILE_ID) else rule
-                                    },
-                                ),
+                                config.withoutProfile(profile.id),
                                 text.profileDeleted,
                             )
                             onBack()
@@ -3132,12 +3143,7 @@ private fun Socks5ProfileEditorScreen(
                     OutlinedButton(
                         onClick = {
                             onConfig(
-                                config.copy(
-                                    profiles = config.profiles.filterNot { it.id == profile.id },
-                                    rules = config.rules.map { rule ->
-                                        if (rule.targetProfileId == profile.id) rule.copy(targetProfileId = RoutingConfigDefaults.BLOCK_PROFILE_ID) else rule
-                                    },
-                                ),
+                                config.withoutProfile(profile.id),
                                 text.profileDeleted,
                             )
                             onBack()

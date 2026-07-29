@@ -7,7 +7,7 @@ import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.validateVlessProfile
 import java.util.Locale
 
-const val CURRENT_ROUTING_CONFIG_VERSION = 10
+const val CURRENT_ROUTING_CONFIG_VERSION = 11
 const val MOCK_PROFILE_LIMITATION = "Профиль пока не подключает реальный тоннель. Он используется для симуляции маршрутов."
 const val SOCKS5_RUNTIME_STATUS = "SOCKS5 forwarding is available through the local sing-box TUN runtime."
 const val VLESS_ROUTE_DECISION_STATUS = "VLESS forwarding is available through the local sing-box TUN runtime."
@@ -19,6 +19,7 @@ data class RoutingConfig(
     val profiles: List<TunnelProfile>,
     val dnsPolicies: List<DnsPolicy>,
     val rules: List<RouteRule>,
+    val profileGroups: List<ProfileGroup> = emptyList(),
     val defaultProfileId: String? = null,
     val hostOverrides: List<DnsHostOverride> = emptyList(),
     val emergencyBlockEnabled: Boolean = false,
@@ -51,28 +52,116 @@ fun RoutingConfig.withDefaultRoute(profileId: String): RoutingConfig = copy(
     },
 )
 
+fun RoutingConfig.withoutProfile(profileId: String): RoutingConfig {
+    val updatedGroups = profileGroups.map { group ->
+        val members = group.memberProfileIds.filterNot { it == profileId }
+        group.copy(
+            memberProfileIds = members,
+            selectedProfileId = group.selectedProfileId
+                ?.takeIf { it in members }
+                ?: members.firstOrNull(),
+        )
+    }
+    val removedGroupIds = updatedGroups
+        .filter { it.memberProfileIds.distinct().size < 2 }
+        .mapTo(linkedSetOf()) { it.id }
+    val removedTargetIds = removedGroupIds + profileId
+    var next = copy(
+        profiles = profiles.filterNot { it.id == profileId },
+        profileGroups = updatedGroups.filterNot { it.id in removedGroupIds },
+        rules = rules.map { rule ->
+            if (rule.targetProfileId in removedTargetIds) {
+                rule.copy(targetProfileId = RoutingConfigDefaults.BLOCK_PROFILE_ID)
+            } else {
+                rule
+            }
+        },
+        dnsPolicies = dnsPolicies.map { policy ->
+            if (policy.resolveThroughProfileId in removedTargetIds) {
+                policy.copy(
+                    enabled = false,
+                    resolveThroughProfileId = null,
+                    description = "${policy.description} Disabled because its route target was removed.",
+                )
+            } else {
+                policy
+            }
+        },
+    )
+    if (defaultProfileId in removedTargetIds) {
+        next = next.withDefaultRoute(RoutingConfigDefaults.SYSTEM_PROFILE_ID)
+    }
+    return next
+}
+
 fun defaultRouteActivationError(config: RoutingConfig): String? {
-    val profileId = config.defaultProfileId
+    val targetId = config.defaultProfileId
         ?: return "Основной маршрут не задан. Выберите обычный интернет телефона System или другой полностью настроенный маршрут."
-    val profile = config.profiles.firstOrNull { it.id == profileId }
-        ?: return "Выбранный основной маршрут не найден. Верните System или выберите существующий профиль."
+    val group = config.profileGroups.firstOrNull { it.id == targetId }
+    if (group != null) {
+        if (!group.enabled) {
+            return "Основная группа «${group.name}» выключена. Включите её или верните System."
+        }
+        val members = group.memberProfileIds
+            .distinct()
+            .mapNotNull { memberId -> config.profiles.firstOrNull { it.id == memberId } }
+        if (members.size != group.memberProfileIds.distinct().size || members.size < 2) {
+            return "Основная группа «${group.name}» содержит отсутствующие профили или меньше двух участников."
+        }
+        if (group.mode == ProfileGroupMode.Manual &&
+            group.selectedProfileId !in group.memberProfileIds
+        ) {
+            return "В основной группе «${group.name}» не выбран активный профиль."
+        }
+        val availableMembers = members.filter { it.enabled && it.hasRuntimeConfiguration() }
+        if (group.mode == ProfileGroupMode.Manual &&
+            members.any { !it.enabled || !it.hasRuntimeConfiguration() }
+        ) {
+            return "Один из профилей основной группы «${group.name}» выключен или настроен не полностью. Скрытый fallback запрещён."
+        }
+        if (group.mode == ProfileGroupMode.Latency && availableMembers.size < 2) {
+            return "В основной группе «${group.name}» осталось меньше двух доступных профилей."
+        }
+        return null
+    }
+    val profile = config.profiles.firstOrNull { it.id == targetId }
+        ?: return "Выбранный основной маршрут не найден. Верните System или выберите существующий профиль или группу."
     if (!profile.enabled) {
         return "Основной маршрут «${profile.name}» выключен. Включите его или верните System."
     }
     if (profile.type in setOf(TunnelType.Block, TunnelType.ByeDpi)) {
         return "Маршрут «${profile.name}» нельзя использовать как обычный интернет телефона. Назначьте его отдельному правилу."
     }
-    val hasRuntimeConfiguration = when (profile.type) {
-        TunnelType.Direct -> true
-        TunnelType.Socks5 -> profile.socks5 != null
-        TunnelType.VLESS,
-        TunnelType.XrayVlessReality -> profile.vless != null
-        else -> profile.singBox != null
-    }
-    if (!hasRuntimeConfiguration) {
+    if (!profile.hasRuntimeConfiguration()) {
         return "Для профиля «${profile.name}» ещё нет рабочего движка или полной конфигурации. Выберите готовый туннель."
     }
     return null
+}
+
+internal fun TunnelProfile.hasRuntimeConfiguration(): Boolean = when (type) {
+    TunnelType.Direct,
+    TunnelType.ByeDpi -> true
+    TunnelType.Socks5 -> socks5 != null
+    TunnelType.VLESS,
+    TunnelType.XrayVlessReality -> vless != null
+    else -> singBox != null
+}
+
+data class ProfileGroup(
+    val id: String,
+    val name: String,
+    val mode: ProfileGroupMode,
+    val memberProfileIds: List<String>,
+    val selectedProfileId: String? = null,
+    val testUrl: String = "https://www.gstatic.com/generate_204",
+    val testIntervalSeconds: Int = 180,
+    val toleranceMs: Int = 50,
+    val enabled: Boolean = true,
+)
+
+enum class ProfileGroupMode {
+    Manual,
+    Latency,
 }
 
 data class TunnelProfile(
@@ -240,6 +329,7 @@ enum class RouteRuleType {
 
 data class RouteDecision(
     val input: String,
+    val targetId: String,
     val tunnelProfile: TunnelProfile,
     val dnsPolicy: DnsPolicy?,
     val matchedRule: RouteRule,
@@ -275,6 +365,7 @@ class RouteEngine(
     private val config: RoutingConfig,
 ) {
     private val profilesById = config.profiles.associateBy { it.id }
+    private val groupsById = config.profileGroups.associateBy { it.id }
     private val dnsPoliciesById = config.dnsPolicies.associateBy { it.id }
     private val enabledRules = config.rules
         .filter { it.enabled }
@@ -298,17 +389,28 @@ class RouteEngine(
             matchedRule
         }
 
+        val targetGroup = groupsById[effectiveRule.targetProfileId]?.takeIf { it.enabled }
         val targetProfile = profilesById[effectiveRule.targetProfileId]
+            ?: targetGroup?.let { group ->
+                val memberId = when (group.mode) {
+                    ProfileGroupMode.Manual -> group.selectedProfileId
+                    ProfileGroupMode.Latency -> group.memberProfileIds.firstOrNull { memberId ->
+                        profilesById[memberId]?.let { it.enabled && it.hasRuntimeConfiguration() } == true
+                    }
+                }
+                memberId?.let(profilesById::get)
+            }
         val blockProfile = profilesById[RoutingConfigDefaults.BLOCK_PROFILE_ID]
             ?: config.profiles.firstOrNull { it.type == TunnelType.Block }
         val fallbackProfile = blockProfile
             ?: config.profiles.first()
         val selectedProfile = targetProfile?.takeIf { it.enabled } ?: fallbackProfile
         val dnsPolicy = effectiveRule.dnsPolicyId?.let { dnsPoliciesById[it] }?.takeIf { it.enabled }
-        val warnings = buildWarnings(effectiveRule, targetProfile, selectedProfile, dnsPolicy)
+        val warnings = buildWarnings(effectiveRule, targetProfile, targetGroup, selectedProfile, dnsPolicy)
 
         return RouteDecision(
             input = normalizedInput,
+            targetId = effectiveRule.targetProfileId,
             tunnelProfile = selectedProfile,
             dnsPolicy = dnsPolicy,
             matchedRule = effectiveRule,
@@ -369,13 +471,17 @@ class RouteEngine(
     private fun buildWarnings(
         matchedRule: RouteRule,
         targetProfile: TunnelProfile?,
+        targetGroup: ProfileGroup?,
         selectedProfile: TunnelProfile,
         dnsPolicy: DnsPolicy?,
     ): List<String> = buildList {
-        if (targetProfile == null) {
+        if (targetProfile == null && targetGroup == null) {
             add("Выбранное правилом направление не найдено. Модель безопасного поведения: Block / fail closed; без тихого fallback на другой профиль.")
-        } else if (!targetProfile.enabled) {
+        } else if (targetProfile != null && !targetProfile.enabled) {
             add("Профиль правила отключён. Модель безопасного поведения: Block / fail closed; без тихого fallback на другой профиль.")
+        }
+        if (targetGroup?.mode == ProfileGroupMode.Latency) {
+            add("Фактического участника latency-группы выбирает sing-box по HTTPS-проверке; локальный предпросмотр показывает первого участника, а не угадывает runtime-результат.")
         }
         if (selectedProfile.mockOnly &&
             selectedProfile.type != TunnelType.Socks5 &&
@@ -431,10 +537,44 @@ class RouteEngine(
 
 fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
     val profileIds = config.profiles.map { it.id }.toSet()
+    val groupIds = config.profileGroups.map { it.id }.toSet()
+    val targetIds = profileIds + groupIds
     val dnsPolicyIds = config.dnsPolicies.map { it.id }.toSet()
-    config.defaultProfileId?.takeIf { it !in profileIds }?.let { add("Основной профиль $it не найден.") }
+    config.defaultProfileId?.takeIf { it !in targetIds }?.let { add("Основной профиль или группа $it не найдены.") }
     if (config.profiles.isEmpty()) add("Нужен хотя бы один профиль маршрута.")
     if (config.rules.isEmpty()) add("Нужно хотя бы одно правило маршрутизации.")
+    if ((profileIds intersect groupIds).isNotEmpty()) {
+        add("Идентификаторы профилей и групп не должны совпадать.")
+    }
+    if (config.profileGroups.size != groupIds.size) {
+        add("Идентификаторы групп маршрутов должны быть уникальными.")
+    }
+    config.profileGroups.forEach { group ->
+        val members = group.memberProfileIds.distinct()
+        if (group.id.isBlank()) add("Группа маршрутов без id: ${group.name}")
+        if (group.name.isBlank()) add("Группа ${group.id} без имени.")
+        if (members.size < 2) add("Группа ${group.name}: выберите минимум два разных профиля.")
+        members.filterNot { it in profileIds }.forEach {
+            add("Группа ${group.name}: профиль $it не найден.")
+        }
+        if (RoutingConfigDefaults.BLOCK_PROFILE_ID in members) {
+            add("Группа ${group.name}: Block нельзя использовать как участника автоматической группы.")
+        }
+        if (group.mode == ProfileGroupMode.Manual && group.selectedProfileId !in members) {
+            add("Группа ${group.name}: выбранный профиль не входит в группу.")
+        }
+        if (group.mode == ProfileGroupMode.Latency) {
+            if (!group.testUrl.startsWith("https://", ignoreCase = true)) {
+                add("Группа ${group.name}: проверка доступности должна использовать HTTPS.")
+            }
+            if (group.testIntervalSeconds !in 30..3600) {
+                add("Группа ${group.name}: интервал проверки должен быть от 30 до 3600 секунд.")
+            }
+            if (group.toleranceMs !in 0..2000) {
+                add("Группа ${group.name}: допуск задержки должен быть от 0 до 2000 мс.")
+            }
+        }
+    }
     config.profiles.forEach { profile ->
         if (profile.id.isBlank()) add("Профиль без id: ${profile.name}")
         if (profile.name.isBlank()) add("Профиль ${profile.id} без имени.")
@@ -497,7 +637,7 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
         if (rule.type != RouteRuleType.DEFAULT && rule.matchers.isEmpty() && rule.appMatchers.isEmpty()) {
             add("Правило ${rule.name}: нужны матчеры.")
         }
-        if (rule.targetProfileId !in profileIds) add("Правило ${rule.name}: профиль ${rule.targetProfileId} не найден.")
+        if (rule.targetProfileId !in targetIds) add("Правило ${rule.name}: профиль или группа ${rule.targetProfileId} не найдены.")
         rule.dnsPolicyId?.takeIf { it !in dnsPolicyIds }?.let { add("Правило ${rule.name}: DNS-политика $it не найдена.") }
         if (rule.type == RouteRuleType.CIDR) {
             rule.matchers

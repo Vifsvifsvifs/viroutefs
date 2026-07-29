@@ -43,6 +43,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -80,6 +81,8 @@ import dev.vifs.viroutefs.routing.CURRENT_ROUTING_CONFIG_VERSION
 import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.routing.AppMatcher
 import dev.vifs.viroutefs.routing.AppMatcherPlatform
+import dev.vifs.viroutefs.routing.ProfileGroup
+import dev.vifs.viroutefs.routing.ProfileGroupMode
 import dev.vifs.viroutefs.routing.RouteRule
 import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.RouteTransport
@@ -90,10 +93,13 @@ import dev.vifs.viroutefs.routing.defaultRouteActivationError
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.findConflictsForCandidate
 import dev.vifs.viroutefs.routing.findExactRouteConflicts
+import dev.vifs.viroutefs.routing.hasRuntimeConfiguration
 import dev.vifs.viroutefs.routing.isValidIpOrCidr
 import dev.vifs.viroutefs.routing.parseDestinationPortRanges
 import dev.vifs.viroutefs.routing.toDisplayText
 import dev.vifs.viroutefs.routing.validateRouteEditorDraft
+import dev.vifs.viroutefs.routing.validateRoutingConfig
+import dev.vifs.viroutefs.routing.withDefaultRoute
 import dev.vifs.viroutefs.socks5.Socks5ReadinessSummary
 import dev.vifs.viroutefs.socks5.Socks5TestHistoryStore
 import dev.vifs.viroutefs.socks5.deriveSocks5ReadinessSummary
@@ -440,6 +446,8 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
     var selectedRouteId by rememberSaveable { mutableStateOf<String?>(null) }
     var creatingRoute by rememberSaveable { mutableStateOf(false) }
     var draftRoute by remember { mutableStateOf<RouteRule?>(null) }
+    var selectedGroupId by rememberSaveable { mutableStateOf<String?>(null) }
+    var creatingGroup by rememberSaveable { mutableStateOf(false) }
     val installedApps = remember(context) { context.loadInstalledAppsForRouting() }
     val historyStore = remember(context) { Socks5TestHistoryStore(context) }
     var readinessByProfile by remember(config.profiles) { mutableStateOf<Map<String, Socks5ReadinessSummary>>(emptyMap()) }
@@ -450,6 +458,7 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
     }
     val userRules = config.rules.filter { it.type != RouteRuleType.DEFAULT }
     val selectedRoute = userRules.firstOrNull { it.id == selectedRouteId }
+    val selectedGroup = config.profileGroups.firstOrNull { it.id == selectedGroupId }
     val conflicts = remember(config.rules) { findExactRouteConflicts(config.rules) }
     val conflictsByRuleId = remember(conflicts) { conflicts.flatMap { conflict -> conflict.ruleIds.map { it to conflict } }.groupBy({ it.first }, { it.second }) }
 
@@ -476,6 +485,24 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
         return
     }
 
+    if (selectedGroup != null || creatingGroup) {
+        ProfileGroupEditorScreen(
+            padding = padding,
+            group = selectedGroup,
+            config = config,
+            onBack = {
+                selectedGroupId = null
+                creatingGroup = false
+            },
+            onConfig = { next, message ->
+                onConfig(next, message)
+                selectedGroupId = null
+                creatingGroup = false
+            },
+        )
+        return
+    }
+
     ScreenList(padding) {
         item {
             CardBlock {
@@ -496,13 +523,67 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
                     }) { Text(text.addRoute) }
                 }
                 val defaultRouteName = config.defaultProfileId
-                    ?.let { id -> config.profiles.firstOrNull { it.id == id }?.name }
+                    ?.let { id -> routeTargetName(config, id) }
                     ?: "не выбран"
                 Text(
                     "По умолчанию: $defaultRouteName • правил: ${userRules.size}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+        item {
+            CardBlock {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("Группы маршрутов", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Ручной выбор или проверка задержки между явно выбранными профилями. Скрытого fallback на System нет.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    FilledTonalButton(onClick = { creatingGroup = true }) {
+                        Text("Создать")
+                    }
+                }
+                config.profileGroups.forEach { group ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedGroupId = group.id }
+                            .padding(vertical = 5.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(group.name, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "${if (group.mode == ProfileGroupMode.Manual) "Ручной выбор" else "Минимальная задержка"} • участников: ${group.memberProfileIds.size}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        StatusChip(
+                            when {
+                                !group.enabled -> "Выключена"
+                                !group.isRunnable(config) -> "Нужна проверка"
+                                config.defaultProfileId == group.id -> "По умолчанию"
+                                else -> "Готова"
+                            },
+                        )
+                    }
+                }
+                if (config.profileGroups.isEmpty()) {
+                    Text(
+                        "Групп пока нет. Обычные правила продолжают указывать прямо на профиль.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
         if (userRules.isEmpty()) {
@@ -516,6 +597,330 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
                     warnings = conflictsByRuleId[rule.id].orEmpty() + unavailableTargetWarning(config, rule),
                     onOpen = { selectedRouteId = rule.id },
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileGroupEditorScreen(
+    padding: PaddingValues,
+    group: ProfileGroup?,
+    config: RoutingConfig,
+    onBack: () -> Unit,
+    onConfig: (RoutingConfig, String?) -> Unit,
+) {
+    val groupId = rememberSaveable(group?.id) { group?.id ?: UUID.randomUUID().toString() }
+    var name by rememberSaveable(groupId) { mutableStateOf(group?.name.orEmpty()) }
+    var modeName by rememberSaveable(groupId) {
+        mutableStateOf((group?.mode ?: ProfileGroupMode.Manual).name)
+    }
+    var memberIds by rememberSaveable(groupId) {
+        mutableStateOf(group?.memberProfileIds.orEmpty())
+    }
+    var selectedProfileId by rememberSaveable(groupId) {
+        mutableStateOf(group?.selectedProfileId)
+    }
+    var testUrl by rememberSaveable(groupId) {
+        mutableStateOf(group?.testUrl ?: "https://www.gstatic.com/generate_204")
+    }
+    var intervalText by rememberSaveable(groupId) {
+        mutableStateOf((group?.testIntervalSeconds ?: 180).toString())
+    }
+    var toleranceText by rememberSaveable(groupId) {
+        mutableStateOf((group?.toleranceMs ?: 50).toString())
+    }
+    var enabled by rememberSaveable(groupId) { mutableStateOf(group?.enabled ?: true) }
+    var useAsDefault by rememberSaveable(groupId) {
+        mutableStateOf(config.defaultProfileId == groupId)
+    }
+    var errors by rememberSaveable(groupId) { mutableStateOf<List<String>>(emptyList()) }
+    val mode = ProfileGroupMode.entries.firstOrNull { it.name == modeName }
+        ?: ProfileGroupMode.Manual
+    val availableProfiles = config.profiles.filter { profile ->
+        profile.enabled &&
+            profile.type != TunnelType.Block &&
+            (
+                profile.type == TunnelType.Direct ||
+                    profile.type == TunnelType.ByeDpi ||
+                    profile.type == TunnelType.Socks5 ||
+                    profile.type == TunnelType.VLESS ||
+                    profile.type == TunnelType.XrayVlessReality ||
+                    profile.singBox != null
+                )
+    }
+    val draft = ProfileGroup(
+        id = groupId,
+        name = name.trim(),
+        mode = mode,
+        memberProfileIds = memberIds.distinct(),
+        selectedProfileId = selectedProfileId,
+        testUrl = testUrl.trim(),
+        testIntervalSeconds = intervalText.toIntOrNull() ?: -1,
+        toleranceMs = toleranceText.toIntOrNull() ?: -1,
+        enabled = enabled,
+    )
+
+    ScreenList(padding) {
+        item {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(onClick = onBack) { Text("Назад") }
+                Header(
+                    if (group == null) "Новая группа маршрутов" else "Группа «${group.name}»",
+                    "Группа становится отдельной целью для приложений, доменов, IP, сетей и основного маршрута.",
+                )
+            }
+        }
+        item {
+            CardBlock {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = {
+                        name = it
+                        errors = emptyList()
+                    },
+                    label = { Text("Название группы") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Text("Режим", fontWeight = FontWeight.SemiBold)
+                ChipRow {
+                    FilterChip(
+                        selected = mode == ProfileGroupMode.Manual,
+                        onClick = { modeName = ProfileGroupMode.Manual.name },
+                        label = { Text("Ручной выбор") },
+                    )
+                    FilterChip(
+                        selected = mode == ProfileGroupMode.Latency,
+                        onClick = { modeName = ProfileGroupMode.Latency.name },
+                        label = { Text("Минимальная задержка") },
+                    )
+                }
+                Text(
+                    if (mode == ProfileGroupMode.Manual) {
+                        "ViRouteFS всегда использует выбранного участника. Переключение применяется как проверенное обновление конфигурации."
+                    } else {
+                        "sing-box периодически обращается к указанному HTTPS-адресу через каждого участника и выбирает доступный маршрут с меньшей задержкой."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        item {
+            CardBlock {
+                Text("Участники — минимум два", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "В список попадают только включённые и настроенные цели. System используется только если вы выберете его здесь явно.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (availableProfiles.isEmpty()) {
+                    WarningText("Сначала добавьте и включите хотя бы два рабочих профиля.")
+                } else {
+                    availableProfiles.forEach { profile ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    memberIds = if (profile.id in memberIds) {
+                                        memberIds - profile.id
+                                    } else {
+                                        memberIds + profile.id
+                                    }
+                                    if (selectedProfileId !in memberIds) {
+                                        selectedProfileId = memberIds.firstOrNull()
+                                    }
+                                    errors = emptyList()
+                                }
+                                .padding(vertical = 5.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(routeTargetName(config, profile.id), fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    if (profile.id == RoutingConfigDefaults.SYSTEM_PROFILE_ID) {
+                                        "Обычный интернет телефона — явный fallback"
+                                    } else {
+                                        profile.type.label
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = profile.id in memberIds,
+                                onCheckedChange = null,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        if (mode == ProfileGroupMode.Manual && memberIds.isNotEmpty()) {
+            item {
+                CardBlock {
+                    Text("Активный участник", fontWeight = FontWeight.SemiBold)
+                    ChipRow {
+                        memberIds.mapNotNull { id -> config.profiles.firstOrNull { it.id == id } }
+                            .forEach { profile ->
+                                FilterChip(
+                                    selected = selectedProfileId == profile.id,
+                                    onClick = { selectedProfileId = profile.id },
+                                    label = { Text(routeTargetName(config, profile.id), maxLines = 1) },
+                                )
+                            }
+                    }
+                }
+            }
+        }
+        if (mode == ProfileGroupMode.Latency) {
+            item {
+                CardBlock {
+                    Text("Проверка доступности", fontWeight = FontWeight.SemiBold)
+                    WarningText(
+                        "Это явная фоновая проверка: указанный HTTPS-сервер увидит обычные запросы доступности от выбранных подключений. Другие данные приложения не отправляются.",
+                    )
+                    OutlinedTextField(
+                        value = testUrl,
+                        onValueChange = { testUrl = it },
+                        label = { Text("HTTPS-адрес проверки") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = intervalText,
+                            onValueChange = { intervalText = it.filter(Char::isDigit) },
+                            label = { Text("Интервал, сек") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = toleranceText,
+                            onValueChange = { toleranceText = it.filter(Char::isDigit) },
+                            label = { Text("Допуск, мс") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                        )
+                    }
+                }
+            }
+        }
+        item {
+            CardBlock {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Группа включена", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Выключенная группа блокирует связанные правила без перехода на другой маршрут.",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    Switch(checked = enabled, onCheckedChange = { enabled = it })
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Использовать по умолчанию", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Трафик без отдельного правила пойдёт в эту группу.",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    Switch(checked = useAsDefault, onCheckedChange = { useAsDefault = it })
+                }
+            }
+        }
+        if (errors.isNotEmpty()) {
+            item {
+                CardBlock {
+                    Text("Нужно исправить", fontWeight = FontWeight.SemiBold)
+                    errors.forEach { WarningText(it) }
+                }
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        val groups = if (group == null) {
+                            config.profileGroups + draft
+                        } else {
+                            config.profileGroups.map { if (it.id == group.id) draft else it }
+                        }
+                        var next = config.copy(profileGroups = groups)
+                        next = when {
+                            useAsDefault -> next.withDefaultRoute(draft.id)
+                            config.defaultProfileId == draft.id ->
+                                next.withDefaultRoute(RoutingConfigDefaults.SYSTEM_PROFILE_ID)
+                            else -> next
+                        }
+                        val validationErrors = buildList {
+                            if (useAsDefault && !enabled) {
+                                add("Группа по умолчанию должна быть включена.")
+                            }
+                            addAll(validateRoutingConfig(next))
+                        }.distinct()
+                        errors = validationErrors
+                        if (validationErrors.isEmpty()) {
+                            onConfig(
+                                next,
+                                "Группа «${draft.name}» сохранена. System не добавлялся автоматически.",
+                            )
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Сохранить")
+                }
+                if (group != null) {
+                    OutlinedButton(
+                        onClick = {
+                            var next = config.copy(
+                                profileGroups = config.profileGroups.filterNot { it.id == group.id },
+                                rules = config.rules.map { rule ->
+                                    if (rule.targetProfileId == group.id) {
+                                        rule.copy(targetProfileId = RoutingConfigDefaults.BLOCK_PROFILE_ID)
+                                    } else {
+                                        rule
+                                    }
+                                },
+                                dnsPolicies = config.dnsPolicies.map { policy ->
+                                    if (policy.resolveThroughProfileId == group.id) {
+                                        policy.copy(
+                                            enabled = false,
+                                            resolveThroughProfileId = null,
+                                            description = "${policy.description} Disabled because route group was removed.",
+                                        )
+                                    } else {
+                                        policy
+                                    }
+                                },
+                            )
+                            if (config.defaultProfileId == group.id) {
+                                next = next.withDefaultRoute(RoutingConfigDefaults.SYSTEM_PROFILE_ID)
+                            }
+                            onConfig(
+                                next,
+                                "Группа удалена. Связанные явные правила переведены в Block; основной маршрут возвращён на System.",
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Удалить")
+                    }
+                }
             }
         }
     }
@@ -609,7 +1014,9 @@ private fun RouteDetailsScreen(
     val availableProfiles = config.profiles.filter { profile ->
         profile.type == TunnelType.Direct || profile.type == TunnelType.Block || profile.type == TunnelType.Socks5 || profile.type == TunnelType.VLESS || !profile.mockOnly
     }
+    val availableGroups = config.profileGroups.filter { it.enabled }
     val targetProfile = config.profiles.firstOrNull { it.id == targetProfileId }
+    val targetGroup = config.profileGroups.firstOrNull { it.id == targetProfileId }
     val context = LocalContext.current
     val historyStore = remember(context) { Socks5TestHistoryStore(context) }
     var selectedSocks5Readiness by remember(targetProfileId) { mutableStateOf<Socks5ReadinessSummary?>(null) }
@@ -756,8 +1163,15 @@ private fun RouteDetailsScreen(
                             label = { Text(routeTargetName(config, profile.id), maxLines = 1) },
                         )
                     }
+                    availableGroups.forEach { group ->
+                        FilterChip(
+                            selected = targetProfileId == group.id,
+                            onClick = { targetProfileId = group.id },
+                            label = { Text("Группа: ${group.name}", maxLines = 1) },
+                        )
+                    }
                 }
-                if (availableProfiles.isEmpty()) StatusChip(text.systemBlockOnly)
+                if (availableProfiles.isEmpty() && availableGroups.isEmpty()) StatusChip(text.systemBlockOnly)
                 targetWarning.forEach { StatusChip(it) }
                 Text("DNS для этого правила", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
                 Text(
@@ -778,7 +1192,11 @@ private fun RouteDetailsScreen(
                     Text(text.enabled, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
-                Text("${text.targetProfile}: ${targetProfile?.name ?: targetProfileId}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "${text.targetProfile}: ${targetProfile?.name ?: targetGroup?.name ?: targetProfileId}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 if (targetProfile?.type == TunnelType.Socks5) {
                     Text(
                         selectedSocks5Readiness?.routeExplanationLine ?: "SOCKS5 ещё не проверен.",
@@ -991,12 +1409,35 @@ private fun matcherSummary(rule: RouteRule): String {
 private fun routeTargetName(config: RoutingConfig, profileId: String): String = when (profileId) {
     RoutingConfigDefaults.SYSTEM_PROFILE_ID -> "System / Система"
     RoutingConfigDefaults.BLOCK_PROFILE_ID -> "Block / Блокировать"
-    else -> config.profiles.firstOrNull { it.id == profileId }?.name ?: profileId
+    else -> config.profiles.firstOrNull { it.id == profileId }?.name
+        ?: config.profileGroups.firstOrNull { it.id == profileId }?.let { "Группа: ${it.name}" }
+        ?: profileId
+}
+
+private fun ProfileGroup.isRunnable(config: RoutingConfig): Boolean {
+    val memberIds = memberProfileIds.distinct()
+    if (memberIds.size < 2) return false
+    val availableIds = memberIds.filter { memberId ->
+        config.profiles.firstOrNull { it.id == memberId }
+            ?.let { it.enabled && it.hasRuntimeConfiguration() } == true
+    }
+    return when (mode) {
+        ProfileGroupMode.Manual ->
+            selectedProfileId in memberIds && availableIds.size == memberIds.size
+        ProfileGroupMode.Latency -> availableIds.size >= 2
+    }
 }
 
 private fun unavailableTargetWarning(config: RoutingConfig, rule: RouteRule): List<String> {
     val profile = config.profiles.firstOrNull { it.id == rule.targetProfileId }
+    val group = config.profileGroups.firstOrNull { it.id == rule.targetProfileId }
     return when {
+        group != null && !group.enabled -> listOf("Группа выключена: трафик будет заблокирован")
+        group != null && group.memberProfileIds.distinct().size < 2 ->
+            listOf("В группе меньше двух участников: трафик будет заблокирован")
+        group != null && !group.isRunnable(config) ->
+            listOf("Группа настроена не полностью: трафик будет заблокирован")
+        group != null -> emptyList()
         profile == null -> listOf("Target unavailable: fail closed")
         !profile.enabled -> listOf("Target disabled: fail closed")
         profile.type == TunnelType.Socks5 -> emptyList()

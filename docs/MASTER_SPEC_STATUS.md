@@ -45,7 +45,7 @@ large, installable block.
 | M3 strongSwan | Not started | no embedded strongSwan adapter or binary |
 | M4 legacy | Not started | warnings exist; L2TP/PPP/PPTP/SSTP engines do not |
 | M5 external adapters | Research | zapret2 feasibility is documented; ZeroTier/SoftEther/Tor/Brook are not integrated |
-| M6 routing and DNS | In progress after `0.14.0-beta.1` | app/domain/IPv4/IPv6-CIDR/default/System/Block/custom DNS exist; TCP/UDP and destination-port constraints compile to runtime; ordered DNS server lists and fail-safe reload preflight exist; groups and automatic DNS failover remain; Android single-TUN swaps can briefly reconnect |
+| M6 routing and DNS | In progress after `0.14.0-beta.1` | app/domain/IPv4/IPv6-CIDR/default/System/Block/custom DNS exist; TCP/UDP and destination-port constraints compile to runtime; manual selector and explicit HTTPS latency groups, ordered DNS lists and fail-safe reload preflight exist; ordered group failover, round-robin and automatic DNS failover remain; Android single-TUN swaps can briefly reconnect |
 | M6 data portability | Implemented after `0.14.0-beta.1`, device verification pending | redacted diagnostic JSON plus password-protected full `.vrfs` backup; AES-256-GCM/PBKDF2, size/KDF bounds, masked preview, native pre-apply check and explicit replace |
 | M7 Flow Scanner and diagnostics | In progress | real sing-box connection events and physical-network tests exist; actual outbounds are compared with a local app/domain/IP/port/transport rule calculation; any installed app can be preselected; events support precise filters and explicit payload-free CSV export; full physical attribution matrix remains |
 | M8 audit and root tools | Not started | must remain manual, bounded and non-offensive |
@@ -57,7 +57,7 @@ large, installable block.
 ## Immediate completion order
 
 1. Finish structured import/export and secret-aware profile lifecycle.
-2. Finish profile groups and automatic DNS failover; physically verify the fail-safe reload and measure the successful single-TUN reconnect.
+2. Finish ordered group failover, round-robin and automatic DNS failover; physically verify groups and fail-safe reload, and measure the successful single-TUN reconnect.
 3. Finish sing-box structured protocol support and routed diagnostics.
 4. Add audited native adapters: strongSwan, then legacy, then external.
 5. Finish scanner, local audit, optional root tools and PCAP export.
