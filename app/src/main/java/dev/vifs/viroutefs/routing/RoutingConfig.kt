@@ -327,6 +327,90 @@ enum class RouteRuleType {
     DEFAULT,
 }
 
+enum class DomainMatcherMode {
+    Exact,
+    Suffix,
+    Keyword,
+    Regex,
+}
+
+data class ParsedDomainMatcher(
+    val mode: DomainMatcherMode,
+    val value: String,
+)
+
+fun parseDomainMatcher(raw: String): ParsedDomainMatcher {
+    val trimmed = raw.trim()
+    val prefixProbe = trimmed.lowercase(Locale.ROOT)
+    val (mode, value) = when {
+        prefixProbe.startsWith("full:") -> DomainMatcherMode.Exact to trimmed.substring(5)
+        prefixProbe.startsWith("keyword:") -> DomainMatcherMode.Keyword to trimmed.substring(8)
+        prefixProbe.startsWith("regexp:") -> DomainMatcherMode.Regex to trimmed.substring(7)
+        prefixProbe.startsWith("domain:") ->
+            DomainMatcherMode.Suffix to trimmed.substring(7).removePrefix("*.")
+        prefixProbe.startsWith("*.") -> DomainMatcherMode.Suffix to trimmed.substring(2)
+        else -> DomainMatcherMode.Suffix to trimmed
+    }
+    val normalizedValue = when (mode) {
+        DomainMatcherMode.Exact,
+        DomainMatcherMode.Suffix -> value.trim().trimEnd('.').lowercase(Locale.ROOT)
+        DomainMatcherMode.Keyword -> value.trim().lowercase(Locale.ROOT)
+        DomainMatcherMode.Regex -> value.trim()
+    }
+    return ParsedDomainMatcher(mode, normalizedValue)
+}
+
+fun encodeDomainMatcher(mode: DomainMatcherMode, rawValue: String): String {
+    val trimmed = rawValue.trim()
+    val value = if (mode == DomainMatcherMode.Exact || mode == DomainMatcherMode.Suffix) {
+        trimmed.trimEnd('.').lowercase(Locale.ROOT)
+    } else if (mode == DomainMatcherMode.Keyword) {
+        trimmed.lowercase(Locale.ROOT)
+    } else {
+        trimmed
+    }
+    return when (mode) {
+        DomainMatcherMode.Exact -> "full:$value"
+        DomainMatcherMode.Suffix -> "domain:${value.removePrefix("*.")}"
+        DomainMatcherMode.Keyword -> "keyword:$value"
+        DomainMatcherMode.Regex -> "regexp:$value"
+    }
+}
+
+fun validateDomainMatcher(mode: DomainMatcherMode, rawValue: String): String? {
+    val value = if (mode == DomainMatcherMode.Exact || mode == DomainMatcherMode.Suffix) {
+        rawValue.trim().trimEnd('.')
+    } else {
+        rawValue.trim()
+    }
+    if (value.isBlank()) return "Укажите домен или шаблон."
+    return when (mode) {
+        DomainMatcherMode.Exact,
+        DomainMatcherMode.Suffix -> {
+            val normalized = value.removePrefix("*.")
+            when {
+                normalized.length > 253 -> "Домен не должен быть длиннее 253 символов."
+                normalized.any(Char::isWhitespace) || normalized.any { it in "/:?#" } ->
+                    "Введите только имя домена без схемы, пути, порта и пробелов."
+                normalized.split('.').any { label ->
+                    label.isBlank() || label.length > 63 || label.startsWith('-') || label.endsWith('-')
+                } -> "Проверьте части домена: каждая должна содержать от 1 до 63 символов и не начинаться с дефиса."
+                else -> null
+            }
+        }
+        DomainMatcherMode.Keyword -> when {
+            value.length > 253 -> "Ключевое слово не должно быть длиннее 253 символов."
+            value.any(Char::isWhitespace) -> "Ключевое слово домена не должно содержать пробелы."
+            else -> null
+        }
+        DomainMatcherMode.Regex -> when {
+            value.length > 512 -> "Регулярное выражение не должно быть длиннее 512 символов."
+            else -> runCatching { Regex(value) }.exceptionOrNull()
+                ?.let { "Некорректное регулярное выражение: ${it.message ?: "ошибка синтаксиса"}" }
+        }
+    }
+}
+
 data class RouteDecision(
     val input: String,
     val targetId: String,
@@ -369,7 +453,7 @@ class RouteEngine(
     private val dnsPoliciesById = config.dnsPolicies.associateBy { it.id }
     private val enabledRules = config.rules
         .filter { it.enabled }
-        .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name })
+        .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name }.thenBy { it.id })
 
     fun simulate(rawInput: String): RouteDecision = simulate(RouteQuery(rawInput))
 
@@ -455,16 +539,12 @@ class RouteEngine(
             .substringBefore(':')
             .trim()
             .trimEnd('.')
-        return when {
-            matcher.startsWith("full:") -> host == matcher.removePrefix("full:").trimEnd('.')
-            matcher.startsWith("keyword:") -> host.contains(matcher.removePrefix("keyword:"))
-            matcher.startsWith("regexp:") -> runCatching {
-                Regex(matcher.removePrefix("regexp:")).matches(host)
-            }.getOrDefault(false)
-            else -> {
-                val domain = matcher.removePrefix("domain:").removePrefix("*.").trimEnd('.')
-                host == domain || host.endsWith(".$domain")
-            }
+        val parsed = parseDomainMatcher(matcher)
+        return when (parsed.mode) {
+            DomainMatcherMode.Exact -> host == parsed.value
+            DomainMatcherMode.Keyword -> host.contains(parsed.value)
+            DomainMatcherMode.Regex -> runCatching { Regex(parsed.value).matches(host) }.getOrDefault(false)
+            DomainMatcherMode.Suffix -> host == parsed.value || host.endsWith(".${parsed.value}")
         }
     }
 
@@ -643,6 +723,14 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
             rule.matchers
                 .filterNot { isValidIpOrCidr(it) }
                 .forEach { add("Правило ${rule.name}: некорректный IP/CIDR $it.") }
+        }
+        if (rule.type == RouteRuleType.DOMAIN) {
+            rule.matchers.forEach { raw ->
+                val parsed = parseDomainMatcher(raw)
+                validateDomainMatcher(parsed.mode, parsed.value)?.let {
+                    add("Правило ${rule.name}: $it")
+                }
+            }
         }
     }
     findExactRouteConflicts(config.rules).forEach { add(it.message) }

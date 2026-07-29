@@ -8,6 +8,7 @@ import dev.vifs.viroutefs.routing.DnsPolicy
 import dev.vifs.viroutefs.routing.DnsServerConfig
 import dev.vifs.viroutefs.routing.DnsPolicyType
 import dev.vifs.viroutefs.routing.DestinationPortRange
+import dev.vifs.viroutefs.routing.DomainMatcherMode
 import dev.vifs.viroutefs.routing.ProfileGroup
 import dev.vifs.viroutefs.routing.ProfileGroupMode
 import dev.vifs.viroutefs.routing.RouteRule
@@ -18,6 +19,7 @@ import dev.vifs.viroutefs.routing.SingBoxProfileConfig
 import dev.vifs.viroutefs.routing.SingBoxProfileKind
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
+import dev.vifs.viroutefs.routing.encodeDomainMatcher
 import dev.vifs.viroutefs.routing.singBoxProfileTemplate
 import dev.vifs.viroutefs.socks5.Socks5ProfileConfig
 import dev.vifs.viroutefs.vless.VlessProfileConfig
@@ -133,6 +135,44 @@ class SingBoxRoutingConfigTest {
         assertEquals("tcp", compiledRule.getString("network"))
         assertEquals(443, compiledRule.getJSONArray("port").getInt(0))
         assertEquals("8000:8100", compiledRule.getJSONArray("port_range").getString(0))
+    }
+
+    @Test
+    fun domainModesCompileToDistinctNativeSingBoxFields() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val cases = listOf(
+            Triple(DomainMatcherMode.Exact, "exact.example", "domain"),
+            Triple(DomainMatcherMode.Suffix, "suffix.example", "domain_suffix"),
+            Triple(DomainMatcherMode.Keyword, "keyword", "domain_keyword"),
+            Triple(DomainMatcherMode.Regex, "(^|\\.)regex\\.example$", "domain_regex"),
+        )
+        val rules = cases.mapIndexed { index, (mode, value, _) ->
+            RouteRule(
+                id = "domain-$index",
+                name = "Domain $index",
+                type = RouteRuleType.DOMAIN,
+                targetProfileId = RoutingConfigDefaults.BLOCK_PROFILE_ID,
+                priority = index + 1,
+                matchers = listOf(encodeDomainMatcher(mode, value)),
+                reason = "test",
+                technicalDetails = "test",
+                recommendedAction = "test",
+            )
+        }
+        val compiledRules = JSONObject(
+            SingBoxRoutingConfigCompiler().compile(
+                base.copy(rules = rules + base.rules),
+            ).json,
+        ).getJSONObject("route").getJSONArray("rules").let { array ->
+            (0 until array.length()).map(array::getJSONObject)
+        }
+
+        cases.forEach { (mode, value, field) ->
+            assertTrue(
+                compiledRules.any { it.optJSONArray(field)?.optString(0) == value },
+                "$mode should compile to $field",
+            )
+        }
     }
 
     private fun socksProfile(id: String, port: Int): TunnelProfile = TunnelProfile(

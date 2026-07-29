@@ -5,6 +5,7 @@ package dev.vifs.viroutefs.engine
 import dev.vifs.viroutefs.routing.AppMatcherPlatform
 import dev.vifs.viroutefs.routing.DnsPolicy
 import dev.vifs.viroutefs.routing.DnsPolicyType
+import dev.vifs.viroutefs.routing.DomainMatcherMode
 import dev.vifs.viroutefs.routing.ProfileGroupMode
 import dev.vifs.viroutefs.routing.RouteRule
 import dev.vifs.viroutefs.routing.RouteRuleType
@@ -15,6 +16,7 @@ import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.normalizedSingBoxProfileObject
 import dev.vifs.viroutefs.routing.orderedServers
+import dev.vifs.viroutefs.routing.parseDomainMatcher
 import dev.vifs.viroutefs.socks5.validateSocks5Profile
 import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.VlessSecurityMode
@@ -148,7 +150,7 @@ internal class SingBoxRoutingConfigCompiler(
 
             config.rules
                 .filter { it.enabled && it.type != RouteRuleType.DEFAULT }
-                .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name })
+                .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name }.thenBy { it.id })
                 .forEach { rule ->
                     val targetTag = profileTags[rule.targetProfileId] ?: SING_BOX_BLOCK_TAG
                     if (targetTag == SING_BOX_BLOCK_TAG && profileTags[rule.targetProfileId] == null) {
@@ -513,7 +515,7 @@ internal class SingBoxRoutingConfigCompiler(
     ) {
         config.rules
             .filter { it.enabled && effectiveDnsPolicyId(config, it) == policy.id }
-            .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name })
+            .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name }.thenBy { it.id })
             .forEach { routeRule ->
                 routeRule.toDnsMatchRule("route", serverTag)?.let(output::put)
             }
@@ -526,7 +528,7 @@ internal class SingBoxRoutingConfigCompiler(
     ) {
         config.rules
             .filter { it.enabled && effectiveDnsPolicyId(config, it) == policy.id }
-            .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name })
+            .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name }.thenBy { it.id })
             .forEach { routeRule ->
                 routeRule.toDnsMatchRule("reject", null)?.let(output::put)
             }
@@ -568,14 +570,12 @@ internal class SingBoxRoutingConfigCompiler(
         val keyword = mutableListOf<String>()
         val regex = mutableListOf<String>()
         values.map(String::trim).filter(String::isNotBlank).forEach { raw ->
-            val value = raw.lowercase(Locale.ROOT).trimEnd('.')
-            when {
-                value.startsWith("full:") -> exact += value.removePrefix("full:")
-                value.startsWith("keyword:") -> keyword += value.removePrefix("keyword:")
-                value.startsWith("regexp:") -> regex += value.removePrefix("regexp:")
-                value.startsWith("domain:") -> suffix += value.removePrefix("domain:").removePrefix("*.")
-                value.startsWith("*.") -> suffix += value.removePrefix("*.")
-                else -> suffix += value
+            val parsed = parseDomainMatcher(raw)
+            when (parsed.mode) {
+                DomainMatcherMode.Exact -> exact += parsed.value
+                DomainMatcherMode.Suffix -> suffix += parsed.value
+                DomainMatcherMode.Keyword -> keyword += parsed.value
+                DomainMatcherMode.Regex -> regex += parsed.value
             }
         }
         return DomainMatchFields(

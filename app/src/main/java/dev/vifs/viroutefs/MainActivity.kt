@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -78,6 +79,7 @@ import dev.vifs.viroutefs.diagnostics.HttpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TcpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TlsDiagnostic
 import dev.vifs.viroutefs.routing.CURRENT_ROUTING_CONFIG_VERSION
+import dev.vifs.viroutefs.routing.DomainMatcherMode
 import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.routing.AppMatcher
 import dev.vifs.viroutefs.routing.AppMatcherPlatform
@@ -90,14 +92,18 @@ import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
 import dev.vifs.viroutefs.routing.defaultRouteActivationError
+import dev.vifs.viroutefs.routing.encodeDomainMatcher
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.findConflictsForCandidate
 import dev.vifs.viroutefs.routing.findExactRouteConflicts
 import dev.vifs.viroutefs.routing.hasRuntimeConfiguration
 import dev.vifs.viroutefs.routing.isValidIpOrCidr
+import dev.vifs.viroutefs.routing.moveExplicitRule
 import dev.vifs.viroutefs.routing.parseDestinationPortRanges
+import dev.vifs.viroutefs.routing.parseDomainMatcher
 import dev.vifs.viroutefs.routing.toDisplayText
 import dev.vifs.viroutefs.routing.validateRouteEditorDraft
+import dev.vifs.viroutefs.routing.validateDomainMatcher
 import dev.vifs.viroutefs.routing.validateRoutingConfig
 import dev.vifs.viroutefs.routing.withDefaultRoute
 import dev.vifs.viroutefs.socks5.Socks5ReadinessSummary
@@ -456,7 +462,9 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
             .filter { it.type == TunnelType.Socks5 }
             .associate { it.id to deriveSocks5ReadinessSummary(historyStore.recentForProfile(it.id)) }
     }
-    val userRules = config.rules.filter { it.type != RouteRuleType.DEFAULT }
+    val userRules = config.rules
+        .filter { it.type != RouteRuleType.DEFAULT }
+        .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name }.thenBy { it.id })
     val selectedRoute = userRules.firstOrNull { it.id == selectedRouteId }
     val selectedGroup = config.profileGroups.firstOrNull { it.id == selectedGroupId }
     val conflicts = remember(config.rules) { findExactRouteConflicts(config.rules) }
@@ -589,12 +597,26 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
         if (userRules.isEmpty()) {
             item { CompactCard(text, text.noRoutesConfigured, text.routeEmptyState, text.routeIsolationNote) }
         } else {
-            items(userRules, key = { it.id }) { rule ->
+            itemsIndexed(userRules, key = { _, rule -> rule.id }) { index, rule ->
                 RouteRuleCard(
                     text = text,
                     rule = rule,
                     profileName = routeTargetName(config, rule.targetProfileId),
                     warnings = conflictsByRuleId[rule.id].orEmpty() + unavailableTargetWarning(config, rule),
+                    canMoveUp = index > 0,
+                    canMoveDown = index < userRules.lastIndex,
+                    onMoveUp = {
+                        onConfig(
+                            config.moveExplicitRule(rule.id, -1),
+                            "Правило «${rule.name}» поднято выше. Меньший номер применяется раньше.",
+                        )
+                    },
+                    onMoveDown = {
+                        onConfig(
+                            config.moveExplicitRule(rule.id, 1),
+                            "Правило «${rule.name}» опущено ниже. Порядок пересчитан детерминированно.",
+                        )
+                    },
                     onOpen = { selectedRouteId = rule.id },
                 )
             }
@@ -963,7 +985,17 @@ internal fun android.content.Context.loadInstalledAppsForRouting(): List<Install
 }
 
 @Composable
-private fun RouteRuleCard(text: UiText, rule: RouteRule, profileName: String, warnings: List<Any>, onOpen: () -> Unit) {
+private fun RouteRuleCard(
+    text: UiText,
+    rule: RouteRule,
+    profileName: String,
+    warnings: List<Any>,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onOpen: () -> Unit,
+) {
     CardBlock {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -977,9 +1009,14 @@ private fun RouteRuleCard(text: UiText, rule: RouteRule, profileName: String, wa
                 Text(matcherSummary(rule), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("→ $profileName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    StatusChip("Приоритет ${rule.priority}")
                     StatusChip(if (rule.enabled) text.on else text.off)
                     if (warnings.isNotEmpty()) StatusChip(text.warning)
                 }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedButton(onClick = onMoveUp, enabled = canMoveUp) { Text("Выше") }
+                OutlinedButton(onClick = onMoveDown, enabled = canMoveDown) { Text("Ниже") }
             }
         }
     }
@@ -1004,7 +1041,19 @@ private fun RouteDetailsScreen(
     var selectedAppPackages by rememberSaveable(rule.id) {
         mutableStateOf(rule.appMatchers.map { it.value })
     }
-    var matcherText by rememberSaveable(rule.id) { mutableStateOf(rule.matchers.firstOrNull().orEmpty()) }
+    val existingDomainMatcher = parseDomainMatcher(rule.matchers.firstOrNull().orEmpty())
+    var domainMatcherModeName by rememberSaveable(rule.id) {
+        mutableStateOf(existingDomainMatcher.mode.name)
+    }
+    var matcherText by rememberSaveable(rule.id) {
+        mutableStateOf(
+            if (rule.type == RouteRuleType.DOMAIN) {
+                existingDomainMatcher.value
+            } else {
+                rule.matchers.firstOrNull().orEmpty()
+            },
+        )
+    }
     var transportName by rememberSaveable(rule.id) { mutableStateOf(rule.transport.name) }
     var destinationPortsText by rememberSaveable(rule.id) {
         mutableStateOf(rule.destinationPorts.toDisplayText())
@@ -1037,6 +1086,9 @@ private fun RouteDetailsScreen(
     val parsedDestinationPorts = remember(destinationPortsText) {
         runCatching { parseDestinationPortRanges(destinationPortsText) }
     }
+    val domainMatcherMode = DomainMatcherMode.entries
+        .firstOrNull { it.name == domainMatcherModeName }
+        ?: DomainMatcherMode.Suffix
     val draft = remember(
         name,
         enabled,
@@ -1045,6 +1097,7 @@ private fun RouteDetailsScreen(
         dnsPolicyId,
         selectedAppPackages,
         matcherText,
+        domainMatcherMode,
         transportName,
         parsedDestinationPorts,
         appsByPackage,
@@ -1058,7 +1111,10 @@ private fun RouteDetailsScreen(
             dnsPolicyId = dnsPolicyId,
             matchers = when (matcherKind) {
                 RouteMatcherKind.App -> emptyList()
-                RouteMatcherKind.Domain -> listOf(matcherText.trim().trimEnd('.').lowercase(Locale.ROOT)).filter { it.isNotBlank() }
+                RouteMatcherKind.Domain ->
+                    listOf(encodeDomainMatcher(domainMatcherMode, matcherText)).filter {
+                        parseDomainMatcher(it).value.isNotBlank()
+                    }
                 RouteMatcherKind.Ip,
                 RouteMatcherKind.Network -> listOf(matcherText.trim()).filter { it.isNotBlank() }
             },
@@ -1107,6 +1163,7 @@ private fun RouteDetailsScreen(
                     selectedAppPackages = selectedAppPackages,
                     appSearch = appSearch,
                     matcherText = matcherText,
+                    domainMatcherMode = domainMatcherMode,
                     onAppSearch = { appSearch = it },
                     onToggleAppPackage = { packageName ->
                         selectedAppPackages = if (packageName in selectedAppPackages) {
@@ -1116,6 +1173,10 @@ private fun RouteDetailsScreen(
                         }
                     },
                     onMatcherText = { matcherText = it },
+                    onDomainMatcherMode = {
+                        domainMatcherModeName = it.name
+                        saveErrors = emptyList()
+                    },
                 )
                 Text("Транспорт и порты назначения", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
                 Text(
@@ -1265,9 +1326,11 @@ private fun RouteMatcherEditor(
     selectedAppPackages: List<String>,
     appSearch: String,
     matcherText: String,
+    domainMatcherMode: DomainMatcherMode,
     onAppSearch: (String) -> Unit,
     onToggleAppPackage: (String) -> Unit,
     onMatcherText: (String) -> Unit,
+    onDomainMatcherMode: (DomainMatcherMode) -> Unit,
 ) {
     when (kind) {
         RouteMatcherKind.App -> {
@@ -1321,15 +1384,64 @@ private fun RouteMatcherEditor(
                 }
             }
         }
-        RouteMatcherKind.Domain -> OutlinedTextField(
-            value = matcherText,
-            onValueChange = onMatcherText,
-            label = { Text(text.domainHostInput) },
-            placeholder = { Text("example.org") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            isError = matcherText.isBlank(),
-        )
+        RouteMatcherKind.Domain -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Как сравнивать домен", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+            ChipRow {
+                DomainMatcherMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = domainMatcherMode == mode,
+                        onClick = { onDomainMatcherMode(mode) },
+                        label = {
+                            Text(
+                                when (mode) {
+                                    DomainMatcherMode.Exact -> "Точный"
+                                    DomainMatcherMode.Suffix -> "Домен и поддомены"
+                                    DomainMatcherMode.Keyword -> "Содержит"
+                                    DomainMatcherMode.Regex -> "Регулярное выражение"
+                                },
+                            )
+                        },
+                    )
+                }
+            }
+            Text(
+                when (domainMatcherMode) {
+                    DomainMatcherMode.Exact -> "Совпадёт только example.org, но не sub.example.org."
+                    DomainMatcherMode.Suffix -> "Совпадут example.org и все его поддомены."
+                    DomainMatcherMode.Keyword -> "Совпадёт домен, в имени которого встречается указанная часть."
+                    DomainMatcherMode.Regex -> "Экспертный режим: шаблон применяется ко всему имени домена."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            val validationError = validateDomainMatcher(domainMatcherMode, matcherText)
+            OutlinedTextField(
+                value = matcherText,
+                onValueChange = onMatcherText,
+                label = {
+                    Text(
+                        if (domainMatcherMode == DomainMatcherMode.Regex) {
+                            "Регулярное выражение"
+                        } else {
+                            text.domainHostInput
+                        },
+                    )
+                },
+                placeholder = {
+                    Text(
+                        when (domainMatcherMode) {
+                            DomainMatcherMode.Regex -> "(^|\\.)example\\.org$"
+                            DomainMatcherMode.Keyword -> "example"
+                            else -> "example.org"
+                        },
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                isError = validationError != null,
+            )
+            validationError?.let { WarningText(it) }
+        }
         RouteMatcherKind.Ip -> OutlinedTextField(
             value = matcherText,
             onValueChange = onMatcherText,
@@ -1395,7 +1507,16 @@ private fun matcherSummary(rule: RouteRule): String {
         RouteRuleType.APP, RouteRuleType.APP_GROUP -> rule.appMatchers.joinToString(" • ") { app ->
             app.displayName?.let { "$it (${app.value})" } ?: app.value
         }.ifBlank { "App matcher not selected" }
-        RouteRuleType.DOMAIN -> rule.matchers.joinToString(" • ").ifBlank { "Domain / host not set" }
+        RouteRuleType.DOMAIN -> rule.matchers.joinToString(" • ") { raw ->
+            val parsed = parseDomainMatcher(raw)
+            val mode = when (parsed.mode) {
+                DomainMatcherMode.Exact -> "Точный домен"
+                DomainMatcherMode.Suffix -> "Домен и поддомены"
+                DomainMatcherMode.Keyword -> "Содержит"
+                DomainMatcherMode.Regex -> "Регулярное выражение"
+            }
+            "$mode: ${parsed.value}"
+        }.ifBlank { "Domain / host not set" }
         RouteRuleType.CIDR -> rule.matchers.joinToString(" • ").ifBlank { "IP / CIDR not set" }
         RouteRuleType.DEFAULT -> "Default System route"
     }

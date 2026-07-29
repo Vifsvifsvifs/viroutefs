@@ -5,7 +5,8 @@ ViRouteFS uses one Android `VpnService` and one sing-box routing table.
 ## Invariants
 
 1. When network control is active, IPv4, IPv6 and DNS enter the local TUN router.
-2. Rules are evaluated by priority.
+2. Rules are evaluated by priority, then name, then stable rule UUID. The UI
+   exposes explicit move-up/move-down controls and normalizes visible priorities.
 3. A matching rule selects exactly one profile or an explicitly configured group.
 4. An unavailable target maps to `Block`; there is no silent fallback to another VPN or `System`.
 5. Unmatched traffic uses the explicit `System` default rule: the phone's normal uplink.
@@ -20,6 +21,11 @@ ViRouteFS uses one Android `VpnService` and one sing-box routing table.
 - regular expression;
 - IP/CIDR;
 - default.
+
+The normal editor exposes all four domain modes. Exact, suffix and keyword
+values are canonicalized to lowercase; regular expressions keep their syntax
+and are validated before save. The simulator and native compiler use the same
+parser.
 
 ## Built-in targets
 

@@ -1152,7 +1152,11 @@ internal fun explainFlowRoute(
     }
     return decisions
         .filter { it.matchedRule.type != RouteRuleType.DEFAULT }
-        .minWithOrNull(compareBy<RouteDecision> { it.matchedRule.priority }.thenBy { it.matchedRule.name })
+        .minWithOrNull(
+            compareBy<RouteDecision> { it.matchedRule.priority }
+                .thenBy { it.matchedRule.name }
+                .thenBy { it.matchedRule.id },
+        )
         ?: engine.simulate(RouteQuery("default", destinationPort, transport))
 }
 
