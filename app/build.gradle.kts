@@ -23,9 +23,9 @@ val donationUrl = providers.environmentVariable("VIROUTEFS_DONATION_URL")
     .orNull
     ?.trim()
     .orEmpty()
-val baseVersionName = "0.13.0-beta.1"
+val baseVersionName = "0.13.0-beta.2"
 val appVersionName = if (buildNumber > 0) "$baseVersionName.$buildNumber" else baseVersionName
-val appVersionCode = 13001 + buildNumber
+val appVersionCode = 13002 + buildNumber
 
 android {
     namespace = "dev.vifs.viroutefs"

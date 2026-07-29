@@ -13,7 +13,11 @@ import dev.vifs.viroutefs.routing.TunnelType
  */
 internal object EngineCatalog {
     val protocols: List<ProtocolDescriptor> = listOf(
-        integrated(TunnelType.Direct, "Встроенный маршрут через сеть Android.", EngineBackend.BuiltIn),
+        deviceVerified(
+            TunnelType.Direct,
+            "Встроенный маршрут через сеть Android. Проверен на физическом Android-устройстве: запуск без VPN-профиля, IPv4, DNS и штатная остановка.",
+            EngineBackend.BuiltIn,
+        ),
         integrated(TunnelType.Block, "Запрет сети с безопасным поведением fail-closed.", EngineBackend.BuiltIn),
         integrated(TunnelType.ByeDpi, "Локальный режим совместимости TCP/TLS; это не VPN и не скрывает IP-адрес.", EngineBackend.ByeDpi),
         unavailable(
@@ -73,6 +77,15 @@ internal object EngineCatalog {
         type = type,
         backend = backend,
         readiness = FeatureReadiness.RuntimeIntegrated,
+        summary = summary,
+        supportsRouteRules = true,
+        supportsCustomDns = true,
+    )
+
+    private fun deviceVerified(type: TunnelType, summary: String, backend: EngineBackend) = ProtocolDescriptor(
+        type = type,
+        backend = backend,
+        readiness = FeatureReadiness.DeviceVerified,
         summary = summary,
         supportsRouteRules = true,
         supportsCustomDns = true,

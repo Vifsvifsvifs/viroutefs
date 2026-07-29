@@ -60,13 +60,13 @@ class EngineCatalogTest {
     }
 
     @Test
-    fun noProtocolClaimsDeviceVerificationWithoutPhysicalEvidence() {
-        EngineCatalog.protocols.forEach { descriptor ->
-            assertTrue(
-                descriptor.readiness != FeatureReadiness.DeviceVerified &&
-                    descriptor.readiness != FeatureReadiness.ProductionReady,
-                descriptor.type.name,
-            )
+    fun onlyPhysicallyTestedSystemRouteClaimsDeviceVerification() {
+        val verified = EngineCatalog.protocols.filter {
+            it.readiness == FeatureReadiness.DeviceVerified ||
+                it.readiness == FeatureReadiness.ProductionReady
         }
+
+        assertEquals(listOf(TunnelType.Direct), verified.map { it.type })
+        assertEquals(FeatureReadiness.DeviceVerified, verified.single().readiness)
     }
 }

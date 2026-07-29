@@ -73,6 +73,51 @@ class DefaultRouteTest {
     }
 
     @Test
+    fun migratedBuiltInRoutesCannotKeepProtocolPayloads() {
+        val defaults = RoutingConfigDefaults.defaultConfig()
+        val invalidPayload = SingBoxProfileConfig(
+            kind = SingBoxProfileKind.Outbound,
+            optionsJson = """{"type":"trojan","server":""}""",
+        )
+        val oldConfig = defaults.copy(
+            version = 8,
+            profiles = defaults.profiles.map { profile ->
+                when (profile.id) {
+                    RoutingConfigDefaults.SYSTEM_PROFILE_ID -> profile.copy(
+                        name = "Old direct",
+                        enabled = false,
+                        mockOnly = true,
+                        singBox = invalidPayload,
+                    )
+                    RoutingConfigDefaults.BLOCK_PROFILE_ID -> profile.copy(
+                        name = "Old block",
+                        singBox = invalidPayload,
+                    )
+                    else -> profile
+                }
+            },
+        )
+
+        val migrated = RoutingConfigDefaults.ensureRequiredProfiles(oldConfig)
+        val system = migrated.profiles.single {
+            it.id == RoutingConfigDefaults.SYSTEM_PROFILE_ID
+        }
+        val block = migrated.profiles.single {
+            it.id == RoutingConfigDefaults.BLOCK_PROFILE_ID
+        }
+
+        assertEquals("System / Система", system.name)
+        assertEquals(TunnelType.Direct, system.type)
+        assertTrue(system.enabled)
+        assertNull(system.singBox)
+        assertNull(system.socks5)
+        assertNull(system.vless)
+        assertEquals("Block", block.name)
+        assertEquals(TunnelType.Block, block.type)
+        assertNull(block.singBox)
+    }
+
+    @Test
     fun unavailableCustomDefaultStillFailsClosed() {
         val config = RoutingConfigDefaults.defaultConfig().copy(
             defaultProfileId = "missing-profile",

@@ -121,12 +121,31 @@ class EngineOrchestratorTest {
         assertEquals(listOf("compile:core"), events)
     }
 
+    @Test
+    fun builtInSystemRouteIsNotValidatedAsExternalVpnProfile() {
+        val events = mutableListOf<String>()
+        val core = FakeAdapter(
+            id = "core",
+            protocols = setOf(TunnelType.Direct, TunnelType.Block),
+            alwaysRequired = true,
+            rejectBuiltInValidation = true,
+            events = events,
+        )
+
+        val result = EngineOrchestrator(listOf(core))
+            .prepare(RoutingConfigDefaults.defaultConfig())
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf("compile:core"), events)
+    }
+
     private class FakeAdapter(
         override val id: String,
         private val protocols: Set<TunnelType>,
         override val dependencies: Set<String> = emptySet(),
         override val alwaysRequired: Boolean = false,
         private val failStart: Boolean = false,
+        private val rejectBuiltInValidation: Boolean = false,
         private val events: MutableList<String>,
     ) : EngineAdapter {
         override val backend: EngineBackend = EngineBackend.BuiltIn
@@ -141,7 +160,20 @@ class EngineOrchestratorTest {
         override var state: EngineState = EngineState.Stopped
         override var lastError: EngineError? = null
 
-        override fun validateProfile(profile: TunnelProfile): List<EngineError> = emptyList()
+        override fun validateProfile(profile: TunnelProfile): List<EngineError> =
+            if (rejectBuiltInValidation && profile.type in setOf(TunnelType.Direct, TunnelType.Block)) {
+                listOf(
+                    EngineError(
+                        adapterId = id,
+                        stage = EngineErrorStage.Validation,
+                        summary = "Built-in target must not be validated as a VPN profile.",
+                        technicalDetails = profile.type.name,
+                        recommendedAction = "Skip built-in target validation.",
+                    ),
+                )
+            } else {
+                emptyList()
+            }
 
         override fun compile(
             config: RoutingConfig,
