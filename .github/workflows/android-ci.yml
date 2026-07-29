@@ -149,6 +149,9 @@ jobs:
 
       - name: Verify signed release APK
         if: github.event_name == 'workflow_dispatch'
+        env:
+          EXPECTED_XRAY_SHA256: 9bb0b815086395164066b5fa27b1797bf9a0fcc493d1491f02166560604dcaff
+          XRAY_COMMIT: 94ffd50060f1cfd5d7482ec90a23a92bdefdff68
         run: |
           set -euo pipefail
 
@@ -160,6 +163,18 @@ jobs:
           "$APKSIGNER" verify --verbose --print-certs "$RELEASE_APK" | tee apk-verification.txt
           "$ZIPALIGN" -c -P 16 4 "$RELEASE_APK"
           unzip -l "$RELEASE_APK" | grep -q 'lib/arm64-v8a/'
+          unzip -l "$RELEASE_APK" | grep -q 'assets/licenses/Xray-core-MPL-2.0.txt'
+          SOURCE_XRAY_SHA256="$(sha256sum app/src/main/jniLibs/arm64-v8a/libxray.so | awk '{print $1}')"
+          unzip -p "$RELEASE_APK" 'lib/arm64-v8a/libxray.so' > "$RUNNER_TEMP/libxray-packaged.so"
+          PACKAGED_XRAY_SHA256="$(sha256sum "$RUNNER_TEMP/libxray-packaged.so" | awk '{print $1}')"
+          if [ "$SOURCE_XRAY_SHA256" != "$EXPECTED_XRAY_SHA256" ]; then
+            echo "Pinned Xray source hash mismatch: $SOURCE_XRAY_SHA256" >&2
+            exit 1
+          fi
+          if [ "$PACKAGED_XRAY_SHA256" != "$EXPECTED_XRAY_SHA256" ]; then
+            echo "Packaged Xray hash mismatch: $PACKAGED_XRAY_SHA256" >&2
+            exit 1
+          fi
           printf '%s  %s\n' "$SHA256" "$RELEASE_APK" > "$RELEASE_APK.sha256"
 
           CERT_SHA256="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' apk-verification.txt | head -n 1)"
@@ -174,7 +189,14 @@ jobs:
             "abi": ["arm64-v8a"],
             "minSdk": 26,
             "targetSdk": 36,
-            "zipalign16KiB": true
+            "zipalign16KiB": true,
+            "nativeComponents": {
+              "xrayCore": {
+                "commit": "${XRAY_COMMIT}",
+                "sha256": "${PACKAGED_XRAY_SHA256}",
+                "license": "MPL-2.0"
+              }
+            }
           }
           EOF
 

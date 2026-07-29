@@ -1,5 +1,12 @@
 # VLESS protocol construction boundary
 
+> Historical implementation note: this document describes the old manual
+> TCP/TLS diagnostic probe. Current VPN forwarding is implemented separately:
+> ordinary VLESS routes through sing-box, while VLESS/XHTTP routes through the
+> bundled app-private Xray-core process behind the same Android `VpnService`.
+> The manual probe below is intentionally unavailable for XHTTP and other
+> transports whose protocol exchange it cannot reproduce.
+
 ViRouteFS `0.8.7-alpha` added a pure/local VLESS TCP request encoder for future manual handshake diagnostics. The encoder constructs only the first VLESS TCP request frame in memory and returns it as a `ByteArray`.
 
 ViRouteFS `0.8.8-alpha` added an explicit manual plain-TCP VLESS protocol probe that is run only when the user taps **Run VLESS probe** from a saved VLESS profile. The plain probe opens a TCP socket to the configured VLESS server, builds one minimal VLESS TCP request frame with the existing builder, sends that frame to a user-selected target, briefly observes whether the server closes or keeps the connection, and closes the socket.

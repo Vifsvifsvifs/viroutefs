@@ -75,6 +75,7 @@ internal data class LocalEngineEndpoint(
 
 internal class EngineRuntimeContext {
     private val endpoints = ConcurrentHashMap<String, LocalEngineEndpoint>()
+    private val profileEndpoints = ConcurrentHashMap<String, LocalEngineEndpoint>()
 
     fun publishEndpoint(adapterId: String, endpoint: LocalEngineEndpoint) {
         endpoints[adapterId] = endpoint
@@ -82,12 +83,27 @@ internal class EngineRuntimeContext {
 
     fun endpoint(adapterId: String): LocalEngineEndpoint? = endpoints[adapterId]
 
+    fun publishProfileEndpoint(
+        adapterId: String,
+        profileId: String,
+        endpoint: LocalEngineEndpoint,
+    ) {
+        profileEndpoints["$adapterId\u0000$profileId"] = endpoint
+    }
+
+    fun profileEndpoint(adapterId: String, profileId: String): LocalEngineEndpoint? =
+        profileEndpoints["$adapterId\u0000$profileId"]
+
     fun clearEndpoint(adapterId: String) {
         endpoints.remove(adapterId)
+        profileEndpoints.keys
+            .filter { it.startsWith("$adapterId\u0000") }
+            .forEach(profileEndpoints::remove)
     }
 
     fun clear() {
         endpoints.clear()
+        profileEndpoints.clear()
     }
 }
 

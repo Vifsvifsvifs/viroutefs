@@ -7,7 +7,7 @@ import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.validateVlessProfile
 import java.util.Locale
 
-const val CURRENT_ROUTING_CONFIG_VERSION = 9
+const val CURRENT_ROUTING_CONFIG_VERSION = 10
 const val MOCK_PROFILE_LIMITATION = "Профиль пока не подключает реальный тоннель. Он используется для симуляции маршрутов."
 const val SOCKS5_RUNTIME_STATUS = "SOCKS5 forwarding is available through the local sing-box TUN runtime."
 const val VLESS_ROUTE_DECISION_STATUS = "VLESS forwarding is available through the local sing-box TUN runtime."
@@ -161,7 +161,35 @@ data class DnsPolicy(
     val resolveThroughProfileId: String? = null,
     val description: String,
     val enabled: Boolean = true,
+    val servers: List<DnsServerConfig> = emptyList(),
 )
+
+data class DnsServerConfig(
+    val id: String,
+    val address: String,
+    val priority: Int = 0,
+    val enabled: Boolean = true,
+)
+
+fun DnsPolicy.orderedServers(): List<DnsServerConfig> {
+    val configured = servers
+        .filter { it.enabled && it.address.isNotBlank() }
+        .sortedWith(compareBy<DnsServerConfig> { it.priority }.thenBy { it.id })
+    if (configured.isNotEmpty()) return configured
+    return serverText
+        .orEmpty()
+        .split(Regex("[,;\\s]+"))
+        .map(String::trim)
+        .filter(String::isNotBlank)
+        .distinct()
+        .mapIndexed { index, address ->
+            DnsServerConfig(
+                id = "legacy-$index",
+                address = address,
+                priority = index,
+            )
+        }
+}
 
 enum class DnsPolicyType(val label: String) {
     System("System DNS"),
@@ -198,6 +226,8 @@ data class RouteRule(
     val reason: String,
     val technicalDetails: String,
     val recommendedAction: String,
+    val destinationPorts: List<DestinationPortRange> = emptyList(),
+    val transport: RouteTransport = RouteTransport.Any,
 )
 
 enum class RouteRuleType {
@@ -235,6 +265,12 @@ data class RouteDecision(
     }
 }
 
+data class RouteQuery(
+    val value: String,
+    val destinationPort: Int? = null,
+    val transport: RouteTransport = RouteTransport.Any,
+)
+
 class RouteEngine(
     private val config: RoutingConfig,
 ) {
@@ -244,11 +280,14 @@ class RouteEngine(
         .filter { it.enabled }
         .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name })
 
-    fun simulate(rawInput: String): RouteDecision {
-        val normalizedInput = rawInput.trim().ifBlank { "default" }
+    fun simulate(rawInput: String): RouteDecision = simulate(RouteQuery(rawInput))
+
+    fun simulate(query: RouteQuery): RouteDecision {
+        val normalizedInput = query.value.trim().ifBlank { "default" }
         val comparableInput = normalizedInput.lowercase(Locale.ROOT)
         val matchedRule = enabledRules.firstOrNull { rule ->
-            rule.type != RouteRuleType.DEFAULT && rule.matches(comparableInput)
+            rule.type != RouteRuleType.DEFAULT &&
+                rule.matches(query.copy(value = comparableInput))
         } ?: enabledRules.firstOrNull { it.type == RouteRuleType.DEFAULT }
         ?: config.rules.first { it.type == RouteRuleType.DEFAULT }
         val effectiveRule = if (matchedRule.type == RouteRuleType.DEFAULT) {
@@ -280,12 +319,25 @@ class RouteEngine(
         )
     }
 
-    private fun RouteRule.matches(input: String): Boolean = when (type) {
-        RouteRuleType.APP_GROUP,
-        RouteRuleType.APP -> textMatchers().any { matcher -> input == matcher }
-        RouteRuleType.DOMAIN -> textMatchers().any { matcher -> domainMatches(input, matcher) }
-        RouteRuleType.CIDR -> matchers.any { cidr -> ipv4InCidr(input, cidr) }
-        RouteRuleType.DEFAULT -> true
+    private fun RouteRule.matches(query: RouteQuery): Boolean {
+        if (transport != RouteTransport.Any && query.transport != transport) return false
+        if (destinationPorts.isNotEmpty()) {
+            val port = query.destinationPort ?: return false
+            if (destinationPorts.none { it.contains(port) }) return false
+        }
+        return when (type) {
+            RouteRuleType.APP_GROUP,
+            RouteRuleType.APP -> textMatchers().any { matcher -> query.value == matcher }
+            RouteRuleType.DOMAIN -> textMatchers().any { matcher -> domainMatches(query.value, matcher) }
+            RouteRuleType.CIDR -> matchers.any { matcher ->
+                if ('/' in matcher) {
+                    ipAddressInCidr(query.value, matcher)
+                } else {
+                    query.value == matcher.lowercase(Locale.ROOT)
+                }
+            }
+            RouteRuleType.DEFAULT -> true
+        }
     }
 
     private fun RouteRule.textMatchers(): List<String> = buildList {
@@ -361,6 +413,8 @@ class RouteEngine(
         appendLine("Тип правила: ${rule.type}")
         appendLine("Приоритет: ${rule.priority} (меньше — важнее)")
         appendLine("Матчеры: ${rule.matchers.joinToString().ifBlank { "не требуются" }}")
+        appendLine("Транспорт: ${rule.transport.name}")
+        appendLine("Порты назначения: ${rule.destinationPorts.toDisplayText().ifBlank { "любые" }}")
         appendLine("Профиль: ${profile.name} (${profile.type.label})")
         if (profile.type == TunnelType.Socks5) appendLine(SOCKS5_RUNTIME_STATUS)
         if (profile.type == TunnelType.VLESS) appendLine(VLESS_ROUTE_DECISION_STATUS)
@@ -373,24 +427,6 @@ class RouteEngine(
         }
     }
 
-    private fun ipv4InCidr(input: String, cidr: String): Boolean {
-        val inputAddress = input.toIpv4IntOrNull() ?: return false
-        val cidrParts = cidr.split('/')
-        if (cidrParts.size != 2) return false
-        val networkAddress = cidrParts[0].toIpv4IntOrNull() ?: return false
-        val prefixLength = cidrParts[1].toIntOrNull()?.takeIf { it in 0..32 } ?: return false
-        val mask = if (prefixLength == 0) 0 else (-1 shl (32 - prefixLength))
-        return (inputAddress and mask) == (networkAddress and mask)
-    }
-
-    private fun String.toIpv4IntOrNull(): Int? {
-        val parts = split('.')
-        if (parts.size != 4) return null
-        return parts.fold(0) { accumulator, part ->
-            val octet = part.toIntOrNull()?.takeIf { it in 0..255 } ?: return null
-            (accumulator shl 8) or octet
-        }
-    }
 }
 
 fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
@@ -414,10 +450,10 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
                 ).forEach { add("Профиль ${profile.name}: $it") }
             }
         }
-        if (profile.type == TunnelType.VLESS) {
+        if (profile.type == TunnelType.VLESS || profile.type == TunnelType.XrayVlessReality) {
             val vless = profile.vless
             if (vless == null) {
-                add("VLESS profile ${profile.name} has no VLESS configuration.")
+                add("${profile.type.label} profile ${profile.name} has no VLESS configuration.")
             } else {
                 validateVlessProfile(vless).forEach { add("Профиль ${profile.name}: $it") }
             }
@@ -435,6 +471,12 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
         policy.resolveThroughProfileId?.takeIf { it !in profileIds }?.let {
             add("DNS-политика ${policy.name} ссылается на отсутствующий профиль $it.")
         }
+        policy.orderedServers().forEach { server ->
+            if (server.id.isBlank()) add("DNS-политика ${policy.name}: сервер без id.")
+            if (server.priority < 0) {
+                add("DNS-политика ${policy.name}: приоритет DNS-сервера должен быть неотрицательным.")
+            }
+        }
     }
     config.profiles.mapNotNull { it.socks5 }.groupBy { it.name.trim().lowercase(Locale.ROOT) }.filterKeys { it.isNotBlank() }.forEach { (name, profiles) ->
         if (profiles.size > 1) add("Duplicate SOCKS5 profile name: $name")
@@ -447,6 +489,11 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
     config.rules.forEach { rule ->
         if (rule.name.isBlank()) add("Правило ${rule.id} без имени.")
         if (rule.priority < 0) add("Правило ${rule.name}: приоритет должен быть неотрицательным.")
+        rule.destinationPorts.forEach { range ->
+            if (range.first !in 1..65535 || range.last !in range.first..65535) {
+                add("Правило ${rule.name}: неверный порт назначения ${range.toDisplayText()}.")
+            }
+        }
         if (rule.type != RouteRuleType.DEFAULT && rule.matchers.isEmpty() && rule.appMatchers.isEmpty()) {
             add("Правило ${rule.name}: нужны матчеры.")
         }

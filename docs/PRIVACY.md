@@ -5,18 +5,20 @@
 ViRouteFS работает локально на устройстве. В приложении нет рекламы,
 аналитических SDK, скрытой телеметрии и автоматической отправки журналов.
 
-Приложение обрабатывает только то, что нужно для локальной маршрутизации:
-профили пользователя, правила, DNS-настройки, список установленных приложений,
-иконки приложений и метаданные сетевых соединений. Содержимое пакетов по
+Приложение обрабатывает только данные, необходимые для локальной маршрутизации:
+пользовательские профили, правила, DNS-настройки, список установленных
+приложений, их значки и метаданные сетевых соединений. Содержимое пакетов по
 умолчанию не сохраняется.
 
 Пароли, access UUID, cookie, PSK, приватные ключи и расширенные конфигурации с
-учётными данными шифруются AES-256-GCM. Ключ хранится в Android Keystore, а
-зашифрованный файл исключён из Android Backup.
+учётными данными, включая XHTTP `extra`, шифруются AES-256-GCM. Ключ хранится в
+Android Keystore, а зашифрованный файл исключён из Android Backup. Временная
+конфигурация Xray-core доступна только приложению, создаётся при запуске и
+удаляется при остановке процесса.
 
 Экспорт или диагностический отчёт создаётся только по явному действию
 пользователя. ViRouteFS не предоставляет собственные VPN-серверы и не передаёт
-данные владельцам проекта.
+данные владельцу проекта.
 
 ## English
 
@@ -28,11 +30,11 @@ DNS settings, the installed-app list, local app icons, and network connection
 metadata. Packet payloads are not stored by default.
 
 Passwords, access UUIDs, cookies, PSKs, private keys, and advanced
-configurations containing credentials are encrypted with AES-256-GCM. The key
-is held by Android Keystore and the encrypted file is excluded from Android
-Backup.
+configurations containing credentials, including XHTTP `extra`, are encrypted
+with AES-256-GCM. The key is held by Android Keystore and the encrypted file is
+excluded from Android Backup. The temporary Xray-core configuration is
+app-private, created on process start, and removed on process stop.
 
 An export or diagnostic report is created only after an explicit user action.
 ViRouteFS provides no VPN servers of its own and sends no data to the project
 owner.
-

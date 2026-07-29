@@ -4,8 +4,8 @@
 
 ViRouteFS owns exactly one Android `VpnService`. sing-box requests the TUN file
 descriptor through the ViRouteFS platform callback. Every outbound socket is
-protected from the VPN loop by `VpnService.protect()`. No protocol adapter may
-start another Android VPN.
+kept out of the VPN loop by the sing-box platform integration or the app UID
+exclusion. No protocol adapter may start another Android VPN.
 
 ## Engine boundary
 
@@ -39,7 +39,10 @@ enabled route rules and DNS detours. It then:
 The current Android generation contains:
 
 * a local TCP/TLS compatibility adapter;
-* a sing-box adapter that owns the shared TUN and all supported outbounds.
+* an Xray-core child-process adapter that exposes one app-private localhost
+  SOCKS endpoint per active VLESS/XHTTP profile;
+* a sing-box adapter that owns the shared TUN and routes selected flows to
+  built-in outbounds or those local endpoints.
 
 strongSwan, legacy PPP, ZeroTier, SoftEther, Tor, Brook and a rootless zapret2
 adapter remain separate implementation stages. Their catalog status does not
@@ -48,8 +51,8 @@ claim that a runtime exists.
 ## Configuration and secrets
 
 `routing_config.json` contains the versioned routing structure and stable
-`secretRef` values. It does not contain passwords, VLESS access UUIDs or raw
-advanced sing-box objects with credentials.
+`secretRef` values. It does not contain passwords, VLESS access UUIDs, XHTTP
+extra JSON or raw advanced sing-box objects with credentials.
 
 The secret payload is stored in `noBackupFilesDir`:
 
@@ -63,6 +66,10 @@ The secret payload is stored in `noBackupFilesDir`:
 The complete advanced sing-box object is encrypted. This intentionally avoids
 missing a newly added nested credential field. The visible structure is stored
 with known secret keys replaced by `<redacted>`.
+
+Xray receives a generated configuration only while it is running. That file is
+placed in app-private `noBackupFilesDir`, has owner-only permissions, is
+overwritten and removed on stop, and is never committed or exported.
 
 Public beta configuration schema 8 and the old plaintext
 `socks5_credentials.json` are migrated to schema 9. The encrypted store and

@@ -7,11 +7,13 @@ import dev.vifs.viroutefs.routing.DnsPolicy
 import dev.vifs.viroutefs.routing.DnsPolicyType
 import dev.vifs.viroutefs.routing.RouteRule
 import dev.vifs.viroutefs.routing.RouteRuleType
+import dev.vifs.viroutefs.routing.RouteTransport
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.SingBoxProfileKind
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.normalizedSingBoxProfileObject
+import dev.vifs.viroutefs.routing.orderedServers
 import dev.vifs.viroutefs.socks5.validateSocks5Profile
 import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.VlessSecurityMode
@@ -41,6 +43,7 @@ internal data class SingBoxCompiledRuntime(
  */
 internal class SingBoxRoutingConfigCompiler(
     private val byeDpiPort: Int? = null,
+    private val xrayEndpoints: Map<String, LocalEngineEndpoint> = emptyMap(),
 ) {
     fun compile(config: RoutingConfig): SingBoxCompiledRuntime {
         val warnings = mutableListOf<String>()
@@ -193,8 +196,7 @@ internal class SingBoxRoutingConfigCompiler(
                         }
                 }
             }
-            TunnelType.VLESS,
-            TunnelType.XrayVlessReality -> {
+            TunnelType.VLESS -> {
                 val candidate = vless
                 val errors = candidate?.let(::validateVlessRuntime).orEmpty()
                 if (candidate == null || !candidate.enabled || errors.isNotEmpty()) {
@@ -202,6 +204,20 @@ internal class SingBoxRoutingConfigCompiler(
                     null
                 } else {
                     candidate.toSingBoxVlessOutbound(tag)
+                }
+            }
+            TunnelType.XrayVlessReality -> {
+                val endpoint = xrayEndpoints[id]
+                if (endpoint == null) {
+                    warnings += "Xray profile '$name' has no ready local endpoint; matching traffic will fail closed."
+                    null
+                } else {
+                    JSONObject()
+                        .put("type", "socks")
+                        .put("tag", tag)
+                        .put("server", endpoint.host)
+                        .put("server_port", endpoint.port)
+                        .put("version", "5")
                 }
             }
             TunnelType.ByeDpi -> {
@@ -241,7 +257,7 @@ internal class SingBoxRoutingConfigCompiler(
         val output = JSONObject()
             .put("action", "route")
             .put("outbound", targetTag)
-        return when (type) {
+        val matched = when (type) {
             RouteRuleType.DOMAIN -> {
                 val match = domainMatchFields(matchers)
                 if (match.isEmpty) {
@@ -272,6 +288,19 @@ internal class SingBoxRoutingConfigCompiler(
             }
             RouteRuleType.DEFAULT -> null
         }
+        return matched?.applyRouteConstraints(this)
+    }
+
+    private fun JSONObject.applyRouteConstraints(rule: RouteRule): JSONObject = apply {
+        when (rule.transport) {
+            RouteTransport.Any -> Unit
+            RouteTransport.Tcp -> put("network", "tcp")
+            RouteTransport.Udp -> put("network", "udp")
+        }
+        val exactPorts = rule.destinationPorts.filter { it.first == it.last }.map { it.first }
+        val ranges = rule.destinationPorts.filter { it.first != it.last }.map { it.toSingBoxRange() }
+        if (exactPorts.isNotEmpty()) put("port", JSONArray(exactPorts))
+        if (ranges.isNotEmpty()) put("port_range", JSONArray(ranges))
     }
 
     private fun compileDns(
@@ -296,7 +325,7 @@ internal class SingBoxRoutingConfigCompiler(
 
         val usablePolicyTags = linkedMapOf<String, String>()
         config.dnsPolicies.filter { it.enabled }.forEach { policy ->
-            if (policy.type != DnsPolicyType.Custom || policy.serverText.isNullOrBlank()) {
+            if (policy.type != DnsPolicyType.Custom || policy.orderedServers().isEmpty()) {
                 usablePolicyTags[policy.id] = systemTag
                 return@forEach
             }
@@ -313,15 +342,19 @@ internal class SingBoxRoutingConfigCompiler(
                 return@forEach
             }
 
-            val policyServer = parseDnsServer(policy, policyTag, detour, warnings)
-            if (policyServer == null) {
+            val policyServers = parseDnsServers(policy, policyTag, detour, warnings)
+            if (policyServers.isEmpty()) {
                 warnings += "DNS policy '${policy.name}' has no valid server and will reject matching DNS requests."
                 addDnsRejectRulesForPolicy(config, policy, rules)
                 return@forEach
             }
-            servers.put(policyServer)
-            usablePolicyTags[policy.id] = policyTag
-            addDnsRouteRulesForPolicy(config, policy, policyTag, rules)
+            policyServers.forEach { (_, server) -> servers.put(server) }
+            val primaryTag = policyServers.first().first
+            usablePolicyTags[policy.id] = primaryTag
+            addDnsRouteRulesForPolicy(config, policy, primaryTag, rules)
+            if (policyServers.size > 1) {
+                warnings += "DNS policy '${policy.name}' stores ${policyServers.size} servers in priority order; the first valid server is currently primary."
+            }
         }
 
         config.hostOverrides
@@ -358,29 +391,25 @@ internal class SingBoxRoutingConfigCompiler(
                 .put("rules", rules)
                 .put("final", defaultServerTag)
                 .put("strategy", "prefer_ipv4")
-                .put("independent_cache", true),
+                .put("cache_capacity", 4096)
+                .put("timeout", "10s"),
             defaultServerTag = defaultServerTag,
         )
     }
 
-    private fun parseDnsServer(
+    private fun parseDnsServers(
         policy: DnsPolicy,
         baseTag: String,
         detour: String?,
         warnings: MutableList<String>,
-    ): JSONObject? {
-        val rawServers = policy.serverText
-            .orEmpty()
-            .split(Regex("[,;\\s]+"))
-            .map(String::trim)
-            .filter(String::isNotBlank)
-        if (rawServers.size > 1) {
-            warnings += "DNS policy '${policy.name}' contains several servers; only the first server is used."
-        }
-        val raw = rawServers.firstOrNull() ?: return null
-        return runCatching { dnsServer(raw, baseTag, detour) }
-            .onFailure { warnings += "DNS server '$raw' in '${policy.name}' is invalid: ${it.message.orEmpty()}" }
+    ): List<Pair<String, JSONObject>> = policy.orderedServers().mapIndexedNotNull { index, configured ->
+        val tag = if (index == 0) baseTag else "${baseTag}_${index + 1}"
+        runCatching { dnsServer(configured.address, tag, detour) }
+            .onFailure {
+                warnings += "DNS server '${configured.address}' in '${policy.name}' is invalid: ${it.message.orEmpty()}"
+            }
             .getOrNull()
+            ?.let { tag to it }
     }
 
     private fun dnsServer(raw: String, tag: String, detour: String?): JSONObject {

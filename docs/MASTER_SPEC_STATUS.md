@@ -40,12 +40,12 @@ large, installable block.
 | Milestone | State | Current evidence |
 |---|---|---|
 | M0 truthful status and architecture | Implemented in `0.13.0-beta.2`; external protocol validation still required | seven-state catalog, `EngineAdapter`, live `EngineOrchestrator`, AES-GCM/Keystore secret migration, structured errors, physically verified System route |
-| M1 profiles and import | In progress | VLESS URI, OpenVPN file parser, SOCKS5 and advanced editors exist; QR/share/subscriptions/encrypted full export remain |
-| M2 sing-box protocols | In progress | one TUN and multiple outbounds compile; protocol-specific editors/importers and physical matrix remain |
+| M1 profiles and import | In progress in `0.14.0-beta.1` | unified preview/apply import accepts shared text/common proxy URIs including v2rayNG VLESS/XHTTP, OpenVPN text and sing-box JSON; secrets are masked and profiles are imported disabled; QR/subscriptions/encrypted full export remain |
+| M2 sing-box and Xray protocols | In progress | one sing-box TUN and multiple outbounds compile; VLESS/XHTTP is bridged through an app-private Xray-core process; protocol-specific physical matrix remains |
 | M3 strongSwan | Not started | no embedded strongSwan adapter or binary |
 | M4 legacy | Not started | warnings exist; L2TP/PPP/PPTP/SSTP engines do not |
 | M5 external adapters | Research | zapret2 feasibility is documented; ZeroTier/SoftEther/Tor/Brook are not integrated |
-| M6 routing and DNS | In progress | app/domain/CIDR/default/System/Block/custom DNS exist; extended matchers, groups, DNS failover and atomic reload remain |
+| M6 routing and DNS | In progress in `0.14.0-beta.1` | app/domain/IPv4/IPv6-CIDR/default/System/Block/custom DNS exist; TCP/UDP and destination-port constraints compile to runtime; ordered DNS server lists exist; groups, automatic DNS failover and atomic reload remain |
 | M7 Flow Scanner and diagnostics | In progress | real sing-box connection events and physical-network tests exist; full attribution matrix and routed diagnostics remain |
 | M8 audit and root tools | Not started | must remain manual, bounded and non-offensive |
 | M9 feature freeze | Blocked by M1–M8 | no freeze yet |

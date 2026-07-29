@@ -9,10 +9,11 @@ The Android app uses one `VpnService`. App, domain, IP and CIDR rules select a l
 | Component | Role | Upstream license | Exact build | Decision |
 | --- | --- | --- | --- | --- |
 | sing-box | TUN, routing, DNS, Direct/Block, OpenVPN, OpenConnect, VLESS, SOCKS5, VMess, Trojan, Shadowsocks, Hysteria v1/v2, Snell, TUIC, AnyTLS, HTTP(S), SSH, WireGuard and Tailscale/Headscale | GPL-3.0-or-later plus upstream condition prohibiting derivative branding or implied association | `v1.14.0-alpha.50`, commit `3fcfadd5ee45c460115243b55d48b438279aeacd`; `with_openvpn` and `with_openconnect`; 16 KiB-aligned `libbox.aar` SHA-256 `f3729b42c247c257adc2c7d03b1134ed7139b6f77da174f69f036d4fa4c7b685` | Bundled. Product name remains ViRouteFS. Preserve exact license, source pointer and reproducible build script. |
+| Xray-core | VLESS/XHTTP client behind localhost SOCKS endpoints; it does not own the Android TUN | MPL-2.0 | commit `94ffd50060f1cfd5d7482ec90a23a92bdefdff68`; Android arm64 PIE `libxray.so` SHA-256 `9bb0b815086395164066b5fa27b1797bf9a0fcc493d1491f02166560604dcaff`; 64 KiB ELF load alignment | Bundled as a separate app-private child process to avoid a second Gomobile runtime in the sing-box process. Upstream source is unmodified and reproducible with `tools/build-xray.ps1`. |
 | ByeDPI | Implements the user-facing **Совместимость TCP/TLS** app-private SOCKS5 route | MIT | commit `ba532298de7b28cfe854aea83d061369d13ca290`; 16 KiB-aligned `libbyedpi.so` SHA-256 `abae93da6e426da5bbe5611f53a550eccb021d7be88b2c13865461024c4862d1` | Bundled for arm64. Keep the upstream name in licenses and technical details. Never describe it as encryption, IP hiding, anonymity or a VPN. |
 | AndroidX, Jetpack Compose, Kotlin coroutines | Android application/runtime libraries | Primarily Apache-2.0 | Maven coordinates are pinned in `app/build.gradle.kts` | Bundled. Preserve dependency notices and metadata with distributed source. |
 
-The APK contains `GPL-3.0.txt`, the exact sing-box license notice and the ByeDPI MIT notice under `assets/licenses/`.
+The APK contains `GPL-3.0.txt`, the exact sing-box license notice, the Xray-core MPL-2.0 text and the ByeDPI MIT notice under `assets/licenses/`.
 
 ## Approved integration paths, not bundled
 
@@ -24,7 +25,7 @@ The APK contains `GPL-3.0.txt`, the exact sing-box license notice and the ByeDPI
 | Tor | Local Tor outbound | Requires a separately audited Android Tor executable and its license set | sing-box configuration support alone is not sufficient; disabled until the executable is bundled and tested. |
 | ZeroTier, SoftEther | Additional enterprise/mesh adapters | No binary selected | Planned or research only. |
 
-Xray-core and AndroidLibXrayLite are no longer bundled. They were removed to avoid two Go runtimes in one Android process and to keep one routing engine.
+AndroidLibXrayLite is not bundled. A second Gomobile AAR would conflict with sing-box's generated Go/Java bridge, so ViRouteFS ships the unmodified Xray-core command as a separate local process instead.
 
 ## Excluded or disabled
 
@@ -43,13 +44,15 @@ Every distributed APK must be accompanied by this repository revision or an equi
 
 1. ViRouteFS application source;
 2. `tools/build-libbox.ps1` and its exact sing-box commit;
-3. `tools/build-byedpi.ps1` and its exact ByeDPI commit;
-4. Gradle files, hashes and license notices;
-5. any local modifications needed to reproduce the native artifacts.
+3. `tools/build-xray.ps1` and its exact Xray-core commit;
+4. `tools/build-byedpi.ps1` and its exact ByeDPI commit;
+5. Gradle files, hashes and license notices;
+6. any local modifications needed to reproduce the native artifacts.
 
 Primary sources:
 
 - https://github.com/SagerNet/sing-box
+- https://github.com/XTLS/Xray-core
 - https://sing-box.sagernet.org/configuration/outbound/
 - https://sing-box.sagernet.org/configuration/endpoint/wireguard/
 - https://sing-box.sagernet.org/configuration/endpoint/tailscale/

@@ -27,7 +27,7 @@ internal object EngineCatalog {
         ),
 
         integrated(TunnelType.VLESS, "VLESS, включая TLS и REALITY.", EngineBackend.SingBox),
-        configured(TunnelType.XrayVlessReality, "Модель совместимого Xray/VLESS-профиля есть; полный импорт старых форматов ещё не завершён.", EngineBackend.SingBox),
+        integrated(TunnelType.XrayVlessReality, "Xray VLESS/XHTTP работает как локальный профиль за единым маршрутизатором.", EngineBackend.Xray),
         integrated(TunnelType.VMess, "VMess через общий маршрутизатор.", EngineBackend.SingBox),
         integrated(TunnelType.Trojan, "Trojan через общий маршрутизатор.", EngineBackend.SingBox),
         integrated(TunnelType.Shadowsocks, "Shadowsocks через общий маршрутизатор.", EngineBackend.SingBox),
@@ -148,6 +148,7 @@ internal data class ProtocolDescriptor(
 internal enum class EngineBackend(val label: String, val licenseDecision: String) {
     BuiltIn("ViRouteFS", "GPL-3.0-or-later"),
     SingBox("sing-box", "GPL-3.0-or-later"),
+    Xray("Xray-core", "MPL-2.0"),
     StrongSwan("strongSwan", "GPL-2.0-or-later"),
     ByeDpi("Движок совместимости ByeDPI", "MIT"),
     Zapret2("zapret2", "MIT; v1.0.3 audited, not bundled"),

@@ -38,17 +38,22 @@ fun validateRouteEditorDraft(candidate: RouteRule, rules: List<RouteRule>): List
             if (value.isBlank()) {
                 add("IP / CIDR matcher is required.")
             } else if (!isValidIpOrCidr(value)) {
-                add("Enter a valid IPv4 address or CIDR, for example 192.0.2.10 or 192.0.2.0/24.")
+                add("Enter a valid IPv4/IPv6 address or CIDR, for example 192.0.2.10, 192.0.2.0/24 or 2001:db8::/32.")
             }
         }
         RouteRuleType.DEFAULT -> Unit
+    }
+    candidate.destinationPorts.forEach { range ->
+        if (range.first !in 1..65535 || range.last !in range.first..65535) {
+            add("Destination port must be between 1 and 65535.")
+        }
     }
     findConflictsForCandidate(candidate, rules).forEach { add(it.message) }
 }
 
 fun isValidIpOrCidr(text: String): Boolean {
     val normalized = text.trim()
-    return isValidIpv4(normalized) || isValidCidr(normalized)
+    return isValidIpAddress(normalized) || isValidCidr(normalized)
 }
 
 fun isValidIpv4(text: String): Boolean {
@@ -68,26 +73,38 @@ fun normalizedMatcherKey(type: RouteRuleType, raw: String): String = when (type)
 
 private fun findDuplicateAppConflicts(rules: List<RouteRule>): List<RouteConflict> = rules
     .flatMap { rule ->
-        rule.appMatchers.map { matcher -> normalizedMatcherKey(RouteRuleType.APP, matcher.value) to rule }
+        rule.appMatchers.map { matcher -> rule.conditionedMatcherKey(RouteRuleType.APP, matcher.value) to rule }
     }
     .groupBy({ it.first }, { it.second })
     .toRouteConflicts(RouteRuleType.APP)
 
 private fun findDuplicateTextMatcherConflicts(rules: List<RouteRule>, type: RouteRuleType): List<RouteConflict> = rules
     .filter { it.type == type }
-    .flatMap { rule -> rule.matchers.map { matcher -> normalizedMatcherKey(type, matcher) to rule } }
+    .flatMap { rule -> rule.matchers.map { matcher -> rule.conditionedMatcherKey(type, matcher) to rule } }
     .groupBy({ it.first }, { it.second })
     .toRouteConflicts(type)
 
 private fun Map<String, List<RouteRule>>.toRouteConflicts(type: RouteRuleType): List<RouteConflict> = entries
     .mapNotNull { (matcher, matchedRules) ->
         val ruleIds = matchedRules.map { it.id }.distinct()
-        if (matcher.isBlank() || ruleIds.size < 2) return@mapNotNull null
+        val visibleMatcher = matcher.substringBefore(CONDITION_SEPARATOR)
+        if (visibleMatcher.isBlank() || ruleIds.size < 2) return@mapNotNull null
         val names = matchedRules.distinctBy { it.id }.joinToString { it.name }
         RouteConflict(
             matcherType = type,
-            matcher = matcher,
+            matcher = visibleMatcher,
             ruleIds = ruleIds,
-            message = "Duplicate ${type.name.lowercase(Locale.ROOT)} matcher '$matcher' is already used by: $names.",
+            message = "Duplicate ${type.name.lowercase(Locale.ROOT)} matcher '$visibleMatcher' with the same transport and ports is already used by: $names.",
         )
     }
+
+private fun RouteRule.conditionedMatcherKey(type: RouteRuleType, raw: String): String =
+    buildString {
+        append(normalizedMatcherKey(type, raw))
+        append(CONDITION_SEPARATOR)
+        append(transport.name)
+        append(CONDITION_SEPARATOR)
+        append(destinationPorts.toDisplayText())
+    }
+
+private const val CONDITION_SEPARATOR = "\u0000"

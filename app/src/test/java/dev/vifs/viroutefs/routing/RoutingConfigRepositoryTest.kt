@@ -7,6 +7,7 @@ import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.VlessSecurityMode
 import java.io.File
 import kotlinx.coroutines.test.runTest
+import org.json.JSONObject
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -15,6 +16,43 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class RoutingConfigRepositoryTest {
+    @Test
+    fun routeConstraintsAndDnsServersRoundTrip() {
+        val defaults = RoutingConfigDefaults.defaultConfig()
+        val constrainedRule = defaults.rules.first { it.type == RouteRuleType.DEFAULT }.copy(
+            transport = RouteTransport.Udp,
+            destinationPorts = listOf(
+                DestinationPortRange(53),
+                DestinationPortRange(8000, 8100),
+            ),
+        )
+        val dns = DnsPolicy(
+            id = "multi",
+            name = "Multi DNS",
+            type = DnsPolicyType.Custom,
+            description = "test",
+            servers = listOf(
+                DnsServerConfig("first", "tls://1.1.1.1", priority = 0),
+                DnsServerConfig("second", "https://dns.google/dns-query", priority = 1),
+            ),
+        )
+        val encoded = RoutingConfigJson.encode(
+            defaults.copy(
+                rules = defaults.rules.map {
+                    if (it.id == constrainedRule.id) constrainedRule else it
+                },
+                dnsPolicies = defaults.dnsPolicies + dns,
+            ),
+        )
+        val decoded = RoutingConfigJson.decode(encoded)
+        val decodedRule = decoded.rules.first { it.id == constrainedRule.id }
+        val decodedDns = decoded.dnsPolicies.first { it.id == dns.id }
+
+        assertEquals(RouteTransport.Udp, decodedRule.transport)
+        assertEquals(constrainedRule.destinationPorts, decodedRule.destinationPorts)
+        assertEquals(dns.servers, decodedDns.servers)
+    }
+
     @Test
     fun emergencyBlockRoundTripsAndOldConfigsDefaultToOff() {
         val enabledJson = RoutingConfigJson.encode(
@@ -153,8 +191,9 @@ class RoutingConfigRepositoryTest {
     }
 
     @Test
-    fun routingConfigJsonRedactsVlessUuidAndRepositoryRestoresIt() = runTest {
+    fun routingConfigJsonRedactsVlessSecretsAndRepositoryRestoresThem() = runTest {
         val uuid = "123e4567-e89b-12d3-a456-426614174000"
+        val xhttpExtra = """{"headers":{"X-Private":"never-write-plain"}}"""
         val tempDir = createTempDirectory("viroutefs-vless-secrets").toFile()
         try {
             val secretStore = InMemoryProfileSecretStore()
@@ -165,10 +204,58 @@ class RoutingConfigRepositoryTest {
             val loadedVless = repository.load().config.profiles.first { it.id == VLESS_ID }.vless
 
             assertFalse(json.contains(uuid))
+            assertFalse(json.contains("never-write-plain"))
             assertTrue(json.contains(REDACTED_SECRET))
             assertEquals(uuid, loadedVless?.uuid)
+            assertEquals(xhttpExtra, loadedVless?.xhttpExtra)
             assertFalse(loadedVless?.safeSummary().orEmpty().contains(uuid))
             assertEquals(uuid, secretStore.load()[VLESS_ID]?.vlessUuid)
+            assertEquals(xhttpExtra, secretStore.load()[VLESS_ID]?.vlessXhttpExtra)
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun openVpnPasswordAndPemMaterialsAreEncryptedAndRestored() = runTest {
+        val tempDir = createTempDirectory("viroutefs-openvpn-secrets").toFile()
+        val password = "openvpn-password"
+        val privateKey = "-----BEGIN PRIVATE KEY-----\nprivate-material\n-----END PRIVATE KEY-----"
+        try {
+            val root = JSONObject(singBoxProfileTemplate(TunnelType.OpenVpn)).apply {
+                put("username", "office-user")
+                put("password", password)
+                getJSONObject("tls")
+                    .put("certificate", "-----BEGIN CERTIFICATE-----\nca\n-----END CERTIFICATE-----")
+                    .put("client_certificate", "-----BEGIN CERTIFICATE-----\nclient\n-----END CERTIFICATE-----")
+                    .put("client_key", privateKey)
+            }
+            val defaults = RoutingConfigDefaults.defaultConfig()
+            val profile = TunnelProfile(
+                id = "openvpn-test",
+                name = "OpenVPN",
+                type = TunnelType.OpenVpn,
+                description = "test",
+                enabled = false,
+                mockOnly = false,
+                singBox = SingBoxProfileConfig(SingBoxProfileKind.Endpoint, root.toString()),
+            )
+            val secretStore = InMemoryProfileSecretStore()
+            val repository = RoutingConfigRepository(tempDir, secretStore)
+
+            repository.save(defaults.copy(profiles = defaults.profiles + profile))
+
+            val json = File(tempDir, RoutingConfigRepository.ROUTING_CONFIG_FILENAME).readText()
+            val restored = repository.load().config.profiles.first { it.id == profile.id }
+            assertFalse(json.contains(password))
+            assertFalse(json.contains("private-material"))
+            assertTrue(json.contains(REDACTED_SECRET))
+            assertEquals(password, JSONObject(restored.singBox!!.optionsJson).getString("password"))
+            assertEquals(
+                privateKey,
+                JSONObject(restored.singBox.optionsJson).getJSONObject("tls").getString("client_key"),
+            )
+            assertEquals(root.toString(), secretStore.load()[profile.id]?.singBoxOptionsJson)
         } finally {
             tempDir.deleteRecursively()
         }
@@ -203,14 +290,17 @@ class RoutingConfigRepositoryTest {
             host = "vless.example",
             port = 443,
             uuid = uuid,
+            transportType = "xhttp",
             securityMode = VlessSecurityMode.TLS,
+            xhttpMode = "packet-up",
+            xhttpExtra = """{"headers":{"X-Private":"never-write-plain"}}""",
         )
         val profile = TunnelProfile(
             id = VLESS_ID,
             name = vless.name,
-            type = TunnelType.VLESS,
+            type = TunnelType.XrayVlessReality,
             description = "VLESS config-only profile.",
-            mockOnly = true,
+            mockOnly = false,
             dnsPolicyId = RoutingConfigDefaults.SYSTEM_DNS_ID,
             vless = vless,
         )

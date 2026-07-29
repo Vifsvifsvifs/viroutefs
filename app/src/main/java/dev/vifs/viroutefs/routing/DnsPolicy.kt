@@ -4,6 +4,9 @@ fun DnsPolicy.humanSummary(): String = buildString {
     append(name)
     append(" • ")
     append(type.label)
-    serverText?.takeIf { it.isNotBlank() }?.let { append(" • $it") }
+    orderedServers().takeIf { it.isNotEmpty() }?.let { servers ->
+        append(" • ")
+        append(servers.joinToString(" → ") { it.address })
+    }
     resolveThroughProfileId?.let { append(" • через профиль $it") }
 }

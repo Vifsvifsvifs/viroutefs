@@ -2,7 +2,7 @@
 
 ViRouteFS imports and exports `vless://` profile URIs locally.
 
-Supported runtime fields include host, port, UUID, flow, TCP/WebSocket/gRPC transport, TLS, REALITY, SNI, uTLS fingerprint, REALITY public key/short id, WebSocket path/Host header, ALPN and gRPC service name.
+Supported runtime fields include host, port, UUID, flow, TCP/raw/WebSocket/gRPC/XHTTP transport, TLS, REALITY, SNI, uTLS fingerprint, REALITY public key/short id, path/Host header, ALPN, gRPC service name, XHTTP mode and XHTTP extra JSON.
 
 ## Safety
 
@@ -13,4 +13,7 @@ Supported runtime fields include host, port, UUID, flow, TCP/WebSocket/gRPC tran
 - Exported URIs contain connection secrets and must be shared carefully.
 - Manual reachability/protocol probes are separate explicit diagnostics.
 
-When network control is active, the saved profile is compiled into the sing-box TUN runtime and can be selected by app/domain/IP/CIDR rules.
+When network control is active, TCP/raw/WebSocket/gRPC profiles compile into
+the sing-box TUN runtime. XHTTP profiles compile into a pinned app-private
+Xray-core process, while sing-box remains the only TUN owner and sends only
+the selected app/domain/IP/CIDR flows to its localhost endpoint.

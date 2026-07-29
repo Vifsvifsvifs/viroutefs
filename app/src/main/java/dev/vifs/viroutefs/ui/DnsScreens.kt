@@ -37,7 +37,9 @@ import dev.vifs.viroutefs.routing.DNS_POLICY_LIMITATION
 import dev.vifs.viroutefs.routing.DnsHostOverride
 import dev.vifs.viroutefs.routing.DnsPolicy
 import dev.vifs.viroutefs.routing.DnsPolicyType
+import dev.vifs.viroutefs.routing.DnsServerConfig
 import dev.vifs.viroutefs.routing.RoutingConfig
+import dev.vifs.viroutefs.routing.orderedServers
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -175,7 +177,13 @@ private fun DnsPolicySummaryCard(text: UiText, policy: DnsPolicy, config: Routin
                     config.profiles.firstOrNull { it.id == id && (!it.mockOnly || it.singBox != null) }
                 }
                 Text("${text.targetProfile}: ${boundProfile?.name ?: text.none}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(policy.serverText?.takeIf { it.isNotBlank() } ?: text.noDns, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    policy.orderedServers()
+                        .joinToString(" → ") { it.address }
+                        .ifBlank { text.noDns },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             StatusChip(if (policy.enabled) text.on else text.off)
         }
@@ -192,7 +200,9 @@ private fun DnsPolicyDetailsScreen(
     onConfig: (RoutingConfig, String?) -> Unit,
 ) {
     var name by rememberSaveable(policy.id) { mutableStateOf(policy.name) }
-    var serverText by rememberSaveable(policy.id) { mutableStateOf(policy.serverText.orEmpty()) }
+    var serverText by rememberSaveable(policy.id) {
+        mutableStateOf(policy.orderedServers().joinToString("\n") { it.address })
+    }
     var description by rememberSaveable(policy.id) { mutableStateOf(policy.description) }
     var enabled by rememberSaveable(policy.id) { mutableStateOf(policy.enabled) }
     var resolveThroughProfileId by rememberSaveable(policy.id) {
@@ -216,9 +226,16 @@ private fun DnsPolicyDetailsScreen(
                 OutlinedTextField(name, { name = it }, label = { Text(text.name) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 Text(policy.type.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (policy.type == DnsPolicyType.Custom) {
-                    OutlinedTextField(serverText, { serverText = it }, label = { Text(text.dnsServer) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                    OutlinedTextField(
+                        serverText,
+                        { serverText = it },
+                        label = { Text("DNS-серверы по приоритету") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 3,
+                        maxLines = 7,
+                    )
                     Text(
-                        "Укажите один сервер: IP, udp://, tcp://, tls://, quic://, https:// или h3://. Например: tls://1.1.1.1.",
+                        "Первый адрес — основной. Каждый следующий указывайте с новой строки. Поддерживаются IP, udp://, tcp://, tls://, quic://, https:// и h3://.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -267,12 +284,14 @@ private fun DnsPolicyDetailsScreen(
                 Button(onClick = {
                     onConfig(
                         config.copy(dnsPolicies = run {
+                            val dnsServers = policy.mergeDnsServers(serverText)
                             val updated = policy.copy(
                                 name = name.ifBlank { policy.name },
-                                serverText = serverText.ifBlank { null },
+                                serverText = dnsServers.firstOrNull()?.address,
                                 resolveThroughProfileId = resolveThroughProfileId,
                                 description = description.ifBlank { policy.description },
                                 enabled = enabled,
+                                servers = dnsServers,
                             )
                             if (isNew) config.dnsPolicies + updated else config.dnsPolicies.map {
                                 if (it.id == policy.id) updated else it
@@ -286,6 +305,23 @@ private fun DnsPolicyDetailsScreen(
             }
         }
     }
+}
+
+private fun DnsPolicy.mergeDnsServers(value: String): List<DnsServerConfig> {
+    val existingIds = servers.associate { it.address.trim() to it.id }
+    return value
+        .split(Regex("[,;\\s]+"))
+        .map(String::trim)
+        .filter(String::isNotBlank)
+        .distinct()
+        .mapIndexed { index, address ->
+            DnsServerConfig(
+                id = existingIds[address] ?: "dns-server-${UUID.randomUUID()}",
+                address = address,
+                priority = index,
+                enabled = true,
+            )
+        }
 }
 
 @Composable

@@ -278,6 +278,10 @@ object RoutingConfigJson {
         put("hostHeader", hostHeader)
         put("alpn", alpn)
         put("serviceName", serviceName)
+        put("xhttpMode", xhttpMode)
+        if (includeSecrets && !xhttpExtra.isNullOrBlank()) {
+            put("xhttpExtra", xhttpExtra)
+        }
         put("enabled", enabled)
         put("status", status.toJson())
     }
@@ -299,6 +303,8 @@ object RoutingConfigJson {
         hostHeader = optNullableString("hostHeader"),
         alpn = optNullableString("alpn"),
         serviceName = optNullableString("serviceName"),
+        xhttpMode = optNullableString("xhttpMode"),
+        xhttpExtra = optNullableString("xhttpExtra"),
         enabled = optBoolean("enabled", true),
         status = optJSONObject("status")?.toVlessProfileStatus() ?: VlessProfileStatus.NotTested,
     )
@@ -347,6 +353,7 @@ object RoutingConfigJson {
         put("resolveThroughProfileId", resolveThroughProfileId)
         put("description", description)
         put("enabled", enabled)
+        put("servers", JSONArray(servers.map { it.toJson() }))
     }
 
     private fun JSONObject.toDnsPolicy(): DnsPolicy = DnsPolicy(
@@ -356,6 +363,21 @@ object RoutingConfigJson {
         serverText = optNullableString("serverText"),
         resolveThroughProfileId = optNullableString("resolveThroughProfileId"),
         description = optString("description"),
+        enabled = optBoolean("enabled", true),
+        servers = optJSONArray("servers")?.mapObjects { it.toDnsServerConfig() }.orEmpty(),
+    )
+
+    private fun DnsServerConfig.toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("address", address)
+        put("priority", priority)
+        put("enabled", enabled)
+    }
+
+    private fun JSONObject.toDnsServerConfig(): DnsServerConfig = DnsServerConfig(
+        id = getString("id"),
+        address = getString("address"),
+        priority = optInt("priority", 0),
         enabled = optBoolean("enabled", true),
     )
 
@@ -372,6 +394,8 @@ object RoutingConfigJson {
         put("reason", reason)
         put("technicalDetails", technicalDetails)
         put("recommendedAction", recommendedAction)
+        put("transport", transport.name)
+        put("destinationPorts", JSONArray(destinationPorts.map { it.toDisplayText() }))
     }
 
     private fun JSONObject.toRouteRule(): RouteRule = RouteRule(
@@ -387,6 +411,11 @@ object RoutingConfigJson {
         reason = optString("reason", "Пользовательское правило маршрутизации."),
         technicalDetails = optString("technicalDetails", "Правило загружено из локальной JSON-конфигурации."),
         recommendedAction = optString("recommendedAction", "Проверьте правило симулятором перед использованием будущего реального маршрута."),
+        transport = optEnum("transport", RouteTransport.Any),
+        destinationPorts = optJSONArray("destinationPorts")
+            ?.mapStrings()
+            ?.flatMap { parseDestinationPortRanges(it) }
+            .orEmpty(),
     )
 
     private fun AppMatcher.toJson(): JSONObject = JSONObject().apply {
@@ -443,6 +472,7 @@ private fun TunnelProfile.profileSecrets(): ProfileSecrets =
     ProfileSecrets(
         socks5Password = socks5?.password?.takeIf { it.isNotEmpty() && it != REDACTED_SECRET },
         vlessUuid = vless?.uuid?.takeIf { it.isNotEmpty() && it != REDACTED_SECRET },
+        vlessXhttpExtra = vless?.xhttpExtra?.takeIf { it.isNotEmpty() && it != REDACTED_SECRET },
         singBoxOptionsJson = singBox
             ?.optionsJson
             ?.takeIf { it.isNotEmpty() && REDACTED_SECRET !in it },
@@ -452,7 +482,10 @@ internal fun RoutingConfig.withoutProfileSecrets(): RoutingConfig = copy(
     profiles = profiles.map { profile ->
         profile.copy(
             socks5 = profile.socks5?.copy(password = null),
-            vless = profile.vless?.copy(uuid = REDACTED_SECRET),
+            vless = profile.vless?.copy(
+                uuid = REDACTED_SECRET,
+                xhttpExtra = null,
+            ),
             singBox = profile.singBox?.copy(
                 optionsJson = redactSensitiveJson(profile.singBox.optionsJson),
             ),
@@ -470,7 +503,10 @@ internal fun RoutingConfig.withProfileSecrets(
                 password = secrets?.socks5Password,
             ),
             vless = profile.vless?.let { vless ->
-                vless.copy(uuid = secrets?.vlessUuid ?: vless.uuid)
+                vless.copy(
+                    uuid = secrets?.vlessUuid ?: vless.uuid,
+                    xhttpExtra = secrets?.vlessXhttpExtra ?: vless.xhttpExtra,
+                )
             },
             singBox = profile.singBox?.let { singBox ->
                 singBox.copy(optionsJson = secrets?.singBoxOptionsJson ?: singBox.optionsJson)
@@ -523,10 +559,14 @@ private val SENSITIVE_JSON_KEYS = setOf(
     "passphrase",
     "private_key",
     "private-key",
+    "client_key",
+    "static_key",
+    "key",
     "preshared_key",
     "pre_shared_key",
     "psk",
     "uuid",
+    "id",
     "auth",
     "auth_str",
     "auth_key",

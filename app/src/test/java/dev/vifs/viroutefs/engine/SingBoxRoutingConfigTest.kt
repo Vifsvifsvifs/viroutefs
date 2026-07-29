@@ -5,9 +5,12 @@ package dev.vifs.viroutefs.engine
 import dev.vifs.viroutefs.routing.AppMatcher
 import dev.vifs.viroutefs.routing.AppMatcherPlatform
 import dev.vifs.viroutefs.routing.DnsPolicy
+import dev.vifs.viroutefs.routing.DnsServerConfig
 import dev.vifs.viroutefs.routing.DnsPolicyType
+import dev.vifs.viroutefs.routing.DestinationPortRange
 import dev.vifs.viroutefs.routing.RouteRule
 import dev.vifs.viroutefs.routing.RouteRuleType
+import dev.vifs.viroutefs.routing.RouteTransport
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.SingBoxProfileConfig
 import dev.vifs.viroutefs.routing.SingBoxProfileKind
@@ -24,6 +27,70 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SingBoxRoutingConfigTest {
+    @Test
+    fun routeConstraintsCompileToSingBoxNetworkPortsAndRanges() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val rule = RouteRule(
+            id = "api",
+            name = "API",
+            type = RouteRuleType.DOMAIN,
+            targetProfileId = RoutingConfigDefaults.BLOCK_PROFILE_ID,
+            priority = 5,
+            matchers = listOf("api.example"),
+            reason = "test",
+            technicalDetails = "test",
+            recommendedAction = "test",
+            destinationPorts = listOf(
+                DestinationPortRange(443),
+                DestinationPortRange(8000, 8100),
+            ),
+            transport = RouteTransport.Tcp,
+        )
+        val root = JSONObject(
+            SingBoxRoutingConfigCompiler().compile(
+                base.copy(rules = listOf(rule) + base.rules),
+            ).json,
+        )
+        val compiledRule = root.getJSONObject("route").getJSONArray("rules").let { rules ->
+            (0 until rules.length())
+                .map(rules::getJSONObject)
+                .first { it.optJSONArray("domain_suffix")?.optString(0) == "api.example" }
+        }
+
+        assertEquals("tcp", compiledRule.getString("network"))
+        assertEquals(443, compiledRule.getJSONArray("port").getInt(0))
+        assertEquals("8000:8100", compiledRule.getJSONArray("port_range").getString(0))
+    }
+
+    @Test
+    fun customDnsServersCompileInPriorityOrderWithoutDeprecatedCacheFlag() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val policy = DnsPolicy(
+            id = "multi-dns",
+            name = "Multi DNS",
+            type = DnsPolicyType.Custom,
+            description = "test",
+            servers = listOf(
+                DnsServerConfig("second", "https://dns.google/dns-query", priority = 20),
+                DnsServerConfig("first", "tls://1.1.1.1", priority = 10),
+            ),
+        )
+        val compiled = SingBoxRoutingConfigCompiler().compile(
+            base.copy(dnsPolicies = base.dnsPolicies + policy),
+        )
+        val dns = JSONObject(compiled.json).getJSONObject("dns")
+        val servers = dns.getJSONArray("servers")
+        val custom = (0 until servers.length())
+            .map(servers::getJSONObject)
+            .filter { it.optString("type") in setOf("tls", "https") }
+
+        assertEquals(listOf("tls", "https"), custom.map { it.getString("type") })
+        assertEquals(4096, dns.getInt("cache_capacity"))
+        assertEquals("10s", dns.getString("timeout"))
+        assertFalse(dns.has("independent_cache"))
+        assertTrue(compiled.warnings.any { it.contains("priority order") })
+    }
+
     @Test
     fun freshConfigurationUsesPhoneInternetAsTheFinalRoute() {
         val compiled = SingBoxRoutingConfigCompiler().compile(
@@ -273,5 +340,87 @@ class SingBoxRoutingConfigTest {
             JSONObject(compiled.json).getJSONObject("route").getString("final"),
         )
         assertTrue(compiled.warnings.any { it.contains("TCP/TLS compatibility") && it.contains("fail closed") })
+    }
+
+    @Test
+    fun xrayProfileUsesOnlyItsReadyAppPrivateEndpoint() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val xray = TunnelProfile(
+            id = "xhttp",
+            name = "XHTTP",
+            type = TunnelType.XrayVlessReality,
+            description = "Xray route",
+            enabled = true,
+            mockOnly = false,
+            vless = VlessProfileConfig(
+                name = "XHTTP",
+                host = "edge.example",
+                port = 443,
+                uuid = "123e4567-e89b-12d3-a456-426614174000",
+                transportType = "xhttp",
+                securityMode = VlessSecurityMode.TLS,
+                sni = "front.example",
+            ),
+        )
+        val config = base.copy(
+            profiles = base.profiles + xray,
+            defaultProfileId = xray.id,
+            rules = base.rules.map {
+                if (it.type == RouteRuleType.DEFAULT) it.copy(targetProfileId = xray.id) else it
+            },
+        )
+        val compiled = SingBoxRoutingConfigCompiler(
+            xrayEndpoints = mapOf(xray.id to LocalEngineEndpoint("127.0.0.1", 23080)),
+        ).compile(config)
+        val root = JSONObject(compiled.json)
+        val tag = compiled.profileTags.getValue(xray.id)
+        val outbound = root.getJSONArray("outbounds").let { outbounds ->
+            (0 until outbounds.length())
+                .map(outbounds::getJSONObject)
+                .first { it.optString("tag") == tag }
+        }
+
+        assertEquals("socks", outbound.getString("type"))
+        assertEquals("127.0.0.1", outbound.getString("server"))
+        assertEquals(23080, outbound.getInt("server_port"))
+        assertEquals(tag, root.getJSONObject("route").getString("final"))
+        assertFalse(compiled.json.contains("123e4567-e89b"))
+        assertFalse(compiled.json.contains("edge.example"))
+    }
+
+    @Test
+    fun missingXrayProcessFailsClosed() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val xray = TunnelProfile(
+            id = "xhttp-missing",
+            name = "XHTTP",
+            type = TunnelType.XrayVlessReality,
+            description = "Xray route",
+            enabled = true,
+            mockOnly = false,
+            vless = VlessProfileConfig(
+                name = "XHTTP",
+                host = "edge.example",
+                port = 443,
+                uuid = "123e4567-e89b-12d3-a456-426614174000",
+                transportType = "xhttp",
+                securityMode = VlessSecurityMode.TLS,
+            ),
+        )
+        val config = base.copy(
+            profiles = base.profiles + xray,
+            defaultProfileId = xray.id,
+            rules = base.rules.map {
+                if (it.type == RouteRuleType.DEFAULT) it.copy(targetProfileId = xray.id) else it
+            },
+        )
+
+        val compiled = SingBoxRoutingConfigCompiler().compile(config)
+
+        assertEquals(
+            SING_BOX_BLOCK_TAG,
+            JSONObject(compiled.json).getJSONObject("route").getString("final"),
+        )
+        assertTrue(compiled.warnings.any { it.contains("Xray") && it.contains("fail closed") })
     }
 }
