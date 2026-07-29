@@ -28,24 +28,30 @@ object RoutingConfigDefaults {
     fun safeDefaultConfig(): RoutingConfig = defaultConfig()
 
     private fun defaultProfiles(): List<TunnelProfile> = listOf(
-        TunnelProfile(
-            id = SYSTEM_PROFILE_ID,
-            name = "System / Система",
-            type = TunnelType.Direct,
-            description = "Default Android/system network path, controlled by ViRouteFS when network control is active.",
-            mockOnly = false,
-            platformNotes = "Built-in internal default route. Legacy id/type may still say direct for compatibility; this is not a bypass.",
-            dnsPolicyId = SYSTEM_DNS_ID,
-        ),
-        TunnelProfile(
-            id = BLOCK_PROFILE_ID,
-            name = "Block",
-            type = TunnelType.Block,
-            description = "Traffic matching this profile must fail closed.",
-            mockOnly = false,
-            dnsPolicyId = SYSTEM_DNS_ID,
-        ),
+        systemProfile(),
+        blockProfile(),
         byeDpiProfile(),
+    )
+
+    private fun systemProfile(dnsPolicyId: String? = SYSTEM_DNS_ID): TunnelProfile = TunnelProfile(
+        id = SYSTEM_PROFILE_ID,
+        name = "System / Система",
+        type = TunnelType.Direct,
+        description = "Default Android/system network path, controlled by ViRouteFS when network control is active.",
+        enabled = true,
+        mockOnly = false,
+        platformNotes = "Built-in internal default route. Legacy id/type may still say direct for compatibility; this is not a bypass.",
+        dnsPolicyId = dnsPolicyId,
+    )
+
+    private fun blockProfile(dnsPolicyId: String? = SYSTEM_DNS_ID): TunnelProfile = TunnelProfile(
+        id = BLOCK_PROFILE_ID,
+        name = "Block",
+        type = TunnelType.Block,
+        description = "Traffic matching this profile must fail closed.",
+        enabled = true,
+        mockOnly = false,
+        dnsPolicyId = dnsPolicyId,
     )
 
     fun byeDpiProfile(enabled: Boolean = false): TunnelProfile = TunnelProfile(
@@ -61,12 +67,17 @@ object RoutingConfigDefaults {
 
     fun ensureRequiredProfiles(config: RoutingConfig): RoutingConfig {
         val normalizedProfiles = config.profiles.map { profile ->
-            if (profile.id == BYEDPI_PROFILE_ID) {
-                byeDpiProfile(enabled = profile.enabled).copy(
+            when (profile.id) {
+                SYSTEM_PROFILE_ID -> systemProfile(
                     dnsPolicyId = profile.dnsPolicyId ?: SYSTEM_DNS_ID,
                 )
-            } else {
-                profile
+                BLOCK_PROFILE_ID -> blockProfile(
+                    dnsPolicyId = profile.dnsPolicyId ?: SYSTEM_DNS_ID,
+                )
+                BYEDPI_PROFILE_ID -> byeDpiProfile(enabled = profile.enabled).copy(
+                    dnsPolicyId = profile.dnsPolicyId ?: SYSTEM_DNS_ID,
+                )
+                else -> profile
             }
         }
         val existingIds = normalizedProfiles.mapTo(mutableSetOf()) { it.id }

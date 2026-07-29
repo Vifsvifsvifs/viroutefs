@@ -76,7 +76,11 @@ internal class EngineOrchestrator(
             if (adapter == null && profile.type !in setOf(TunnelType.Direct, TunnelType.Block)) {
                 blockedProfileIds += profile.id
                 warnings += "Для профиля «${profile.name}» нет EngineAdapter; связанные маршруты будут заблокированы."
-            } else {
+            } else if (profile.type !in setOf(TunnelType.Direct, TunnelType.Block)) {
+                // System and Block are built-in routing targets, not external
+                // connection profiles. Sending a migrated built-in profile to
+                // protocol validation can incorrectly prevent the VPN router
+                // from starting when no VPN profile is configured.
                 adapter?.validateProfile(profile)?.let(compileErrors::addAll)
             }
         }
