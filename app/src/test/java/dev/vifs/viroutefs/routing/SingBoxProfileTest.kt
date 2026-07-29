@@ -23,18 +23,53 @@ class SingBoxProfileTest {
     }
 
     @Test
-    fun openVpnAndOpenConnectTemplatesAreValidNonSystemEndpoints() {
-        listOf(TunnelType.OpenVpn, TunnelType.OpenConnectAnyConnect).forEach { type ->
-            val config = SingBoxProfileConfig(
-                kind = SingBoxProfileKind.Endpoint,
-                optionsJson = singBoxProfileTemplate(type),
-            )
+    fun openConnectTemplateIsAValidNonSystemEndpoint() {
+        val config = SingBoxProfileConfig(
+            kind = SingBoxProfileKind.Endpoint,
+            optionsJson = singBoxProfileTemplate(TunnelType.OpenConnectAnyConnect),
+        )
 
-            assertTrue(validateSingBoxProfile(type, config).isEmpty(), type.name)
-            val normalized = normalizedSingBoxProfileObject(type, config, "profile_${type.name}")
-            assertEquals("profile_${type.name}", normalized.getString("tag"))
-            assertFalse(normalized.getBoolean("system"))
+        assertTrue(validateSingBoxProfile(TunnelType.OpenConnectAnyConnect, config).isEmpty())
+        val normalized = normalizedSingBoxProfileObject(
+            TunnelType.OpenConnectAnyConnect,
+            config,
+            "profile_openconnect",
+        )
+        assertEquals("profile_openconnect", normalized.getString("tag"))
+        assertFalse(normalized.getBoolean("system"))
+    }
+
+    @Test
+    fun openVpnRequiresTrustAndClientCertificateKeyPair() {
+        val incomplete = SingBoxProfileConfig(
+            kind = SingBoxProfileKind.Endpoint,
+            optionsJson = singBoxProfileTemplate(TunnelType.OpenVpn),
+        )
+        val withTrust = JSONObject(incomplete.optionsJson).apply {
+            getJSONObject("tls").put("certificate", TEST_CERTIFICATE)
         }
+        val certificateOnly = JSONObject(withTrust.toString()).apply {
+            getJSONObject("tls").put("client_certificate", TEST_CERTIFICATE)
+        }
+        val complete = JSONObject(certificateOnly.toString()).apply {
+            getJSONObject("tls").put("client_key", TEST_PRIVATE_KEY)
+        }
+
+        assertTrue(
+            validateSingBoxProfile(TunnelType.OpenVpn, incomplete).any { it.contains("CA-сертификат") },
+        )
+        assertTrue(
+            validateSingBoxProfile(
+                TunnelType.OpenVpn,
+                SingBoxProfileConfig(SingBoxProfileKind.Endpoint, certificateOnly.toString()),
+            ).any { it.contains("вместе") },
+        )
+        assertTrue(
+            validateSingBoxProfile(
+                TunnelType.OpenVpn,
+                SingBoxProfileConfig(SingBoxProfileKind.Endpoint, complete.toString()),
+            ).isEmpty(),
+        )
     }
 
     @Test
@@ -95,5 +130,12 @@ class SingBoxProfileTest {
             JSONObject(actual.singBox?.optionsJson.orEmpty()).getString("type"),
         )
         assertTrue(validateRoutingConfig(decoded).isEmpty())
+    }
+
+    companion object {
+        private const val TEST_CERTIFICATE =
+            "-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----"
+        private const val TEST_PRIVATE_KEY =
+            "-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----"
     }
 }

@@ -206,7 +206,7 @@ internal class EngineOrchestratorException(
     val engineError: EngineError,
 ) : IllegalStateException(engineError.summary, engineError.cause)
 
-private fun RoutingConfig.routedProfileIds(): Set<String> = buildSet {
+internal fun RoutingConfig.routedProfileIds(): Set<String> = buildSet {
     add(defaultProfileId ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID)
     rules.filter { it.enabled }.forEach { rule ->
         add(rule.targetProfileId)

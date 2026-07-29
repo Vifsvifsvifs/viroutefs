@@ -87,7 +87,8 @@ class VlessTcpReachabilityTest {
         ).joinToString(" ")
 
         assertTrue(combined.contains("VLESS handshake", ignoreCase = true))
-        assertTrue(combined.contains("forwarding is available", ignoreCase = true))
+        assertTrue(combined.contains("sing-box", ignoreCase = true))
+        assertTrue(combined.contains("Xray-core", ignoreCase = true))
         assertTrue(combined.contains("routed separately", ignoreCase = true))
         assertTrue(combined.contains("UUID", ignoreCase = true))
     }

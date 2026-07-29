@@ -26,16 +26,19 @@ internal const val REDACTED_SECRET = "<redacted>"
 internal data class ProfileSecrets(
     val socks5Password: String? = null,
     val vlessUuid: String? = null,
+    val vlessXhttpExtra: String? = null,
     val singBoxOptionsJson: String? = null,
 ) {
     val isEmpty: Boolean
         get() = socks5Password.isNullOrEmpty() &&
             vlessUuid.isNullOrEmpty() &&
+            vlessXhttpExtra.isNullOrEmpty() &&
             singBoxOptionsJson.isNullOrEmpty()
 
     fun merge(newer: ProfileSecrets): ProfileSecrets = ProfileSecrets(
         socks5Password = newer.socks5Password ?: socks5Password,
         vlessUuid = newer.vlessUuid ?: vlessUuid,
+        vlessXhttpExtra = newer.vlessXhttpExtra ?: vlessXhttpExtra,
         singBoxOptionsJson = newer.singBoxOptionsJson ?: singBoxOptionsJson,
     )
 }
@@ -167,6 +170,9 @@ private object ProfileSecretsJson {
                         secrets.vlessUuid?.takeIf(String::isNotEmpty)?.let {
                             put("vlessUuid", it)
                         }
+                        secrets.vlessXhttpExtra?.takeIf(String::isNotEmpty)?.let {
+                            put("vlessXhttpExtra", it)
+                        }
                         secrets.singBoxOptionsJson?.takeIf(String::isNotEmpty)?.let {
                             put("singBoxOptionsJson", it)
                         }
@@ -188,6 +194,7 @@ private object ProfileSecretsJson {
             ProfileSecrets(
                 socks5Password = value.optSecret("socks5Password"),
                 vlessUuid = value.optSecret("vlessUuid"),
+                vlessXhttpExtra = value.optSecret("vlessXhttpExtra"),
                 singBoxOptionsJson = value.optSecret("singBoxOptionsJson"),
             )
         }

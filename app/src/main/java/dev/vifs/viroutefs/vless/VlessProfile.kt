@@ -9,12 +9,12 @@ import java.nio.charset.StandardCharsets
 import java.util.UUID
 
 const val VLESS_RUNTIME_LIMITATION =
-    "VLESS/TLS/REALITY forwarding is available through the local sing-box TUN runtime when network control is active."
+    "VLESS TCP/WS/gRPC работает через единый sing-box TUN; VLESS/XHTTP — через локальный Xray-core за тем же TUN. Маршрутизация начинается только после включения контроля сети."
 const val VLESS_ROUTE_PREVIEW_ONLY =
     "Manual reachability tests remain diagnostic only; the router uses the saved profile and fail-closed policy."
 const val VLESS_NO_HANDSHAKE_NOTICE = "Manual TCP reachability does not perform a VLESS handshake and does not send credentials or UUID."
 
-private val supportedTransportTypes = setOf("tcp", "ws", "grpc")
+private val supportedTransportTypes = setOf("tcp", "raw", "ws", "grpc", "xhttp")
 private val supportedSecurityValues = VlessSecurityMode.entries.map { it.wireName }.toSet()
 
 data class VlessProfileConfig(
@@ -34,6 +34,8 @@ data class VlessProfileConfig(
     val hostHeader: String? = null,
     val alpn: String? = null,
     val serviceName: String? = null,
+    val xhttpMode: String? = null,
+    val xhttpExtra: String? = null,
     val enabled: Boolean = true,
     val status: VlessProfileStatus = VlessProfileStatus.NotTested,
 ) {
@@ -75,10 +77,12 @@ data class VlessProfileConfig(
         if (!fingerprint.isNullOrBlank()) appendLine("Fingerprint: ${fingerprint}")
         if (!publicKey.isNullOrBlank()) appendLine("Public key: provided")
         if (!shortId.isNullOrBlank()) appendLine("Short ID: provided")
-        if (!path.isNullOrBlank()) appendLine("Path: ${path}")
-        if (!hostHeader.isNullOrBlank()) appendLine("Host header: ${hostHeader}")
+        if (!path.isNullOrBlank()) appendLine("Path: provided")
+        if (!hostHeader.isNullOrBlank()) appendLine("Host header: provided")
         if (!alpn.isNullOrBlank()) appendLine("ALPN: ${alpn}")
         if (!serviceName.isNullOrBlank()) appendLine("gRPC service name: ${serviceName}")
+        if (!xhttpMode.isNullOrBlank()) appendLine("XHTTP mode: ${xhttpMode}")
+        if (!xhttpExtra.isNullOrBlank()) appendLine("XHTTP extra options: provided")
         append(VLESS_ROUTE_PREVIEW_ONLY)
     }
 }
@@ -149,7 +153,7 @@ fun parseVlessUri(rawUri: String): VlessUriParseResult {
         if (!uuid.isValidUuid()) add("VLESS UUID must be a valid UUID.")
         if (host.isBlank()) add("VLESS URI must include a host after @.")
         if (port !in 1..65535) add("VLESS port must be in range 1..65535.")
-        if (type != null && type !in supportedTransportTypes) add("Unsupported VLESS transport type '$type'. Supported placeholders: tcp, ws, grpc.")
+        if (type != null && type !in supportedTransportTypes) add("Unsupported VLESS transport type '$type'. Supported transports: tcp/raw, ws, grpc, xhttp.")
         if (security !in supportedSecurityValues) add("Unsupported VLESS security '$security'. Supported values: none, tls, reality.")
     }
     if (errors.isNotEmpty()) return VlessUriParseResult.Error(errors)
@@ -171,6 +175,8 @@ fun parseVlessUri(rawUri: String): VlessUriParseResult {
         hostHeader = params["host"]?.trimToNull(),
         alpn = params["alpn"]?.trimToNull(),
         serviceName = params["servicename"]?.trimToNull(),
+        xhttpMode = params["mode"]?.trimToNull(),
+        xhttpExtra = params["extra"]?.trimToNull(),
         status = VlessProfileStatus.ConfigReady,
     )
     val validationErrors = validateVlessProfile(profile)
@@ -193,6 +199,10 @@ fun exportVlessUri(profile: VlessProfileConfig): String {
         profile.hostHeader?.trimToNull()?.let { add("host" to it) }
         profile.alpn?.trimToNull()?.let { add("alpn" to it) }
         profile.serviceName?.trimToNull()?.let { add("serviceName" to it) }
+        if (profile.transportType.equals("xhttp", ignoreCase = true)) {
+            profile.xhttpMode?.trimToNull()?.let { add("mode" to it) }
+            profile.xhttpExtra?.trimToNull()?.let { add("extra" to it) }
+        }
     }.joinToString("&") { (key, value) -> "${key.percentEncode()}=${value.percentEncode()}" }
     val fragment = profile.name.trimToNull()?.percentEncode()?.let { "#$it" }.orEmpty()
     return buildString {
@@ -212,7 +222,9 @@ fun validateVlessProfile(candidate: VlessProfileConfig): List<String> = buildLis
     addAll(validateVlessTcpReachabilityTarget(candidate.host, candidate.port))
     if (!candidate.uuid.isValidUuid()) add("VLESS UUID must be a valid UUID.")
     candidate.transportType?.trimToNull()?.let {
-        if (it.lowercase() !in supportedTransportTypes) add("VLESS transport type must be tcp, ws, or grpc when provided.")
+        if (it.lowercase() !in supportedTransportTypes) {
+            add("VLESS transport type must be tcp/raw, ws, grpc, or xhttp when provided.")
+        }
     }
 }
 

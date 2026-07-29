@@ -8,7 +8,7 @@ A DNS policy contains:
 
 - local id and user-visible name;
 - enabled state;
-- one upstream server;
+- an ordered list of upstream servers;
 - optional `resolveThroughProfileId`;
 - local description.
 
@@ -26,6 +26,11 @@ Domain and Android package rules are compiled into sing-box DNS rules. Package m
 - DNS assigned to `Block` rejects matching queries.
 - ViRouteFS does not silently substitute `1.1.1.1`, `8.8.8.8` or Android system DNS.
 - A disabled or invalid policy is not presented as an active custom DNS path.
+
+The first valid server in a policy is the current primary. Additional servers
+are stored and compiled in the chosen order, but automatic failover is not yet
+claimed as complete because the current runtime configuration has no verified
+health-based server switch.
 
 ## System DNS
 

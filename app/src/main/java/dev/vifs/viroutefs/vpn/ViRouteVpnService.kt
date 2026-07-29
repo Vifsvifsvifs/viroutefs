@@ -213,6 +213,7 @@ class ViRouteVpnService : VpnService() {
         }
 
         val compatibilityAdapter = ByeDpiEngineAdapter(applicationContext)
+        val xrayAdapter = XrayEngineAdapter(applicationContext)
         val singBoxAdapter = SingBoxEngineAdapter(
             service = this,
             onTunEstablished = { descriptor ->
@@ -229,7 +230,7 @@ class ViRouteVpnService : VpnService() {
             },
         )
         val orchestrator = EngineOrchestrator(
-            listOf(compatibilityAdapter, singBoxAdapter),
+            listOf(compatibilityAdapter, xrayAdapter, singBoxAdapter),
         )
         engineOrchestrator = orchestrator
         singBoxEngineAdapter = singBoxAdapter

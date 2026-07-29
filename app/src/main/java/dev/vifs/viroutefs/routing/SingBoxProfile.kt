@@ -92,6 +92,26 @@ fun validateSingBoxProfile(type: TunnelType, config: SingBoxProfileConfig): List
             if (!hasSingleServer && !hasServers) {
                 add("Укажите server и server_port либо непустой массив servers.")
             }
+            if (root.optString("mode", "tls") == "tls") {
+                val tls = root.optJSONObject("tls")
+                if (tls == null) {
+                    add("Для OpenVPN TLS нужен объект tls с CA-сертификатом или fingerprint сервера.")
+                } else {
+                    val hasTrust = tls.hasNonEmptyValue("certificate") ||
+                        tls.optString("certificate_path").isNotBlank() ||
+                        tls.hasNonEmptyValue("peer_fingerprint")
+                    if (!hasTrust) {
+                        add("Для OpenVPN выберите CA-сертификат или задайте проверенный peer_fingerprint.")
+                    }
+                    val hasClientCertificate = tls.hasNonEmptyValue("client_certificate") ||
+                        tls.optString("client_certificate_path").isNotBlank()
+                    val hasClientKey = tls.hasNonEmptyValue("client_key") ||
+                        tls.optString("client_key_path").isNotBlank()
+                    if (hasClientCertificate != hasClientKey) {
+                        add("Клиентский сертификат OpenVPN и его закрытый ключ нужно указать вместе.")
+                    }
+                }
+            }
         }
         "openconnect" -> requireFields(root, listOf("server"), this)
         "tailscale" -> {
@@ -139,7 +159,7 @@ fun singBoxProfileTemplate(type: TunnelType): String = when (type) {
     TunnelType.SshTunnel -> """{"type":"ssh","server":"ssh.example.com","server_port":22,"user":"replace-me","password":"replace-me"}"""
     TunnelType.Tor -> """{"type":"tor"}"""
     TunnelType.WireGuard -> """{"type":"wireguard","address":["10.0.0.2/32"],"private_key":"replace-me","peers":[{"address":"vpn.example.com","port":51820,"public_key":"replace-me","allowed_ips":["0.0.0.0/0","::/0"]}]}"""
-    TunnelType.OpenVpn -> """{"type":"openvpn-client","mode":"tls","server":"vpn.example.com","server_port":1194,"network":"udp","username":"replace-me","password":"replace-me","tls":{"server_name":"vpn.example.com","certificate":["-----BEGIN CERTIFICATE-----","replace-with-ca-lines","-----END CERTIFICATE-----"]},"data_ciphers":["AES-256-GCM","AES-128-GCM"],"auth":"SHA256"}"""
+    TunnelType.OpenVpn -> """{"type":"openvpn-client","mode":"tls","server":"vpn.example.com","server_port":1194,"network":"udp","tls":{"server_name":"vpn.example.com"},"data_ciphers":["AES-256-GCM","AES-128-GCM"],"auth":"SHA256"}"""
     TunnelType.OpenConnectAnyConnect -> """{"type":"openconnect","server":"vpn.example.com","flavor":"anyconnect","username":"replace-me","password":"replace-me","tls":{"server_name":"vpn.example.com"}}"""
     TunnelType.TailscaleCompatible -> """{"type":"tailscale","state_directory":"tailscale","auth_key":"replace-me","hostname":"viroutefs","accept_routes":true}"""
     TunnelType.HeadscaleCompatible -> """{"type":"tailscale","state_directory":"headscale","auth_key":"replace-me","control_url":"https://headscale.example.com","hostname":"viroutefs","accept_routes":true}"""
@@ -166,3 +186,10 @@ private fun requireFields(
 
 private fun JSONObject.hasArrayOrObject(name: String): Boolean =
     optJSONArray(name) != null || optJSONObject(name) != null
+
+private fun JSONObject.hasNonEmptyValue(name: String): Boolean =
+    when (val value = opt(name)) {
+        is org.json.JSONArray -> value.length() > 0
+        is String -> value.isNotBlank()
+        else -> value != null && value != JSONObject.NULL
+    }

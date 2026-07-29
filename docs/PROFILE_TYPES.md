@@ -11,6 +11,7 @@ The UI uses one catalog so a protocol name is never confused with working runtim
 | OpenVPN client | sing-box 1.14 alpha endpoint |
 | OpenConnect / AnyConnect family | sing-box 1.14 alpha endpoint |
 | VLESS, TLS, REALITY | sing-box |
+| VLESS/XHTTP | Pinned MPL-2.0 Xray-core child process behind the same sing-box TUN |
 | SOCKS5 | sing-box |
 | VMess, Trojan | sing-box advanced profile |
 | Shadowsocks, Shadowsocks 2022 | sing-box advanced profile |
@@ -19,7 +20,7 @@ The UI uses one catalog so a protocol name is never confused with working runtim
 | WireGuard | sing-box endpoint |
 | Tailscale/Headscale-compatible | sing-box endpoint |
 
-Advanced profiles require a JSON fragment because these protocols have different option sets. ViRouteFS overwrites the internal tag, rejects full sing-box configurations and runs native config validation before saving.
+Advanced sing-box profiles require a JSON fragment because these protocols have different option sets. ViRouteFS overwrites the internal tag, rejects unsafe global settings and runs native config validation before saving. VLESS/XHTTP uses the structured VLESS editor/importer and is validated again when the app-private Xray-core process starts.
 
 ## Planned, not selectable as working
 

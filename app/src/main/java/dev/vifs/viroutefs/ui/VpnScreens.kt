@@ -2,6 +2,8 @@
 
 package dev.vifs.viroutefs.ui
 
+import android.content.Context
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.graphicsLayer
@@ -49,6 +51,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -81,12 +84,16 @@ import dev.vifs.viroutefs.engine.ReleaseReadinessReport
 import dev.vifs.viroutefs.engine.evaluateReleaseReadiness
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
+import dev.vifs.viroutefs.routing.ImportDuplicateResolution
+import dev.vifs.viroutefs.routing.ProfileImportPreview
 import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.SingBoxProfileConfig
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.importOpenVpnProfile
+import dev.vifs.viroutefs.routing.applyProfileImport
 import dev.vifs.viroutefs.routing.defaultRouteActivationError
+import dev.vifs.viroutefs.routing.previewProfileImport
 import dev.vifs.viroutefs.routing.singBoxProfileTemplate
 import dev.vifs.viroutefs.routing.singBoxProtocolSchema
 import dev.vifs.viroutefs.routing.validateSingBoxProfile
@@ -140,9 +147,11 @@ import dev.vifs.viroutefs.vpn.VpnServiceUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.text.DateFormat
 import java.util.Date
 import java.util.UUID
+import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -153,6 +162,8 @@ internal fun VpnScreen(
     vpnState: VpnServiceUiState,
     developerMode: Boolean,
     @Suppress("UNUSED_PARAMETER") tunTestRoutePreviewEnabled: Boolean,
+    initialImportSource: String?,
+    onProfileImportConsumed: () -> Unit,
     onVpnSwitch: (Boolean) -> Unit,
     @Suppress("UNUSED_PARAMETER") onTunTestRoutePreview: (Boolean) -> Unit,
     @Suppress("UNUSED_PARAMETER") onClearPacketList: () -> Unit,
@@ -163,6 +174,14 @@ internal fun VpnScreen(
     var addSocks5 by rememberSaveable { mutableStateOf(false) }
     var addVless by rememberSaveable { mutableStateOf(false) }
     var addSingBoxTypeName by rememberSaveable { mutableStateOf<String?>(null) }
+    var showProfileImport by rememberSaveable { mutableStateOf(!initialImportSource.isNullOrBlank()) }
+    var profileImportSource by rememberSaveable { mutableStateOf(initialImportSource.orEmpty()) }
+    LaunchedEffect(initialImportSource) {
+        if (!initialImportSource.isNullOrBlank()) {
+            profileImportSource = initialImportSource
+            showProfileImport = true
+        }
+    }
     val addSingBoxType = addSingBoxTypeName?.let { name ->
         TunnelType.entries.firstOrNull { it.name == name }
     }
@@ -193,6 +212,26 @@ internal fun VpnScreen(
     }
     var devBridgeSnapshot by remember { mutableStateOf(devTcpBridge.snapshot()) }
     var devBridgeMessage by rememberSaveable { mutableStateOf<String?>(null) }
+
+    if (showProfileImport) {
+        ProfileImportScreen(
+            padding = padding,
+            config = config,
+            initialSource = profileImportSource,
+            onBack = {
+                showProfileImport = false
+                profileImportSource = ""
+                onProfileImportConsumed()
+            },
+            onConfig = { next, message ->
+                onConfig(next, message)
+                showProfileImport = false
+                profileImportSource = ""
+                onProfileImportConsumed()
+            },
+        )
+        return
+    }
 
     if (addSocks5) {
         Socks5ProfileEditorScreen(
@@ -256,6 +295,11 @@ internal fun VpnScreen(
         ) {
             AddVpnTypeSheet(
                 onClose = { showAddVpnSheet = false },
+                onImport = {
+                    showAddVpnSheet = false
+                    profileImportSource = ""
+                    showProfileImport = true
+                },
                 onAddSocks5 = {
                     showAddVpnSheet = false
                     addSocks5 = true
@@ -807,6 +851,240 @@ private fun ReadinessItemRow(item: ReadinessItem) {
 }
 
 @Composable
+private fun ProfileImportScreen(
+    padding: PaddingValues,
+    config: RoutingConfig,
+    initialSource: String,
+    onBack: () -> Unit,
+    onConfig: (RoutingConfig, String?) -> Unit,
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    val initialPreview = remember(initialSource) {
+        initialSource.takeIf(String::isNotBlank)?.let { runCatching { previewProfileImport(it) } }
+    }
+    var source by rememberSaveable(initialSource) { mutableStateOf(initialSource) }
+    var preview by remember(initialSource) { mutableStateOf(initialPreview?.getOrNull()) }
+    var error by rememberSaveable(initialSource) {
+        mutableStateOf(initialPreview?.exceptionOrNull()?.message)
+    }
+    var duplicateResolution by rememberSaveable { mutableStateOf(ImportDuplicateResolution.Skip) }
+    var fileLoading by remember { mutableStateOf(false) }
+
+    fun refreshPreview(value: String = source) {
+        preview = runCatching { previewProfileImport(value) }
+            .onFailure { error = it.message ?: "Не удалось распознать данные профиля." }
+            .getOrNull()
+        if (preview != null) error = null
+    }
+
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            fileLoading = true
+            scope.launch {
+                runCatching { readProfileImportFile(context, uri) }
+                    .onSuccess { text ->
+                        source = text
+                        refreshPreview(text)
+                    }
+                    .onFailure { throwable ->
+                        preview = null
+                        error = throwable.message ?: "Не удалось прочитать файл."
+                    }
+                fileLoading = false
+            }
+        }
+    }
+
+    ScreenList(padding) {
+        item {
+            Header(
+                "Импорт VPN-профилей",
+                "Ссылки, sing-box JSON и конфигурации OpenVPN — с безопасным предпросмотром до сохранения.",
+            )
+        }
+        item {
+            CardBlock {
+                Text(
+                    "Секреты остаются только на устройстве. В предпросмотре пароли и ключи скрыты, а новые профили сначала выключены.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedTextField(
+                    value = source,
+                    onValueChange = {
+                        source = it
+                        preview = null
+                        error = null
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(190.dp),
+                    label = { Text("Ссылка, JSON или конфигурация") },
+                    placeholder = { Text("vless://…\nvmess://…\n{\n  \"type\": \"wireguard\"\n}") },
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            val text = clipboard.getText()?.text.orEmpty()
+                            if (text.isBlank()) {
+                                error = "Буфер обмена пуст."
+                            } else {
+                                source = text
+                                refreshPreview(text)
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Из буфера")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            filePicker.launch(
+                                arrayOf(
+                                    "text/*",
+                                    "application/json",
+                                    "application/x-openvpn-profile",
+                                    "application/octet-stream",
+                                ),
+                            )
+                        },
+                        enabled = !fileLoading,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (fileLoading) "Чтение…" else "Из файла")
+                    }
+                }
+                Button(
+                    onClick = { refreshPreview() },
+                    enabled = source.isNotBlank() && !fileLoading,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Проверить и показать")
+                }
+                error?.let { WarningText(it) }
+            }
+        }
+        preview?.let { current ->
+            item {
+                Text(
+                    "Найдено профилей: ${current.candidates.size}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            items(
+                items = current.candidates,
+                key = { it.fingerprint },
+            ) { candidate ->
+                CardBlock {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(candidate.profile.name, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                candidate.profile.type.label,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        StatusChip("Выключен")
+                    }
+                    Text(candidate.maskedPreview, style = MaterialTheme.typography.bodySmall)
+                    candidate.warnings.forEach { WarningText(it) }
+                }
+            }
+            if (current.warnings.isNotEmpty()) {
+                item {
+                    CardBlock {
+                        Text("Замечания импорта", fontWeight = FontWeight.SemiBold)
+                        current.warnings.forEach { WarningText(it) }
+                    }
+                }
+            }
+            if (!current.isEmpty) {
+                item {
+                    CardBlock {
+                        Text("Если такой профиль уже есть", fontWeight = FontWeight.SemiBold)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            ImportDuplicateResolution.entries.forEach { resolution ->
+                                FilterChip(
+                                    selected = duplicateResolution == resolution,
+                                    onClick = { duplicateResolution = resolution },
+                                    label = {
+                                        Text(
+                                            when (resolution) {
+                                                ImportDuplicateResolution.Skip -> "Пропустить"
+                                                ImportDuplicateResolution.Replace -> "Обновить"
+                                                ImportDuplicateResolution.Copy -> "Копия"
+                                            },
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                        Button(
+                            onClick = {
+                                val result = applyProfileImport(
+                                    config = config,
+                                    preview = current,
+                                    duplicateResolution = duplicateResolution,
+                                )
+                                onConfig(
+                                    result.config,
+                                    "Импорт завершён: добавлено ${result.added}, обновлено ${result.replaced}, пропущено ${result.skipped}. Профили сохранены выключенными.",
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Импортировать")
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+                Text("Назад без сохранения")
+            }
+        }
+    }
+}
+
+private suspend fun readProfileImportFile(
+    context: Context,
+    uri: Uri,
+    maxBytes: Int = 2 * 1024 * 1024,
+): String = withContext(Dispatchers.IO) {
+    val input = context.contentResolver.openInputStream(uri)
+        ?: error("Android не предоставил доступ к выбранному файлу.")
+    input.use { stream ->
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8 * 1024)
+        var total = 0
+        while (true) {
+            val read = stream.read(buffer)
+            if (read < 0) break
+            total += read
+            require(total <= maxBytes) { "Файл слишком большой. Максимум — 2 МБ." }
+            output.write(buffer, 0, read)
+        }
+        output.toString(Charsets.UTF_8.name())
+    }
+}
+
+@Composable
 private fun ProfilesHeader(profileCount: Int, onAdd: () -> Unit) {
     Row(
         modifier = Modifier
@@ -834,6 +1112,7 @@ private fun ProfilesHeader(profileCount: Int, onAdd: () -> Unit) {
 @Composable
 private fun AddVpnTypeSheet(
     onClose: () -> Unit,
+    onImport: () -> Unit,
     onAddSocks5: () -> Unit,
     onAddVless: () -> Unit,
     onAddSingBox: (TunnelType) -> Unit,
@@ -886,12 +1165,19 @@ private fun AddVpnTypeSheet(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        FilledTonalButton(
+            onClick = onImport,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Импортировать ссылку, JSON или файл")
+        }
         protocols.forEach { protocol ->
             ProtocolCatalogRow(
                 protocol = protocol,
                 onAdd = when (protocol.type) {
                     TunnelType.Socks5 -> onAddSocks5
-                    TunnelType.VLESS -> onAddVless
+                    TunnelType.VLESS,
+                    TunnelType.XrayVlessReality -> onAddVless
                     else -> if (
                         protocol.canCreateProfile &&
                         singBoxProtocolSchema(protocol.type) != null
@@ -1112,7 +1398,7 @@ private fun NetworkProfileDetailsScreen(
         )
         return
     }
-    if (profile.type == TunnelType.VLESS) {
+    if (profile.type == TunnelType.VLESS || profile.type == TunnelType.XrayVlessReality) {
         VlessProfileEditorScreen(
             padding = padding,
             text = text,
@@ -1244,6 +1530,12 @@ private fun SingBoxProfileEditorScreen(
     var optionsJson by rememberSaveable(profile?.id ?: "new-${type.name}-json") {
         mutableStateOf(profile?.singBox?.optionsJson ?: singBoxProfileTemplate(type))
     }
+    var openVpnUsername by rememberSaveable(profile?.id ?: "new-${type.name}-username") {
+        mutableStateOf(openVpnRoot(optionsJson).optString("username"))
+    }
+    var openVpnPassword by rememberSaveable(profile?.id ?: "new-${type.name}-password") {
+        mutableStateOf(openVpnRoot(optionsJson).optString("password"))
+    }
     var errors by remember(profile?.id ?: "new-${type.name}-errors") {
         mutableStateOf(emptyList<String>())
     }
@@ -1252,6 +1544,54 @@ private fun SingBoxProfileEditorScreen(
     }
     var checking by remember(profile?.id ?: "new-${type.name}-checking") {
         mutableStateOf(false)
+    }
+
+    fun importOpenVpnMaterial(
+        uri: Uri?,
+        field: String,
+        label: String,
+        validator: (String) -> Boolean,
+    ) {
+        if (uri == null) return
+        scope.launch {
+            runCatching { readProfileImportFile(context, uri) }
+                .map { it.trim() }
+                .onSuccess { content ->
+                    if (!validator(content)) {
+                        nativeCheckMessage = "$label не похож на поддерживаемый PEM-файл."
+                    } else {
+                        optionsJson = updateOpenVpnTlsMaterial(optionsJson, field, content)
+                        errors = emptyList()
+                        nativeCheckMessage = "$label добавлен в профиль. Содержимое хранится в зашифрованном хранилище приложения."
+                    }
+                }
+                .onFailure { error ->
+                    nativeCheckMessage = "Не удалось прочитать $label: ${error.localizedMessage ?: "неизвестная ошибка"}"
+                }
+        }
+    }
+
+    val openVpnCaLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        importOpenVpnMaterial(uri, "certificate", "CA-сертификат") {
+            it.contains("-----BEGIN CERTIFICATE-----") && it.contains("-----END CERTIFICATE-----")
+        }
+    }
+    val openVpnClientCertificateLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        importOpenVpnMaterial(uri, "client_certificate", "Клиентский сертификат") {
+            it.contains("-----BEGIN CERTIFICATE-----") && it.contains("-----END CERTIFICATE-----")
+        }
+    }
+    val openVpnClientKeyLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        importOpenVpnMaterial(uri, "client_key", "Закрытый ключ") {
+            OPENVPN_PRIVATE_KEY_PATTERN.containsMatchIn(it) &&
+                !it.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----")
+        }
     }
     val openVpnImportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -1269,6 +1609,10 @@ private fun SingBoxProfileEditorScreen(
             }
             imported.onSuccess { result ->
                 optionsJson = result.optionsJson
+                openVpnRoot(result.optionsJson).let { root ->
+                    openVpnUsername = root.optString("username")
+                    openVpnPassword = root.optString("password")
+                }
                 errors = emptyList()
                 nativeCheckMessage = if (result.warnings.isEmpty()) {
                     "Профиль .ovpn импортирован. Нажмите «Проверить»."
@@ -1283,6 +1627,12 @@ private fun SingBoxProfileEditorScreen(
     val usedRules = profile?.let { current ->
         config.rules.filter { it.targetProfileId == current.id }.map { it.name }
     }.orEmpty()
+    val openVpnTls = remember(optionsJson) {
+        openVpnRoot(optionsJson).optJSONObject("tls")
+    }
+    val hasOpenVpnCa = openVpnTls.hasOpenVpnMaterial("certificate")
+    val hasOpenVpnClientCertificate = openVpnTls.hasOpenVpnMaterial("client_certificate")
+    val hasOpenVpnClientKey = openVpnTls.hasOpenVpnMaterial("client_key")
 
     fun validateDraft(): SingBoxProfileConfig {
         val draft = SingBoxProfileConfig(schema.kind, optionsJson.trim())
@@ -1375,10 +1725,87 @@ private fun SingBoxProfileEditorScreen(
                         Text("Импортировать файл .ovpn")
                     }
                     Text(
-                        "Обычные remote/proto, сертификаты и ключи из inline-блоков будут перенесены автоматически. Перед сохранением результат всё равно проверит нативный движок.",
+                        "Обычные remote/proto, сертификаты и ключи из inline-блоков будут перенесены автоматически. Если .ovpn ссылается на отдельные файлы, добавьте их ниже. Перед сохранением результат всё равно проверит нативный движок.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+        }
+        if (type == TunnelType.OpenVpn) {
+            item {
+                CardBlock {
+                    Text("Авторизация OpenVPN", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Логин и пароль нужны только если их требует провайдер. Пароль и полный JSON профиля сохраняются через Android Keystore.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = openVpnUsername,
+                        onValueChange = { value ->
+                            openVpnUsername = value
+                            optionsJson = updateOpenVpnCredential(optionsJson, "username", value)
+                        },
+                        label = { Text("Логин") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = openVpnPassword,
+                        onValueChange = { value ->
+                            openVpnPassword = value
+                            optionsJson = updateOpenVpnCredential(optionsJson, "password", value)
+                        },
+                        label = { Text("Пароль") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                    )
+                }
+            }
+            item {
+                CardBlock {
+                    Text("Сертификаты OpenVPN", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Поддерживаются текстовые PEM-файлы .pem/.crt/.cer/.key размером до 2 МБ. Зашифрованный закрытый ключ без отдельной поддержки passphrase не принимается.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OpenVpnMaterialPicker(
+                        label = "CA-сертификат",
+                        loaded = hasOpenVpnCa,
+                        required = true,
+                        onPick = {
+                            openVpnCaLauncher.launch(OPENVPN_PEM_MIME_TYPES)
+                        },
+                        onRemove = {
+                            optionsJson = updateOpenVpnTlsMaterial(optionsJson, "certificate", null)
+                        },
+                    )
+                    OpenVpnMaterialPicker(
+                        label = "Клиентский сертификат",
+                        loaded = hasOpenVpnClientCertificate,
+                        required = false,
+                        onPick = {
+                            openVpnClientCertificateLauncher.launch(OPENVPN_PEM_MIME_TYPES)
+                        },
+                        onRemove = {
+                            optionsJson = updateOpenVpnTlsMaterial(optionsJson, "client_certificate", null)
+                        },
+                    )
+                    OpenVpnMaterialPicker(
+                        label = "Закрытый ключ клиента",
+                        loaded = hasOpenVpnClientKey,
+                        required = false,
+                        onPick = {
+                            openVpnClientKeyLauncher.launch(OPENVPN_PEM_MIME_TYPES)
+                        },
+                        onRemove = {
+                            optionsJson = updateOpenVpnTlsMaterial(optionsJson, "client_key", null)
+                        },
+                    )
+                    if (hasOpenVpnClientCertificate != hasOpenVpnClientKey) {
+                        WarningText("Клиентский сертификат и закрытый ключ нужно добавить вместе.")
+                    }
                 }
             }
         }
@@ -1483,6 +1910,87 @@ private fun SingBoxProfileEditorScreen(
 }
 
 @Composable
+private fun OpenVpnMaterialPicker(
+    label: String,
+    loaded: Boolean,
+    required: Boolean,
+    onPick: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                when {
+                    loaded -> "Добавлен"
+                    required -> "Обязателен"
+                    else -> "Не выбран"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = if (loaded) Color(0xFF1B7F46) else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        OutlinedButton(onClick = onPick) {
+            Text(if (loaded) "Заменить" else "Выбрать")
+        }
+        if (loaded) {
+            TextButton(onClick = onRemove) { Text("Убрать") }
+        }
+    }
+}
+
+private fun openVpnRoot(source: String): JSONObject =
+    runCatching { JSONObject(source) }.getOrElse {
+        JSONObject().put("type", "openvpn-client")
+    }
+
+private fun updateOpenVpnCredential(
+    source: String,
+    field: String,
+    value: String,
+): String = openVpnRoot(source)
+    .apply {
+        if (value.isBlank()) remove(field) else put(field, value)
+    }
+    .toString(2)
+
+private fun updateOpenVpnTlsMaterial(
+    source: String,
+    field: String,
+    value: String?,
+): String = openVpnRoot(source)
+    .apply {
+        val tls = optJSONObject("tls") ?: JSONObject().also { put("tls", it) }
+        if (value.isNullOrBlank()) tls.remove(field) else tls.put(field, value)
+    }
+    .toString(2)
+
+private fun JSONObject?.hasOpenVpnMaterial(field: String): Boolean {
+    if (this == null) return false
+    return when (val value = opt(field)) {
+        is String -> value.isNotBlank()
+        is org.json.JSONArray -> value.length() > 0
+        else -> value != null && value != JSONObject.NULL
+    }
+}
+
+private val OPENVPN_PEM_MIME_TYPES = arrayOf(
+    "application/x-pem-file",
+    "application/pkix-cert",
+    "application/x-x509-ca-cert",
+    "text/plain",
+    "application/octet-stream",
+)
+
+private val OPENVPN_PRIVATE_KEY_PATTERN = Regex(
+    """-----BEGIN (?:RSA |EC )?PRIVATE KEY-----""",
+)
+
+@Composable
 private fun VlessProfileEditorScreen(
     padding: PaddingValues,
     text: UiText,
@@ -1513,6 +2021,8 @@ private fun VlessProfileEditorScreen(
     var hostHeader by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.hostHeader.orEmpty()) }
     var alpn by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.alpn.orEmpty()) }
     var serviceName by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.serviceName.orEmpty()) }
+    var xhttpMode by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.xhttpMode.orEmpty()) }
+    var xhttpExtra by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.xhttpExtra.orEmpty()) }
     var enabled by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.enabled ?: profile?.enabled ?: true) }
     var dnsPolicyId by rememberSaveable(profile?.id ?: "new-vless-dns") {
         mutableStateOf(profile?.dnsPolicyId ?: RoutingConfigDefaults.SYSTEM_DNS_ID)
@@ -1546,6 +2056,8 @@ private fun VlessProfileEditorScreen(
         hostHeader = hostHeader.trim().takeIf { it.isNotBlank() },
         alpn = alpn.trim().takeIf { it.isNotBlank() },
         serviceName = serviceName.trim().takeIf { it.isNotBlank() },
+        xhttpMode = xhttpMode.trim().takeIf { it.isNotBlank() },
+        xhttpExtra = xhttpExtra.trim().takeIf { it.isNotBlank() },
         enabled = enabled,
         status = nextStatus,
     )
@@ -1574,6 +2086,8 @@ private fun VlessProfileEditorScreen(
         hostHeader = parsed.hostHeader.orEmpty()
         alpn = parsed.alpn.orEmpty()
         serviceName = parsed.serviceName.orEmpty()
+        xhttpMode = parsed.xhttpMode.orEmpty()
+        xhttpExtra = parsed.xhttpExtra.orEmpty()
         pendingImport = null
         importPreview = parsed.maskedPreview()
         exportUri = null
@@ -1634,7 +2148,10 @@ private fun VlessProfileEditorScreen(
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedButton(onClick = onBack) { Text(text.back) }
-                Header(if (profile == null) "Add VLESS profile" else "Edit VLESS profile", "Local VLESS/TLS/REALITY profile for the VPN router")
+                Header(
+                    if (profile == null) "Add VLESS profile" else "Edit VLESS profile",
+                    "VLESS через sing-box; XHTTP через отдельный локальный Xray-core",
+                )
             }
         }
         item {
@@ -1643,7 +2160,7 @@ private fun VlessProfileEditorScreen(
                 Text(VLESS_ROUTE_PREVIEW_ONLY, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(VLESS_NO_HANDSHAKE_NOTICE, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(VLESS_TCP_REACHABILITY_NOTICE, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                WarningText("UUID is stored locally in routing_config.json and is hidden from summaries, logs, and diagnostics text.")
+                WarningText("UUID и XHTTP extra хранятся локально в зашифрованном хранилище Android Keystore и скрыты из обычного файла настроек, сводок и диагностики.")
                 Text("Security mode supports none, TLS and REALITY. Incomplete REALITY parameters fail closed at activation.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -1715,11 +2232,15 @@ private fun VlessProfileEditorScreen(
             }
         }
 
-        item {
-            CardBlock {
-                Text("Manual VLESS protocol probe", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-                WarningText(VLESS_PROTOCOL_PROBE_NOTICE)
-                val probeDraft = draft()
+        val probeDraft = draft()
+        val supportsManualProtocolProbe = probeDraft.transportType.isNullOrBlank() ||
+            probeDraft.transportType.equals("tcp", ignoreCase = true) ||
+            probeDraft.transportType.equals("raw", ignoreCase = true)
+        if (supportsManualProtocolProbe) {
+            item {
+                CardBlock {
+                    Text("Manual VLESS protocol probe", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    WarningText(VLESS_PROTOCOL_PROBE_NOTICE)
                 val probeSecurityMode = probeDraft.securityMode
                 Text("Current security mode: ${probeSecurityMode.wireName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (probeSecurityMode == VlessSecurityMode.TLS) {
@@ -1760,6 +2281,18 @@ private fun VlessProfileEditorScreen(
                 }
                 Text("The probe sends only the locally built VLESS TCP request frame and no HTTP payload, Android traffic, DNS proxy traffic, or packets back to TUN.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("Only elapsed time, response classification, response byte count, target, and security mode are stored; response payload bytes are discarded immediately.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        } else {
+            item {
+                CardBlock {
+                    Text("Проверка профиля", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Для транспорта ${probeDraft.transportType.orEmpty().uppercase()} простая TCP-проба неприменима: она не воспроизводит транспортный обмен и могла бы дать ложный результат. Полная проверка выполняется профильным движком при запуске маршрутизатора.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
         if (profile != null) {
@@ -1813,7 +2346,7 @@ private fun VlessProfileEditorScreen(
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                 )
-                OutlinedTextField(transportType, { transportType = it.lowercase().take(16) }, label = { Text("Transport type: tcp/ws/grpc (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                OutlinedTextField(transportType, { transportType = it.lowercase().take(16) }, label = { Text("Transport: tcp/raw/ws/grpc/xhttp") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(securityModeText, { securityModeText = it.lowercase().take(16) }, label = { Text("Security mode: none/tls/reality") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(encryption, { encryption = it }, label = { Text("Encryption (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(flow, { flow = it }, label = { Text("Flow (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
@@ -1825,6 +2358,27 @@ private fun VlessProfileEditorScreen(
                 OutlinedTextField(hostHeader, { hostHeader = it }, label = { Text("Host header (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(alpn, { alpn = it }, label = { Text("ALPN (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                 OutlinedTextField(serviceName, { serviceName = it }, label = { Text("gRPC serviceName (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                if (transportType.equals("xhttp", ignoreCase = true)) {
+                    OutlinedTextField(
+                        xhttpMode,
+                        { xhttpMode = it.lowercase().take(32) },
+                        label = { Text("XHTTP mode: auto/packet-up/stream-up/stream-one") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        xhttpExtra,
+                        { xhttpExtra = it },
+                        label = { Text("XHTTP extra JSON (зашифровано)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                    )
+                    Text(
+                        "XHTTP запускается отдельным локальным Xray-core, а единый sing-box TUN отправляет в него только трафик выбранных правил.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                     Text(text.enabled, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
@@ -1857,19 +2411,31 @@ private fun VlessProfileEditorScreen(
                     errors = validateVlessProfile(candidate)
                     if (errors.isEmpty()) {
                         val readyVless = candidate.copy(status = VlessProfileStatus.ConfigReady)
+                        val usesXray = readyVless.transportType.equals("xhttp", ignoreCase = true)
                         val nextProfile = TunnelProfile(
                             id = profile?.id ?: "vless-${UUID.randomUUID()}",
                             name = readyVless.name,
-                            type = TunnelType.VLESS,
+                            type = if (usesXray) TunnelType.XrayVlessReality else TunnelType.VLESS,
                             description = vlessDescription(readyVless),
                             enabled = readyVless.enabled,
                             mockOnly = false,
-                            platformNotes = "VLESS/TLS/REALITY outbound compiled into the local sing-box TUN runtime.",
+                            platformNotes = if (usesXray) {
+                                "VLESS/XHTTP runs in the app-private Xray-core process behind the single sing-box TUN."
+                            } else {
+                                "VLESS/TLS/REALITY outbound compiled into the local sing-box TUN runtime."
+                            },
                             dnsPolicyId = dnsPolicyId,
                             vless = readyVless,
                         )
                         val nextProfiles = if (profile == null) config.profiles + nextProfile else config.profiles.map { if (it.id == profile.id) nextProfile else it }
-                        onConfig(config.copy(profiles = nextProfiles), "VLESS profile saved for the local sing-box router.")
+                        onConfig(
+                            config.copy(profiles = nextProfiles),
+                            if (usesXray) {
+                                "VLESS/XHTTP профиль сохранён для локального Xray-core."
+                            } else {
+                                "VLESS профиль сохранён для локального маршрутизатора sing-box."
+                            },
+                        )
                         onBack()
                     }
                 }) { Text(text.save) }
@@ -1903,7 +2469,11 @@ private fun String.toVlessSecurityMode(): VlessSecurityMode = VlessSecurityMode.
 } ?: VlessSecurityMode.NONE
 
 private fun vlessDescription(profile: VlessProfileConfig): String =
-    "VLESS ${profile.host}:${profile.port} (${profile.securityMode.wireName}). The saved profile is available to the sing-box VPN router, including TLS/REALITY settings. Manual check buttons test the endpoint separately and do not prove that Android traffic crossed this tunnel. UUID is hidden from summaries and diagnostics."
+    if (profile.transportType.equals("xhttp", ignoreCase = true)) {
+        "VLESS/XHTTP ${profile.host}:${profile.port} (${profile.securityMode.wireName}). Профиль работает через локальный Xray-core за единым маршрутизатором. UUID и XHTTP extra скрыты из сводок и диагностики."
+    } else {
+        "VLESS ${profile.host}:${profile.port} (${profile.securityMode.wireName}). Профиль доступен маршрутизатору sing-box, включая TLS/REALITY. Ручные проверки не доказывают прохождение Android-трафика. UUID скрыт из сводок и диагностики."
+    }
 
 private fun vlessReadinessLabel(status: VlessProfileStatus, history: List<VlessTcpReachabilityHistoryItem>): String = when {
     status == VlessProfileStatus.TcpReachable || history.firstOrNull()?.state == VlessTcpReachabilityState.Reachable -> "TCP reachable"
