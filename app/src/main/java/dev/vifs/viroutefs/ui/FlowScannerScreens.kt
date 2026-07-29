@@ -42,6 +42,10 @@ import dev.vifs.viroutefs.WarningText
 import dev.vifs.viroutefs.loadInstalledAppsForRouting
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RouteEngine
+import dev.vifs.viroutefs.routing.RouteDecision
+import dev.vifs.viroutefs.routing.RouteQuery
+import dev.vifs.viroutefs.routing.RouteRuleType
+import dev.vifs.viroutefs.routing.RouteTransport
 import dev.vifs.viroutefs.engine.SING_BOX_BLOCK_TAG
 import dev.vifs.viroutefs.engine.SING_BOX_DIRECT_TAG
 import dev.vifs.viroutefs.engine.runtimeProfileTag
@@ -83,6 +87,7 @@ internal data class FlowEventUi(
     val status: String,
     val technicalDetails: String,
     val sourceLabel: String,
+    val routeCheck: String = "Предварительный расчёт",
     val appPackages: List<String> = emptyList(),
 ) {
     val target: String = buildString {
@@ -399,6 +404,7 @@ internal fun filterFlowEvents(
             event.portProtocol,
             event.selectedRoute,
             event.routeReason,
+            event.routeCheck,
             event.appPackages.joinToString(" "),
         ).any { it.contains(normalizedQuery, ignoreCase = true) }
         appMatches && protocolMatches && queryMatches
@@ -416,6 +422,7 @@ internal fun exportFlowEventsCsv(events: List<FlowEventUi>): String = buildStrin
             "dns_policy",
             "route",
             "reason",
+            "route_check",
             "status",
             "source",
         ).joinToString(","),
@@ -431,6 +438,7 @@ internal fun exportFlowEventsCsv(events: List<FlowEventUi>): String = buildStrin
                 event.dnsPolicy,
                 event.selectedRoute,
                 event.routeReason,
+                event.routeCheck,
                 event.status,
                 event.sourceLabel,
             ).joinToString(",") { value -> value.toCsvCell() },
@@ -737,10 +745,14 @@ private fun VpnConnectionFlow.toFlowEvent(context: Context, config: RoutingConfi
     val destinationHost = endpointHost(destination)
     val destinationPort = endpointPort(destination)
     val displayDomain = domain.ifBlank { destinationHost.ifBlank { destination } }
-    val decisionInput = appPackages.firstOrNull()
-        ?: domain.takeIf(String::isNotBlank)
-        ?: destinationHost
-    val decision = RouteEngine(config).simulate(decisionInput)
+    val decision = explainFlowRoute(
+        config = config,
+        appPackages = appPackages,
+        domain = domain,
+        destinationIp = destinationHost,
+        destinationPort = destinationPort,
+        network = network,
+    )
     val routeName = when (outboundTag) {
         SING_BOX_BLOCK_TAG -> "Block / Блокировать"
         SING_BOX_DIRECT_TAG -> "System / Система"
@@ -749,6 +761,14 @@ private fun VpnConnectionFlow.toFlowEvent(context: Context, config: RoutingConfi
     }
     val blocked = outboundTag == SING_BOX_BLOCK_TAG || outboundType.equals("block", true)
     val direct = outboundTag == SING_BOX_DIRECT_TAG || outboundType.equals("direct", true)
+    val expectedTag = runtimeProfileTag(decision.tunnelProfile.id)
+    val routeMatches = outboundTag == expectedTag
+    val routeCheck = if (routeMatches) {
+        "Совпадает: правило «${decision.matchedRule.name}» рассчитало тот же маршрут."
+    } else {
+        "Требует проверки: правило «${decision.matchedRule.name}» ожидало «${decision.tunnelProfile.name}», фактически выбран «$routeName»."
+    }
+    val routeMismatchWarning = routeCheck.takeUnless { routeMatches }
     val service = destinationService(destinationPort, network)
     val appName = appPackages.firstOrNull()?.let(context::applicationLabel)
         ?: processPath.substringAfterLast('/').takeIf(String::isNotBlank)
@@ -760,15 +780,23 @@ private fun VpnConnectionFlow.toFlowEvent(context: Context, config: RoutingConfi
         portProtocol = "${destinationPort ?: "—"} / ${network.ifBlank { protocol }.uppercase()}",
         dnsPolicy = decision.dnsPolicySummary,
         selectedRoute = routeName,
-        routeReason = matchedRule.takeIf(String::isNotBlank)
-            ?: "Локальный движок выбрал маршрут «$routeName» по действующим правилам.",
-        riskWarning = when {
-            blocked -> "Соединение заблокировано выбранным правилом."
-            direct -> "Это соединение идёт через System — обычный мобильный интернет или Wi‑Fi телефона."
-            destinationPort == 80 -> "Порт 80 обычно означает незашифрованный HTTP. Не вводите пароли без HTTPS."
-            else -> null
+        routeReason = buildString {
+            matchedRule.takeIf(String::isNotBlank)?.let {
+                append("Живой движок: ").append(it).append(". ")
+            }
+            append("Локальный расчёт: правило «${decision.matchedRule.name}» → «${decision.tunnelProfile.name}».")
         },
+        riskWarning = listOfNotNull(
+            routeMismatchWarning,
+            when {
+                blocked -> "Соединение заблокировано выбранным правилом."
+                direct -> "Это соединение идёт через System — обычный мобильный интернет или Wi‑Fi телефона."
+                destinationPort == 80 -> "Порт 80 обычно означает незашифрованный HTTP. Не вводите пароли без HTTPS."
+                else -> null
+            },
+        ).joinToString(" ").takeIf(String::isNotBlank),
         recommendation = when {
+            !routeMatches -> "Проверьте порядок правил, приложение, домен, порт и транспорт. Фактический outbound выше является источником истины."
             blocked -> "Если блокировка неожиданна, откройте правило и проверьте приложение, адрес и приоритет."
             service.isKnown -> "Это похоже на ${service.name}. Проверьте, что выбранный туннель и DNS соответствуют задаче."
             else -> "Неизвестный порт сам по себе не означает угрозу. Сверьте адрес с приложением и временем подключения."
@@ -787,13 +815,44 @@ private fun VpnConnectionFlow.toFlowEvent(context: Context, config: RoutingConfi
             appendLine("Пакеты приложений: ${appPackages.joinToString().ifBlank { "не определены" }}")
             appendLine("Процесс: ${processPath.ifBlank { "не определён" }}")
             appendLine("Outbound: $outboundTag ($outboundType)")
+            appendLine("Ожидаемый outbound: $expectedTag")
+            appendLine("Проверка: $routeCheck")
             appendLine("Отправлено: $uplinkBytes байт")
             appendLine("Получено: $downlinkBytes байт")
             append("Создано: ${DateFormat.getDateTimeInstance().format(Date(createdAt))}")
         },
         sourceLabel = "Живой поток",
+        routeCheck = routeCheck,
         appPackages = appPackages,
     )
+}
+
+internal fun explainFlowRoute(
+    config: RoutingConfig,
+    appPackages: List<String>,
+    domain: String,
+    destinationIp: String,
+    destinationPort: Int?,
+    network: String,
+): RouteDecision {
+    val transport = when (network.lowercase()) {
+        "tcp" -> RouteTransport.Tcp
+        "udp" -> RouteTransport.Udp
+        else -> RouteTransport.Any
+    }
+    val inputs = buildList {
+        addAll(appPackages)
+        domain.takeIf(String::isNotBlank)?.let(::add)
+        destinationIp.takeIf(String::isNotBlank)?.let(::add)
+    }.distinct()
+    val engine = RouteEngine(config)
+    val decisions = inputs.map { input ->
+        engine.simulate(RouteQuery(input, destinationPort, transport))
+    }
+    return decisions
+        .filter { it.matchedRule.type != RouteRuleType.DEFAULT }
+        .minWithOrNull(compareBy<RouteDecision> { it.matchedRule.priority }.thenBy { it.matchedRule.name })
+        ?: engine.simulate(RouteQuery("default", destinationPort, transport))
 }
 
 private fun endpointHost(endpoint: String): String = when {
@@ -870,6 +929,7 @@ private fun FlowEventDetailsScreen(padding: PaddingValues, text: UiText, event: 
             FlowField(text.flowPortProtocol, event.portProtocol)
             FlowField(text.flowDnsPolicy, event.dnsPolicy)
             FlowField(text.flowSelectedRoute, event.selectedRoute)
+            FlowField("Проверка маршрута", event.routeCheck)
         }
     }
     item {
@@ -942,6 +1002,7 @@ private fun PacketSummary.toFlowEvent(preview: LiveRouteDecisionPreview): FlowEv
             append(preview.displayLines.joinToString("\n"))
         },
         sourceLabel = "Метаданные TUN",
+        routeCheck = "Предварительный расчёт: это тестовая сводка TUN, а не подтверждение живого outbound.",
     )
 }
 

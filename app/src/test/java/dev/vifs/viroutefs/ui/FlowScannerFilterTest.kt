@@ -2,6 +2,11 @@
 
 package dev.vifs.viroutefs.ui
 
+import dev.vifs.viroutefs.routing.DestinationPortRange
+import dev.vifs.viroutefs.routing.RouteRule
+import dev.vifs.viroutefs.routing.RouteRuleType
+import dev.vifs.viroutefs.routing.RouteTransport
+import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -67,6 +72,45 @@ class FlowScannerFilterTest {
         assertTrue(csv.contains("\"com.example.browser\""))
         assertTrue(csv.contains("\"example.test\""))
         assertFalse(csv.contains("secret technical payload"))
+    }
+
+    @Test
+    fun routeExplanationUsesDomainPortAndTransportAcrossAvailableInputs() {
+        val defaults = RoutingConfigDefaults.defaultConfig()
+        val rule = RouteRule(
+            id = "secure-api",
+            name = "Secure API over TCP",
+            type = RouteRuleType.DOMAIN,
+            targetProfileId = RoutingConfigDefaults.BLOCK_PROFILE_ID,
+            priority = 1,
+            matchers = listOf("api.example"),
+            reason = "test",
+            technicalDetails = "test",
+            recommendedAction = "test",
+            destinationPorts = listOf(DestinationPortRange(443, 443)),
+            transport = RouteTransport.Tcp,
+        )
+        val config = defaults.copy(rules = listOf(rule) + defaults.rules)
+
+        val tcp = explainFlowRoute(
+            config = config,
+            appPackages = listOf("com.example.browser"),
+            domain = "api.example",
+            destinationIp = "192.0.2.10",
+            destinationPort = 443,
+            network = "tcp",
+        )
+        val udp = explainFlowRoute(
+            config = config,
+            appPackages = listOf("com.example.browser"),
+            domain = "api.example",
+            destinationIp = "192.0.2.10",
+            destinationPort = 443,
+            network = "udp",
+        )
+
+        assertEquals("secure-api", tcp.matchedRule.id)
+        assertEquals(RouteRuleType.DEFAULT, udp.matchedRule.type)
     }
 
     private fun event(
