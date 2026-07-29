@@ -13,51 +13,51 @@ import dev.vifs.viroutefs.routing.TunnelType
  */
 internal object EngineCatalog {
     val protocols: List<ProtocolDescriptor> = listOf(
-        ready(TunnelType.Direct, "Встроенный маршрут через сеть Android.", EngineBackend.BuiltIn),
-        ready(TunnelType.Block, "Запрет сети с безопасным поведением fail-closed.", EngineBackend.BuiltIn),
-        ready(TunnelType.ByeDpi, "Локальный режим совместимости TCP/TLS для сетей с мешающим DPI; это не VPN и не скрывает IP-адрес.", EngineBackend.ByeDpi),
-        planned(
+        integrated(TunnelType.Direct, "Встроенный маршрут через сеть Android.", EngineBackend.BuiltIn),
+        integrated(TunnelType.Block, "Запрет сети с безопасным поведением fail-closed.", EngineBackend.BuiltIn),
+        integrated(TunnelType.ByeDpi, "Локальный режим совместимости TCP/TLS; это не VPN и не скрывает IP-адрес.", EngineBackend.ByeDpi),
+        unavailable(
             TunnelType.Zapret2,
-            "Актуальный zapret2 v1.0.3 проверен по исходникам и лицензии MIT. Его Android-движок ожидает NFQUEUE/root, поэтому для обычного телефона нужен отдельный адаптер внутри единственного VpnService.",
+            "zapret2 v1.0.3 проверен по исходникам и лицензии MIT, но upstream-движок требует NFQUEUE/root. Rootless-адаптера для единого VpnService пока нет.",
             EngineBackend.Zapret2,
         ),
 
-        ready(TunnelType.VLESS, "VLESS, включая TLS и REALITY.", EngineBackend.SingBox),
-        planned(TunnelType.XrayVlessReality, "Совместимый импорт старых Xray/VLESS-профилей.", EngineBackend.SingBox),
-        ready(TunnelType.VMess, "VMess через общий маршрутизатор.", EngineBackend.SingBox),
-        ready(TunnelType.Trojan, "Trojan через общий маршрутизатор.", EngineBackend.SingBox),
-        ready(TunnelType.Shadowsocks, "Shadowsocks через общий маршрутизатор.", EngineBackend.SingBox),
-        ready(TunnelType.Shadowsocks2022, "Современные методы Shadowsocks 2022.", EngineBackend.SingBox),
-        ready(TunnelType.WireGuard, "WireGuard как отдельный endpoint.", EngineBackend.SingBox),
-        ready(TunnelType.Hysteria, "Hysteria v1 для совместимости с существующими серверами.", EngineBackend.SingBox),
-        ready(TunnelType.Hysteria2, "QUIC-туннель Hysteria2.", EngineBackend.SingBox),
-        ready(TunnelType.Snell, "Snell v4/v6 через общий маршрутизатор.", EngineBackend.SingBox),
-        ready(TunnelType.Tuic, "QUIC-туннель TUIC.", EngineBackend.SingBox),
-        ready(TunnelType.AnyTls, "AnyTLS через общий маршрутизатор.", EngineBackend.SingBox),
-        planned(TunnelType.NaiveProxy, "NaiveProxy через общий маршрутизатор.", EngineBackend.SingBox),
-        planned(TunnelType.ShadowTls, "ShadowTLS как транспорт/профиль.", EngineBackend.SingBox),
-        ready(TunnelType.Socks5, "SOCKS5 с локальной проверкой и маршрутизацией.", EngineBackend.SingBox),
-        ready(TunnelType.HttpProxy, "Обычный HTTP proxy.", EngineBackend.SingBox),
-        ready(TunnelType.HttpsProxy, "HTTP proxy с TLS до сервера.", EngineBackend.SingBox),
-        ready(TunnelType.SshTunnel, "SSH-туннель.", EngineBackend.SingBox),
-        planned(TunnelType.Tor, "Нужен отдельный проверенный Tor executable для Android; в текущий APK он не встроен.", EngineBackend.SingBox),
+        integrated(TunnelType.VLESS, "VLESS, включая TLS и REALITY.", EngineBackend.SingBox),
+        configured(TunnelType.XrayVlessReality, "Модель совместимого Xray/VLESS-профиля есть; полный импорт старых форматов ещё не завершён.", EngineBackend.SingBox),
+        integrated(TunnelType.VMess, "VMess через общий маршрутизатор.", EngineBackend.SingBox),
+        integrated(TunnelType.Trojan, "Trojan через общий маршрутизатор.", EngineBackend.SingBox),
+        integrated(TunnelType.Shadowsocks, "Shadowsocks через общий маршрутизатор.", EngineBackend.SingBox),
+        integrated(TunnelType.Shadowsocks2022, "Современные методы Shadowsocks 2022.", EngineBackend.SingBox),
+        integrated(TunnelType.WireGuard, "WireGuard как отдельный userspace endpoint.", EngineBackend.SingBox),
+        integrated(TunnelType.Hysteria, "Hysteria v1 для совместимости с существующими серверами.", EngineBackend.SingBox),
+        integrated(TunnelType.Hysteria2, "QUIC-туннель Hysteria2.", EngineBackend.SingBox),
+        integrated(TunnelType.Snell, "Snell v4/v6 через общий маршрутизатор.", EngineBackend.SingBox),
+        integrated(TunnelType.Tuic, "QUIC-туннель TUIC.", EngineBackend.SingBox),
+        integrated(TunnelType.AnyTls, "AnyTLS через общий маршрутизатор.", EngineBackend.SingBox),
+        unavailable(TunnelType.NaiveProxy, "Текущая закреплённая libbox-сборка создана без NaiveProxy.", EngineBackend.SingBox),
+        configured(TunnelType.ShadowTls, "JSON-профиль проверяется структурно; цепочки и физическая проверка ещё не завершены.", EngineBackend.SingBox),
+        integrated(TunnelType.Socks5, "SOCKS5 с локальной проверкой и маршрутизацией.", EngineBackend.SingBox),
+        integrated(TunnelType.HttpProxy, "Обычный HTTP proxy.", EngineBackend.SingBox),
+        integrated(TunnelType.HttpsProxy, "HTTP proxy с TLS до сервера.", EngineBackend.SingBox),
+        integrated(TunnelType.SshTunnel, "SSH-туннель.", EngineBackend.SingBox),
+        unavailable(TunnelType.Tor, "Проверенный Tor executable для Android в текущий APK не встроен.", EngineBackend.ExternalAdapter),
 
-        ready(TunnelType.OpenVpn, "OpenVPN-клиент в sing-box 1.14 alpha; профиль проверяется нативным движком перед сохранением.", EngineBackend.SingBox),
-        ready(TunnelType.OpenConnectAnyConnect, "OpenConnect для AnyConnect, GlobalProtect, Fortinet, F5, Pulse и Juniper; интерактивный SSO пока требует готового cookie.", EngineBackend.SingBox),
-        planned(TunnelType.Ikev2IpSec, "IKEv2/IPsec для корпоративных сетей.", EngineBackend.StrongSwan),
-        planned(TunnelType.IpSecXAuth, "IPsec XAuth для старых корпоративных сетей.", EngineBackend.StrongSwan),
-        planned(TunnelType.IpSecPsk, "IPsec PSK для совместимых корпоративных сетей.", EngineBackend.StrongSwan),
-        ready(TunnelType.TailscaleCompatible, "Tailscale-compatible endpoint.", EngineBackend.SingBox),
-        ready(TunnelType.HeadscaleCompatible, "Headscale-compatible endpoint.", EngineBackend.SingBox),
-        planned(TunnelType.ZeroTier, "Отдельный сетевой адаптер ZeroTier.", EngineBackend.ExternalAdapter),
-        planned(TunnelType.SoftEther, "Корпоративная совместимость SoftEther.", EngineBackend.ExternalAdapter),
+        integrated(TunnelType.OpenVpn, "OpenVPN-клиент в закреплённой sing-box 1.14 alpha; до DeviceVerified статус не повышается.", EngineBackend.SingBox),
+        integrated(TunnelType.OpenConnectAnyConnect, "OpenConnect интегрирован в runtime; интерактивный WebView SSO ещё не завершён.", EngineBackend.SingBox),
+        model(TunnelType.Ikev2IpSec, "IKEv2/IPsec: адаптер strongSwan ещё не встроен.", EngineBackend.StrongSwan),
+        model(TunnelType.IpSecXAuth, "IPsec XAuth: адаптер strongSwan ещё не встроен.", EngineBackend.StrongSwan),
+        model(TunnelType.IpSecPsk, "IPsec PSK: адаптер strongSwan ещё не встроен.", EngineBackend.StrongSwan),
+        integrated(TunnelType.TailscaleCompatible, "Tailscale-compatible userspace endpoint.", EngineBackend.SingBox),
+        integrated(TunnelType.HeadscaleCompatible, "Headscale-compatible userspace endpoint.", EngineBackend.SingBox),
+        model(TunnelType.ZeroTier, "Отдельный userspace-адаптер ZeroTier ещё не выбран.", EngineBackend.ExternalAdapter),
+        model(TunnelType.SoftEther, "Клиентский userspace-адаптер SoftEther ещё не выбран.", EngineBackend.ExternalAdapter),
 
-        legacy(TunnelType.L2tpIpSec, "Только для старого оборудования; отдельный Android-движок ещё не подключён, предпочтительнее IKEv2."),
-        legacy(TunnelType.L2tp, "Без IPsec трафик не шифруется; отдельный Android-движок ещё не подключён."),
-        legacy(TunnelType.Pptp, "Криптографически устарел; отдельный Android-движок ещё не подключён."),
-        legacy(TunnelType.Sstp, "Legacy-совместимость; отдельный проверенный Android-движок ещё не подключён."),
+        unavailable(TunnelType.L2tpIpSec, "Legacy: userspace L2TP/PPP и IPsec-адаптер ещё не встроены.", EngineBackend.LegacyAdapter),
+        unavailable(TunnelType.L2tp, "Незашифрованный legacy L2TP: userspace L2TP/PPP ещё не встроен.", EngineBackend.LegacyAdapter),
+        unavailable(TunnelType.Pptp, "Криптографически устаревший PPTP: userspace GRE/PPP ещё не встроен.", EngineBackend.LegacyAdapter),
+        unavailable(TunnelType.Sstp, "Legacy SSTP: проверенный userspace TLS/PPP-адаптер ещё не встроен.", EngineBackend.LegacyAdapter),
 
-        planned(TunnelType.Brook, "Не входит в первый runtime-набор.", EngineBackend.ExternalAdapter),
+        model(TunnelType.Brook, "Адаптер Brook ещё не выбран и не прошёл лицензионный аудит.", EngineBackend.ExternalAdapter),
     )
 
     fun descriptor(type: TunnelType): ProtocolDescriptor? = protocols.firstOrNull { it.type == type }
@@ -69,42 +69,68 @@ internal object EngineCatalog {
                 it.type == TunnelType.ByeDpi
         }
 
-    private fun ready(type: TunnelType, summary: String, backend: EngineBackend) = ProtocolDescriptor(
+    private fun integrated(type: TunnelType, summary: String, backend: EngineBackend) = ProtocolDescriptor(
         type = type,
         backend = backend,
-        availability = ProtocolAvailability.RuntimeReady,
+        readiness = FeatureReadiness.RuntimeIntegrated,
         summary = summary,
         supportsRouteRules = true,
         supportsCustomDns = true,
     )
 
-    private fun planned(type: TunnelType, summary: String, backend: EngineBackend) = ProtocolDescriptor(
+    private fun configured(type: TunnelType, summary: String, backend: EngineBackend) = ProtocolDescriptor(
         type = type,
         backend = backend,
-        availability = ProtocolAvailability.AuditedPlanned,
+        readiness = FeatureReadiness.ConfigSupported,
         summary = summary,
         supportsRouteRules = true,
         supportsCustomDns = true,
     )
 
-    private fun legacy(type: TunnelType, summary: String) = ProtocolDescriptor(
+    private fun model(type: TunnelType, summary: String, backend: EngineBackend) = ProtocolDescriptor(
         type = type,
-        backend = EngineBackend.LegacyAdapter,
-        availability = ProtocolAvailability.LegacyDisabled,
+        backend = backend,
+        readiness = FeatureReadiness.ModelOnly,
         summary = summary,
-        supportsRouteRules = true,
-        supportsCustomDns = true,
+        supportsRouteRules = false,
+        supportsCustomDns = false,
+    )
+
+    private fun unavailable(type: TunnelType, summary: String, backend: EngineBackend) = ProtocolDescriptor(
+        type = type,
+        backend = backend,
+        readiness = FeatureReadiness.Unavailable,
+        summary = summary,
+        supportsRouteRules = false,
+        supportsCustomDns = false,
     )
 }
 
 internal data class ProtocolDescriptor(
     val type: TunnelType,
     val backend: EngineBackend,
-    val availability: ProtocolAvailability,
+    val readiness: FeatureReadiness,
     val summary: String,
     val supportsRouteRules: Boolean,
     val supportsCustomDns: Boolean,
-)
+) {
+    val canCreateProfile: Boolean
+        get() = readiness in setOf(
+            FeatureReadiness.ConfigSupported,
+            FeatureReadiness.RuntimeIntegrated,
+            FeatureReadiness.DeviceVerified,
+            FeatureReadiness.ProductionReady,
+            FeatureReadiness.LegacyRestricted,
+        )
+
+    val canStartRuntime: Boolean
+        get() = readiness in setOf(
+            FeatureReadiness.RuntimeIntegrated,
+            FeatureReadiness.DeviceVerified,
+            FeatureReadiness.ProductionReady,
+            FeatureReadiness.LegacyRestricted,
+        )
+}
 
 internal enum class EngineBackend(val label: String, val licenseDecision: String) {
     BuiltIn("ViRouteFS", "GPL-3.0-or-later"),
@@ -116,8 +142,12 @@ internal enum class EngineBackend(val label: String, val licenseDecision: String
     ExternalAdapter("External adapter", "Requires separate audit"),
 }
 
-internal enum class ProtocolAvailability(val userLabel: String) {
-    RuntimeReady("Работает в текущем движке"),
-    AuditedPlanned("Лицензия проверена, подключение движка в работе"),
-    LegacyDisabled("Устаревший и небезопасный; выключен по умолчанию"),
+internal enum class FeatureReadiness(val userLabel: String) {
+    ModelOnly("Есть только модель"),
+    ConfigSupported("Профиль и проверка конфигурации"),
+    RuntimeIntegrated("Движок интегрирован, нужен тест на телефоне"),
+    DeviceVerified("Проверено на физическом устройстве"),
+    ProductionReady("Полностью проверено"),
+    Unavailable("Сейчас недоступно"),
+    LegacyRestricted("Работает с legacy-ограничениями"),
 }
