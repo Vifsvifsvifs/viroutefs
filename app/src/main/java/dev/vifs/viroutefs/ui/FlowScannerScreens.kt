@@ -56,6 +56,14 @@ private const val TEST_ROUTE_CIDR = "203.0.113.0/24"
 private const val TEST_ROUTE_SOURCE = "Developer TEST-NET counter"
 private const val TEST_ROUTE_MODE = "Developer diagnostics"
 
+internal enum class FlowProtocolFilter(val label: String) {
+    All("Все"),
+    Tcp("TCP"),
+    Udp("UDP"),
+    Icmp("ICMP"),
+    Other("Другие"),
+}
+
 internal data class FlowEventUi(
     val appName: String,
     val domain: String,
@@ -90,6 +98,8 @@ internal fun FlowScannerScreen(
     val context = LocalContext.current
     var selectedEventIndex by rememberSaveable { mutableStateOf<Int?>(null) }
     var selectedAppPackage by rememberSaveable { mutableStateOf<String?>(null) }
+    var filterQuery by rememberSaveable { mutableStateOf("") }
+    var protocolFilterName by rememberSaveable { mutableStateOf(FlowProtocolFilter.All.name) }
     var appPickerOpen by rememberSaveable { mutableStateOf(false) }
     var liveDetailsOpen by rememberSaveable { mutableStateOf(false) }
     var runtimeDetailsOpen by rememberSaveable { mutableStateOf(false) }
@@ -99,10 +109,16 @@ internal fun FlowScannerScreen(
         vpnState.connectionFlows.map { flow -> flow.toFlowEvent(context, config) } +
             vpnState.packetSummaries.map { packet -> packet.toFlowEvent(previewer.preview(packet)) }
     }
-    val events = remember(allEvents, selectedAppPackage) {
-        selectedAppPackage?.let { packageName ->
-            allEvents.filter { packageName in it.appPackages }
-        } ?: allEvents
+    val protocolFilter = FlowProtocolFilter.entries
+        .firstOrNull { it.name == protocolFilterName }
+        ?: FlowProtocolFilter.All
+    val events = remember(allEvents, selectedAppPackage, filterQuery, protocolFilter) {
+        filterFlowEvents(
+            events = allEvents,
+            appPackage = selectedAppPackage,
+            query = filterQuery,
+            protocol = protocolFilter,
+        )
     }
     val appFilters = remember(vpnState.connectionFlows, selectedAppPackage, context) {
         (vpnState.connectionFlows
@@ -154,7 +170,17 @@ internal fun FlowScannerScreen(
             events = events,
             appFilters = appFilters,
             selectedAppPackage = selectedAppPackage,
+            filterQuery = filterQuery,
+            protocolFilter = protocolFilter,
             onOpenAppPicker = { appPickerOpen = true },
+            onFilterQuery = {
+                filterQuery = it
+                selectedEventIndex = null
+            },
+            onProtocolFilter = {
+                protocolFilterName = it.name
+                selectedEventIndex = null
+            },
             onAppFilter = {
                 selectedAppPackage = it
                 selectedEventIndex = null
@@ -181,7 +207,11 @@ private fun FlowScannerListScreen(
     events: List<FlowEventUi>,
     appFilters: List<String>,
     selectedAppPackage: String?,
+    filterQuery: String,
+    protocolFilter: FlowProtocolFilter,
     onOpenAppPicker: () -> Unit,
+    onFilterQuery: (String) -> Unit,
+    onProtocolFilter: (FlowProtocolFilter) -> Unit,
     onAppFilter: (String?) -> Unit,
     onClear: () -> Unit,
     onPause: (Boolean) -> Unit,
@@ -259,6 +289,69 @@ private fun FlowScannerListScreen(
         items(events.size) { index ->
             FlowEventRow(text = text, event = events[index], onClick = { onEvent(index) })
         }
+    }
+    item {
+        CardBlock {
+            Text("Фильтр соединений", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+            OutlinedTextField(
+                value = filterQuery,
+                onValueChange = onFilterQuery,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Адрес, домен, пакет или маршрут") },
+                placeholder = { Text("Например: 443, example.com, com.browser") },
+                singleLine = true,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                FlowProtocolFilter.entries.forEach { option ->
+                    FilterChip(
+                        selected = protocolFilter == option,
+                        onClick = { onProtocolFilter(option) },
+                        label = { Text(option.label) },
+                    )
+                }
+            }
+            Text(
+                "Подходящих событий: ${events.size}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+internal fun filterFlowEvents(
+    events: List<FlowEventUi>,
+    appPackage: String?,
+    query: String,
+    protocol: FlowProtocolFilter,
+): List<FlowEventUi> {
+    val normalizedQuery = query.trim()
+    return events.filter { event ->
+        val appMatches = appPackage == null || appPackage in event.appPackages
+        val eventProtocol = event.portProtocol
+            .substringAfter("/", "")
+            .trim()
+            .uppercase()
+        val protocolMatches = when (protocol) {
+            FlowProtocolFilter.All -> true
+            FlowProtocolFilter.Tcp -> eventProtocol == "TCP"
+            FlowProtocolFilter.Udp -> eventProtocol == "UDP"
+            FlowProtocolFilter.Icmp -> eventProtocol == "ICMP"
+            FlowProtocolFilter.Other -> eventProtocol !in setOf("TCP", "UDP", "ICMP")
+        }
+        val queryMatches = normalizedQuery.isBlank() || listOf(
+            event.appName,
+            event.domain,
+            event.resolvedIp.orEmpty(),
+            event.portProtocol,
+            event.selectedRoute,
+            event.routeReason,
+            event.appPackages.joinToString(" "),
+        ).any { it.contains(normalizedQuery, ignoreCase = true) }
+        appMatches && protocolMatches && queryMatches
     }
 }
 
