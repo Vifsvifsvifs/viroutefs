@@ -24,6 +24,7 @@ class RoutingConfigRepository internal constructor(
     filesDirectory: File,
     private val secretStore: ProfileSecretStore,
     private val legacyCredentialStore: Socks5CredentialStore? = null,
+    private val subscriptionSecretStore: SubscriptionSecretStore = InMemorySubscriptionSecretStore(),
 ) {
     private val configFile = File(filesDirectory, ROUTING_CONFIG_FILENAME)
 
@@ -33,6 +34,7 @@ class RoutingConfigRepository internal constructor(
         filesDirectory = context.filesDir,
         secretStore = AndroidKeystoreProfileSecretStore(context),
         legacyCredentialStore = Socks5CredentialStore(context),
+        subscriptionSecretStore = AndroidKeystoreSubscriptionSecretStore(context),
     )
 
     suspend fun load(): RoutingConfigLoadResult = withContext(Dispatchers.IO) {
@@ -55,6 +57,8 @@ class RoutingConfigRepository internal constructor(
             val decodedConfig = RoutingConfigDefaults.ensureRequiredProfiles(rawConfig)
             val embeddedSecrets = decodedConfig.profileSecretsByProfileId()
             val encryptedSecrets = secretStore.load()
+            val embeddedSubscriptionUrls = decodedConfig.subscriptionUrlsById()
+            val encryptedSubscriptionUrls = subscriptionSecretStore.load()
             val legacySecrets = legacyCredentialStore
                 ?.load()
                 .orEmpty()
@@ -62,13 +66,22 @@ class RoutingConfigRepository internal constructor(
             val mergedSecrets = encryptedSecrets
                 .mergeSecrets(legacySecrets)
                 .mergeSecrets(embeddedSecrets)
-            val config = decodedConfig.withProfileSecrets(mergedSecrets)
+            val mergedSubscriptionUrls = embeddedSubscriptionUrls + encryptedSubscriptionUrls
+            val config = decodedConfig
+                .withProfileSecrets(mergedSecrets)
+                .withSubscriptionUrls(mergedSubscriptionUrls)
             val errors = validateRoutingConfig(config)
             if (errors.isNotEmpty()) {
                 RoutingConfigLoadResult(RoutingConfigDefaults.defaultConfig(), "Сохранённая конфигурация некорректна: ${errors.joinToString()}")
             } else {
-                if (embeddedSecrets.isNotEmpty() || legacySecrets.isNotEmpty() || requiresNormalization) {
+                if (
+                    embeddedSecrets.isNotEmpty() ||
+                    embeddedSubscriptionUrls.isNotEmpty() ||
+                    legacySecrets.isNotEmpty() ||
+                    requiresNormalization
+                ) {
                     secretStore.save(mergedSecrets.onlyProfilesIn(config))
+                    subscriptionSecretStore.save(config.subscriptionUrlsById())
                     file.writeTextAtomically(RoutingConfigJson.encode(config, includeSocks5Passwords = false))
                     legacyCredentialStore?.clear()
                 }
@@ -81,6 +94,7 @@ class RoutingConfigRepository internal constructor(
 
     suspend fun save(config: RoutingConfig) = withContext(Dispatchers.IO) {
         secretStore.save(config.profileSecretsByProfileId().onlyProfilesIn(config))
+        subscriptionSecretStore.save(config.subscriptionUrlsById())
         configFile.writeTextAtomically(RoutingConfigJson.encode(config, includeSocks5Passwords = false))
         legacyCredentialStore?.clear()
     }
@@ -104,7 +118,9 @@ class RoutingConfigRepository internal constructor(
     fun importJson(json: String): Result<RoutingConfig> = runCatching {
         val config = RoutingConfigDefaults.ensureRequiredProfiles(
             RoutingConfigJson.decode(json),
-        ).withoutProfileSecrets()
+        )
+            .withoutProfileSecrets()
+            .withoutSubscriptionsForDiagnosticImport()
         val errors = validateRoutingConfig(config)
         require(errors.isEmpty()) { errors.joinToString("\n") }
         config
@@ -168,6 +184,7 @@ object RoutingConfigJson {
         put("version", config.version)
         put("profiles", JSONArray(config.profiles.map { it.toJson(includeSocks5Passwords) }))
         put("profileGroups", JSONArray(config.profileGroups.map { it.toJson() }))
+        put("subscriptions", JSONArray(config.subscriptions.map { it.toJson(includeSocks5Passwords) }))
         put("dnsPolicies", JSONArray(config.dnsPolicies.map { it.toJson() }))
         put("rules", JSONArray(config.rules.map { it.toJson() }))
         put("defaultProfileId", config.defaultProfileId)
@@ -181,6 +198,7 @@ object RoutingConfigJson {
             version = root.optInt("version", CURRENT_ROUTING_CONFIG_VERSION),
             profiles = root.getJSONArray("profiles").mapObjects { it.toTunnelProfile() },
             profileGroups = root.optJSONArray("profileGroups")?.mapObjects { it.toProfileGroup() }.orEmpty(),
+            subscriptions = root.optJSONArray("subscriptions")?.mapObjects { it.toProfileSubscription() }.orEmpty(),
             dnsPolicies = root.getJSONArray("dnsPolicies").mapObjects { it.toDnsPolicy() },
             rules = root.getJSONArray("rules").mapObjects { it.toRouteRule() },
             defaultProfileId = root.optNullableString("defaultProfileId"),
@@ -207,6 +225,8 @@ object RoutingConfigJson {
         put("socks5", socks5?.toJson(includeSecrets))
         put("vless", vless?.toJson(includeSecrets))
         put("singBox", singBox?.toJson(includeSecrets))
+        put("sourceSubscriptionId", sourceSubscriptionId)
+        put("sourceEntryKey", sourceEntryKey)
     }
 
     private fun JSONObject.toTunnelProfile(): TunnelProfile {
@@ -224,8 +244,29 @@ object RoutingConfigJson {
             socks5 = optJSONObject("socks5")?.toSocks5ProfileConfig(),
             vless = optJSONObject("vless")?.toVlessProfileConfig(),
             singBox = optJSONObject("singBox")?.toSingBoxProfileConfig(),
+            sourceSubscriptionId = optNullableString("sourceSubscriptionId"),
+            sourceEntryKey = optNullableString("sourceEntryKey"),
         )
     }
+
+    private fun ProfileSubscription.toJson(includeSecrets: Boolean): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("name", name)
+        put("url", if (includeSecrets) url else REDACTED_SECRET)
+        put("enabled", enabled)
+        put("lastUpdatedAtEpochMs", lastUpdatedAtEpochMs)
+        put("lastProfileCount", lastProfileCount)
+    }
+
+    private fun JSONObject.toProfileSubscription(): ProfileSubscription = ProfileSubscription(
+        id = getString("id"),
+        name = getString("name"),
+        url = optString("url", REDACTED_SECRET),
+        enabled = optBoolean("enabled", true),
+        lastUpdatedAtEpochMs = optLong("lastUpdatedAtEpochMs")
+            .takeIf { has("lastUpdatedAtEpochMs") && !isNull("lastUpdatedAtEpochMs") },
+        lastProfileCount = optInt("lastProfileCount", 0),
+    )
 
     private fun ProfileGroup.toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -508,6 +549,12 @@ internal fun RoutingConfig.profileSecretsByProfileId(): Map<String, ProfileSecre
     profile.id.takeIf { it.isNotBlank() && !secrets.isEmpty }?.let { it to secrets }
 }.toMap()
 
+internal fun RoutingConfig.subscriptionUrlsById(): Map<String, String> = subscriptions.mapNotNull { subscription ->
+    subscription.url
+        .takeIf { subscription.id.isNotBlank() && it.isNotBlank() && it != REDACTED_SECRET }
+        ?.let { subscription.id to it }
+}.toMap()
+
 private fun TunnelProfile.profileSecrets(): ProfileSecrets =
     ProfileSecrets(
         socks5Password = socks5?.password?.takeIf { it.isNotEmpty() && it != REDACTED_SECRET },
@@ -551,6 +598,26 @@ internal fun RoutingConfig.withProfileSecrets(
             singBox = profile.singBox?.let { singBox ->
                 singBox.copy(optionsJson = secrets?.singBoxOptionsJson ?: singBox.optionsJson)
             },
+        )
+    },
+)
+
+internal fun RoutingConfig.withSubscriptionUrls(
+    urlsBySubscriptionId: Map<String, String>,
+): RoutingConfig = copy(
+    subscriptions = subscriptions.map { subscription ->
+        subscription.copy(
+            url = urlsBySubscriptionId[subscription.id] ?: subscription.url,
+        )
+    },
+)
+
+internal fun RoutingConfig.withoutSubscriptionsForDiagnosticImport(): RoutingConfig = copy(
+    subscriptions = emptyList(),
+    profiles = profiles.map { profile ->
+        profile.copy(
+            sourceSubscriptionId = null,
+            sourceEntryKey = null,
         )
     },
 )

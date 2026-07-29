@@ -38,6 +38,13 @@ AES-256-GCM ciphertext. Ключ не сохраняется: он формир�
 текст сначала попадает в предпросмотр со скрытыми секретами; конфигурация не
 изменяется до отдельного подтверждения импорта.
 
+Полный URL подписки может содержать токен и поэтому хранится отдельно под
+AES-256-GCM с ключом Android Keystore. В обычном JSON остаётся только маркер.
+Подписка запрашивается вручную обычным HTTPS GET; приложение не добавляет к
+запросу список приложений, маршруты, статистику или идентификатор пользователя.
+Ответ не сохраняется как журнал и сначала показывается в замаскированном
+предпросмотре. Фонового обновления без отдельного согласия нет.
+
 ## English
 
 ViRouteFS works locally on the device. It contains no advertising, analytics
@@ -73,3 +80,11 @@ code” and is active only while the scanner screen is open. Frames are decoded
 by a local library, closed immediately after processing, never stored, and
 never uploaded. Decoded text first enters the secret-masking preview; the
 configuration is not changed until the user separately confirms the import.
+
+A complete subscription URL may contain an access token and is therefore kept
+separately under AES-256-GCM with an Android Keystore key. The regular JSON
+contains only a marker. A subscription is fetched manually with an ordinary
+HTTPS GET; the app does not attach the installed-app list, routes, statistics,
+or a user identifier. The response is not retained as a log and first appears
+in the secret-masking preview. There is no background refresh without separate
+consent.

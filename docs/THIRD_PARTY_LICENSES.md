@@ -61,6 +61,14 @@ notice is preserved as `app/src/main/assets/licenses/ZXing-NOTICE.txt`.
 - CameraX upstream: https://developer.android.com/jetpack/androidx/releases/camera
 - ZXing upstream: https://github.com/zxing/zxing
 
+SnakeYAML Engine `3.0.1` parses a bounded subset of user-supplied Clash YAML.
+It is distributed under Apache License 2.0. ViRouteFS uses the safe generic
+loader with duplicate keys, recursive keys and non-scalar keys disabled; no
+user-specified Java class is constructed.
+
+- SnakeYAML Engine upstream: https://bitbucket.org/snakeyaml/snakeyaml-engine
+- Maven coordinate: `org.snakeyaml:snakeyaml-engine:3.0.1`
+
 ## Not bundled
 
 - AndroidLibXrayLite (the wrapper was used only as an API/build reference and is not shipped);

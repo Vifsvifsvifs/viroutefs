@@ -1347,6 +1347,12 @@ private fun ProfileImportScreen(
             )
         }
         item {
+            ProfileSubscriptionsCard(
+                config = config,
+                onConfig = onConfig,
+            )
+        }
+        item {
             CardBlock {
                 Text(
                     "Секреты остаются только на устройстве. В предпросмотре пароли и ключи скрыты, а новые профили сначала выключены.",

@@ -211,6 +211,7 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$cameraXVersion")
     implementation("androidx.camera:camera-view:$cameraXVersion")
     implementation("com.google.zxing:core:3.5.4")
+    implementation("org.snakeyaml:snakeyaml-engine:3.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")

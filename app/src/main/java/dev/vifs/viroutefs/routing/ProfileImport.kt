@@ -64,6 +64,9 @@ fun previewProfileImport(source: String): ProfileImportPreview {
             }
             .toList()
     }
+    require(profiles.size <= MAX_SUBSCRIPTION_PROFILES) {
+        "За один раз можно импортировать не более $MAX_SUBSCRIPTION_PROFILES профилей."
+    }
     val unique = profiles.distinctBy(ImportedProfileCandidate::fingerprint)
     if (unique.size < profiles.size) warnings += "Одинаковые профили внутри импорта объединены."
     return ProfileImportPreview(

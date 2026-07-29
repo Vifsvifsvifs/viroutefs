@@ -11,7 +11,7 @@ decrypt HTTPS, upload traffic or run offensive security checks.
 | Secret leak at rest | AES-256-GCM, Android Keystore, `noBackupFilesDir`, redacted main config | Android instrumentation test across upgrade |
 | Secret leak in logs | structured user-safe errors and credential-key redaction | fuzz imported errors and native logs |
 | Export compromise | default JSON export removes secrets | password-encrypted full backup remains M1 |
-| Malicious subscription | no automatic subscriptions in current build | preview, allow-listing and merge rules remain M1 |
+| Malicious subscription | manual HTTPS only; public-address preflight on every redirect; 2 MiB/512-profile bounds; duplicate-key/alias-limited YAML; masked preview; new profiles disabled; stable route-preserving merge | physical provider tests, DNS-rebinding hardening and optional background-consent design remain |
 | Native binary replacement | pinned version and SHA-256 checks before every build | SBOM and reproducible native builds remain |
 | MITM | native TLS/certificate verification is retained | certificate-pin editors and negative server tests |
 | Weak legacy protocol | unavailable until an audited adapter exists; warning required | per-protocol restrictions and physical legacy lab |
@@ -25,7 +25,7 @@ decrypt HTTPS, upload traffic or run offensive security checks.
 * `noBackupFilesDir` protects encrypted secret payloads from Android Backup.
 * sing-box, Xray-core and the TCP/TLS compatibility executable are pinned native
   dependencies and are not downloaded at runtime.
-* Imported profiles, files, QR codes and future subscriptions are untrusted
+* Imported profiles, files, QR codes and subscriptions are untrusted
   input and must be validated before replacing active configuration.
 
 ## Security response

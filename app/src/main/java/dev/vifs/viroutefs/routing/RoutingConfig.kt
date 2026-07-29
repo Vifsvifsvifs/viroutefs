@@ -7,7 +7,7 @@ import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.validateVlessProfile
 import java.util.Locale
 
-const val CURRENT_ROUTING_CONFIG_VERSION = 11
+const val CURRENT_ROUTING_CONFIG_VERSION = 12
 const val MOCK_PROFILE_LIMITATION = "Профиль пока не подключает реальный тоннель. Он используется для симуляции маршрутов."
 const val SOCKS5_RUNTIME_STATUS = "SOCKS5 forwarding is available through the local sing-box TUN runtime."
 const val VLESS_ROUTE_DECISION_STATUS = "VLESS forwarding is available through the local sing-box TUN runtime."
@@ -20,6 +20,7 @@ data class RoutingConfig(
     val dnsPolicies: List<DnsPolicy>,
     val rules: List<RouteRule>,
     val profileGroups: List<ProfileGroup> = emptyList(),
+    val subscriptions: List<ProfileSubscription> = emptyList(),
     val defaultProfileId: String? = null,
     val hostOverrides: List<DnsHostOverride> = emptyList(),
     val emergencyBlockEnabled: Boolean = false,
@@ -159,6 +160,19 @@ data class ProfileGroup(
     val enabled: Boolean = true,
 )
 
+data class ProfileSubscription(
+    val id: String,
+    val name: String,
+    val url: String,
+    val enabled: Boolean = true,
+    val lastUpdatedAtEpochMs: Long? = null,
+    val lastProfileCount: Int = 0,
+) {
+    override fun toString(): String =
+        "ProfileSubscription(id=$id, name=$name, url=<redacted>, enabled=$enabled, " +
+            "lastUpdatedAtEpochMs=$lastUpdatedAtEpochMs, lastProfileCount=$lastProfileCount)"
+}
+
 enum class ProfileGroupMode {
     Manual,
     Latency,
@@ -177,6 +191,8 @@ data class TunnelProfile(
     val socks5: Socks5ProfileConfig? = null,
     val vless: VlessProfileConfig? = null,
     val singBox: SingBoxProfileConfig? = null,
+    val sourceSubscriptionId: String? = null,
+    val sourceEntryKey: String? = null,
 ) {
     val warningText: String?
         get() = when (type) {
@@ -618,6 +634,7 @@ class RouteEngine(
 fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
     val profileIds = config.profiles.map { it.id }.toSet()
     val groupIds = config.profileGroups.map { it.id }.toSet()
+    val subscriptionIds = config.subscriptions.map { it.id }.toSet()
     val targetIds = profileIds + groupIds
     val dnsPolicyIds = config.dnsPolicies.map { it.id }.toSet()
     config.defaultProfileId?.takeIf { it !in targetIds }?.let { add("Основной профиль или группа $it не найдены.") }
@@ -628,6 +645,25 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
     }
     if (config.profileGroups.size != groupIds.size) {
         add("Идентификаторы групп маршрутов должны быть уникальными.")
+    }
+    if (config.subscriptions.size != subscriptionIds.size) {
+        add("Идентификаторы подписок должны быть уникальными.")
+    }
+    if (config.subscriptions.size > 50) {
+        add("Можно сохранить не более 50 подписок.")
+    }
+    config.subscriptions.forEach { subscription ->
+        if (subscription.id.isBlank()) add("Подписка без id: ${subscription.name}")
+        if (subscription.name.isBlank()) add("Подписка ${subscription.id} без имени.")
+        if (subscription.name.length > 120 || subscription.name.any(::isUnsafeSubscriptionDisplayCharacter)) {
+            add("Подписка ${subscription.id}: имя слишком длинное или содержит служебные символы.")
+        }
+        validateSubscriptionUrlSyntax(subscription.url)?.let {
+            add("Подписка ${subscription.name}: $it")
+        }
+        if (subscription.lastProfileCount < 0) {
+            add("Подписка ${subscription.name}: число профилей не может быть отрицательным.")
+        }
     }
     config.profileGroups.forEach { group ->
         val members = group.memberProfileIds.distinct()
@@ -658,6 +694,17 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
     config.profiles.forEach { profile ->
         if (profile.id.isBlank()) add("Профиль без id: ${profile.name}")
         if (profile.name.isBlank()) add("Профиль ${profile.id} без имени.")
+        if (profile.sourceSubscriptionId == null && profile.sourceEntryKey != null) {
+            add("Профиль ${profile.name}: ключ подписки задан без самой подписки.")
+        }
+        profile.sourceSubscriptionId?.let { subscriptionId ->
+            if (subscriptionId !in subscriptionIds) {
+                add("Профиль ${profile.name}: подписка $subscriptionId не найдена.")
+            }
+            if (profile.sourceEntryKey.isNullOrBlank()) {
+                add("Профиль ${profile.name}: отсутствует устойчивый ключ записи подписки.")
+            }
+        }
         if (profile.type == TunnelType.Socks5) {
             val socks5 = profile.socks5
             if (socks5 == null) {
@@ -733,8 +780,18 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
             }
         }
     }
+    config.profiles
+        .filter { it.sourceSubscriptionId != null }
+        .groupBy { it.sourceSubscriptionId to it.sourceEntryKey }
+        .filterValues { it.size > 1 }
+        .forEach { (source, _) ->
+            add("Подписка ${source.first}: ключ записи ${source.second} используется несколько раз.")
+        }
     findExactRouteConflicts(config.rules).forEach { add(it.message) }
     if (config.rules.count { it.enabled && it.type == RouteRuleType.DEFAULT } != 1) {
         add("Должно быть активно ровно одно правило DEFAULT.")
     }
 }
+
+private fun isUnsafeSubscriptionDisplayCharacter(value: Char): Boolean =
+    value.isISOControl() || Character.getType(value) == Character.FORMAT.toInt()
