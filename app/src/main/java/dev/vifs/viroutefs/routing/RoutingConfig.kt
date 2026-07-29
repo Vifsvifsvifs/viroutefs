@@ -7,7 +7,7 @@ import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.validateVlessProfile
 import java.util.Locale
 
-const val CURRENT_ROUTING_CONFIG_VERSION = 7
+const val CURRENT_ROUTING_CONFIG_VERSION = 8
 const val MOCK_PROFILE_LIMITATION = "Профиль пока не подключает реальный тоннель. Он используется для симуляции маршрутов."
 const val SOCKS5_RUNTIME_STATUS = "SOCKS5 forwarding is available through the local sing-box TUN runtime."
 const val VLESS_ROUTE_DECISION_STATUS = "VLESS forwarding is available through the local sing-box TUN runtime."
@@ -43,7 +43,7 @@ fun RoutingConfig.withDefaultRoute(profileId: String): RoutingConfig = copy(
                 },
                 reason = "Traffic without a more specific app, domain, IP, or CIDR rule uses the selected default route.",
                 technicalDetails = "DEFAULT, priority ${rule.priority}. Explicit rules override this route. An unavailable custom route blocks activation.",
-                recommendedAction = "Create rules only for traffic that must use a VPN, another tunnel, Block, or ByeDPI.",
+                recommendedAction = "Create rules only for traffic that must use a VPN, another tunnel, Block, or TCP/TLS compatibility mode.",
             )
         } else {
             rule
@@ -108,7 +108,8 @@ data class DnsHostOverride(
 enum class TunnelType(val label: String, val isMockOnly: Boolean) {
     Direct("System", false),
     Block("Block", false),
-    ByeDpi("ByeDPI", true),
+    ByeDpi("Совместимость TCP/TLS", true),
+    Zapret2("Обработчик пакетов zapret2", true),
     WireGuard("WireGuard", true),
     OpenVpn("OpenVPN", true),
     OpenConnectAnyConnect("OpenConnect / AnyConnect", true),

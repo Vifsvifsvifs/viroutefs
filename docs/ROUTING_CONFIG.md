@@ -8,7 +8,7 @@ Required built-in profiles are restored during migration:
 - `block` — fail-closed target;
 - `byedpi` — disabled by default.
 
-The default rule targets `System`, which means the phone's normal mobile-data or Wi-Fi uplink. Network control can start without adding a VPN profile. Explicit app/domain/IP/CIDR rules may select a VPN/proxy, `Block`, ByeDPI or `System`.
+The default rule targets `System`, which means the phone's normal mobile-data or Wi-Fi uplink. Network control can start without adding a VPN profile. Explicit app/domain/IP/CIDR rules may select a VPN/proxy, `Block`, **Совместимость TCP/TLS** or `System`.
 
 Schema 7 migrates older configurations with no default route, or with the old temporary `Block` default, back to `System`.
 

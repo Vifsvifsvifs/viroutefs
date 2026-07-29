@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
@@ -187,6 +188,13 @@ private fun FlowScannerListScreen(
                         FilterChip(
                             selected = selectedAppPackage == packageName,
                             onClick = { onAppFilter(packageName) },
+                            leadingIcon = {
+                                InstalledApplicationIcon(
+                                    packageName = packageName,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(24.dp),
+                                )
+                            },
                             label = { Text(LocalContext.current.applicationLabel(packageName), maxLines = 1) },
                         )
                     }
@@ -310,6 +318,11 @@ private fun FlowEventRow(text: UiText, event: FlowEventUi, onClick: () -> Unit) 
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        InstalledApplicationIcon(
+            packageName = event.appPackages.firstOrNull(),
+            contentDescription = null,
+            modifier = Modifier.size(40.dp),
+        )
         Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(event.appName, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
@@ -515,6 +528,26 @@ private fun FlowEventDetailsScreen(padding: PaddingValues, text: UiText, event: 
     }
     item {
         CardBlock {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                InstalledApplicationIcon(
+                    packageName = event.appPackages.firstOrNull(),
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                )
+                Column {
+                    Text(event.appName, fontWeight = FontWeight.SemiBold)
+                    event.appPackages.firstOrNull()?.let { packageName ->
+                        Text(
+                            packageName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
             FlowField(text.flowSource, event.sourceLabel)
             FlowField(text.flowApp, event.appName)
             FlowField(text.flowDomain, event.domain)

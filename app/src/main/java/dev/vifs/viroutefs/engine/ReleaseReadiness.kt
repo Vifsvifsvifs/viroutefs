@@ -183,7 +183,7 @@ internal fun evaluateReleaseReadiness(config: RoutingConfig): ReleaseReadinessRe
                 id = "device",
                 title = "Проверка на физическом Android",
                 state = ReadinessState.Attention,
-                summary = "Сборка и тесты проходят, но end-to-end маршрут, DNS, ByeDPI и attribution приложения ещё нужно подтвердить на arm64-телефоне.",
+                summary = "Сборка и тесты проходят, но end-to-end маршрут, DNS, совместимость TCP/TLS и определение приложения ещё нужно подтвердить на arm64-телефоне.",
                 recommendedAction = "Установите beta APK, включите контроль сети с маршрутом System и проверьте несколько приложений и правил.",
             ),
         )

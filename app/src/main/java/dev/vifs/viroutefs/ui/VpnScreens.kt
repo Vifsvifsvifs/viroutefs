@@ -329,9 +329,9 @@ internal fun VpnScreen(
                     onConfig(
                         config.copy(profiles = nextProfiles),
                         if (enabled) {
-                            "ByeDPI включён. Он доступен как отдельный маршрут и не заменяет VPN-шифрование."
+                            "Совместимость TCP/TLS включена. Она доступна как отдельный маршрут и не заменяет VPN-шифрование."
                         } else {
-                            "ByeDPI выключен. Правила, которые указывают на него, будут заблокированы."
+                            "Совместимость TCP/TLS выключена. Правила, которые указывают на неё, будут заблокированы."
                         },
                     )
                 },
@@ -612,7 +612,7 @@ private fun SecurityControlsCard(
                 onCheckedChange = onEmergencyBlockEnabled,
             )
             QuickControlRow(
-                title = "ByeDPI",
+                title = "Совместимость TCP/TLS",
                 subtitle = if (byeDpiEnabled) "Доступен как отдельный маршрут" else "Совместимость TCP/TLS, не VPN",
                 checked = byeDpiEnabled,
                 onCheckedChange = onByeDpiEnabled,

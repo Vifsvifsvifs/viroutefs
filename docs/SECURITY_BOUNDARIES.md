@@ -10,7 +10,7 @@ The built-in `Block` profile is fail-closed. A rule that refers to a disabled,
 unsupported or failed profile is compiled to `Block`; it is never silently sent
 through `Direct`.
 
-ByeDPI runs as a local SOCKS proxy owned by the ViRouteFS application process.
+The user-facing TCP/TLS compatibility mode is implemented by ByeDPI running as a local SOCKS proxy owned by the ViRouteFS application process.
 It is not a VPN, does not encrypt traffic and does not provide anonymity. If its
 process cannot start or exits unexpectedly, routes assigned to it are blocked.
 

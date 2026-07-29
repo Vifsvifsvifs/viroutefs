@@ -9,7 +9,7 @@ ViRouteFS uses one Android `VpnService` and one sing-box routing table.
 3. A matching rule selects exactly one outbound or endpoint.
 4. An unavailable target maps to `Block`; there is no silent fallback to another VPN or `System`.
 5. Unmatched traffic uses the explicit `System` default rule: the phone's normal uplink.
-6. The app’s own UID is excluded from TUN to prevent loops in sing-box and the ByeDPI child process.
+6. The app’s own UID is excluded from TUN to prevent loops in sing-box and the TCP/TLS compatibility child process.
 
 ## Matchers
 
@@ -25,7 +25,7 @@ ViRouteFS uses one Android `VpnService` and one sing-box routing table.
 
 - `System`: the normal Android network path inside the router;
 - `Block`: reject matching traffic;
-- `ByeDPI`: local app-private SOCKS route when enabled.
+- `Совместимость TCP/TLS`: local app-private SOCKS route implemented by the pinned ByeDPI engine when enabled.
 
 User profiles add VLESS, SOCKS5, advanced sing-box outbounds and endpoints.
 

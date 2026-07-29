@@ -43,6 +43,7 @@ AndroidX, Jetpack Compose, Kotlin coroutines and their exact Maven coordinates a
 - strongSwan;
 - WireGuard Android tunnel library;
 - Tor executable;
+- zapret2 (`v1.0.3` was audited under MIT, but its NFQUEUE/root execution model is not bundled);
 - separate OpenConnect, ZeroTier and SoftEther adapters (OpenConnect client support is supplied by bundled sing-box);
 - Naive/Cronet.
 

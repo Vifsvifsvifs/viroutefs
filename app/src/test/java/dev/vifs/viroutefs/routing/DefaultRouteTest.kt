@@ -46,6 +46,33 @@ class DefaultRouteTest {
     }
 
     @Test
+    fun legacyByeDpiDisplayNameMigratesToCompatibilityLabel() {
+        val defaults = RoutingConfigDefaults.defaultConfig()
+        val oldConfig = defaults.copy(
+            version = 7,
+            profiles = defaults.profiles.map { profile ->
+                if (profile.id == RoutingConfigDefaults.BYEDPI_PROFILE_ID) {
+                    profile.copy(name = "ByeDPI")
+                } else {
+                    profile
+                }
+            },
+        )
+
+        val migrated = RoutingConfigDefaults.ensureRequiredProfiles(oldConfig)
+        val compatibilityProfile = migrated.profiles.single {
+            it.id == RoutingConfigDefaults.BYEDPI_PROFILE_ID
+        }
+
+        assertEquals(CURRENT_ROUTING_CONFIG_VERSION, migrated.version)
+        assertEquals(
+            RoutingConfigDefaults.NETWORK_COMPATIBILITY_PROFILE_NAME,
+            compatibilityProfile.name,
+        )
+        assertTrue(compatibilityProfile.platformNotes.orEmpty().contains("ByeDPI"))
+    }
+
+    @Test
     fun unavailableCustomDefaultStillFailsClosed() {
         val config = RoutingConfigDefaults.defaultConfig().copy(
             defaultProfileId = "missing-profile",

@@ -27,11 +27,11 @@ Examples:
 - `windows / chrome.exe`;
 - `any / telegram`.
 
-Android `0.12.0-beta.2` reads the complete installed-app list locally and requests `QUERY_ALL_PACKAGES` because selecting any installed app is a core per-app VPN-routing feature. The list is used only by the route picker and Flow Scanner filters; it is never uploaded, sold, or used for advertising.
+Android `0.12.0-beta.3` reads the complete installed-app list and launcher icons locally and requests `QUERY_ALL_PACKAGES` because selecting any installed app is a core per-app VPN-routing feature. Labels, package names and icons are used only by the route picker and Flow Scanner; they are never uploaded, sold or used for advertising.
 
 ## Later work
 
-The Android build now has a real single-`VpnService` sing-box runtime, DNS enforcement, fail-closed app/domain/IP/CIDR routing and live per-connection metadata. Future milestones cover desktop platform adapters, IKEv2/IPsec and separately audited legacy adapters.
+The Android build now has a real single-`VpnService` sing-box runtime, DNS enforcement, fail-closed app/domain/IP/CIDR routing and live per-connection metadata. Future milestones cover desktop platform adapters, IKEv2/IPsec, separately audited legacy adapters and a rootless zapret2 packet-processing adapter if its strategies can be represented safely inside the existing userspace runtime.
 
 ## 0.4.1-alpha UI milestone
 
