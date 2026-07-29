@@ -7,7 +7,7 @@ import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.validateVlessProfile
 import java.util.Locale
 
-const val CURRENT_ROUTING_CONFIG_VERSION = 8
+const val CURRENT_ROUTING_CONFIG_VERSION = 9
 const val MOCK_PROFILE_LIMITATION = "Профиль пока не подключает реальный тоннель. Он используется для симуляции маршрутов."
 const val SOCKS5_RUNTIME_STATUS = "SOCKS5 forwarding is available through the local sing-box TUN runtime."
 const val VLESS_ROUTE_DECISION_STATUS = "VLESS forwarding is available through the local sing-box TUN runtime."
@@ -84,6 +84,7 @@ data class TunnelProfile(
     val mockOnly: Boolean = type.isMockOnly,
     val platformNotes: String? = null,
     val dnsPolicyId: String? = null,
+    val secretRef: String? = null,
     val socks5: Socks5ProfileConfig? = null,
     val vless: VlessProfileConfig? = null,
     val singBox: SingBoxProfileConfig? = null,

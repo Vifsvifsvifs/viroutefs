@@ -42,7 +42,7 @@ class RoutingConfigRepositoryTest {
         try {
             val repository = RoutingConfigRepository(
                 tempDir,
-                Socks5CredentialStore(File(tempDir, Socks5CredentialStore.FILENAME)),
+                InMemoryProfileSecretStore(),
             )
             val repositoryJson = repository.exportJson(configWithSocks5Password())
 
@@ -58,8 +58,8 @@ class RoutingConfigRepositoryTest {
     fun normalSaveDoesNotWriteSocks5PasswordKeyToRoutingConfigJson() = runTest {
         val tempDir = createTempDirectory("viroutefs-routing-save").toFile()
         try {
-            val credentialsFile = File(tempDir, "no_backup/${Socks5CredentialStore.FILENAME}")
-            val repository = RoutingConfigRepository(tempDir, Socks5CredentialStore(credentialsFile))
+            val secretStore = InMemoryProfileSecretStore()
+            val repository = RoutingConfigRepository(tempDir, secretStore)
             val config = configWithSocks5Password()
 
             repository.save(config)
@@ -68,8 +68,11 @@ class RoutingConfigRepositoryTest {
             val savedJson = routingConfigFile.readText()
             assertFalse(savedJson.contains(SECRET))
             assertFalse(savedJson.contains(PASSWORD_KEY_JSON))
-            assertEquals(mapOf(SOCKS5_ID to SECRET), Socks5CredentialStore(credentialsFile).load())
-            assertTrue(credentialsFile.readText().contains(SECRET))
+            assertTrue(savedJson.contains("profile-secrets:$SOCKS5_ID"))
+            assertEquals(
+                mapOf(SOCKS5_ID to ProfileSecrets(socks5Password = SECRET)),
+                secretStore.load(),
+            )
         } finally {
             tempDir.deleteRecursively()
         }
@@ -104,49 +107,71 @@ class RoutingConfigRepositoryTest {
     fun legacyConfigWithEmbeddedSocks5PasswordCanBeMigratedAndSanitized() {
         val legacyJson = RoutingConfigJson.encode(configWithSocks5Password(), includeSocks5Passwords = true)
         val decoded = RoutingConfigJson.decode(legacyJson)
-        val legacyPasswords = decoded.socks5PasswordsByProfileId()
-        val sanitized = decoded.withoutSocks5Passwords()
+        val legacySecrets = decoded.profileSecretsByProfileId()
+        val sanitized = decoded.withoutProfileSecrets()
         val sanitizedJson = RoutingConfigJson.encode(sanitized)
 
-        assertEquals(mapOf(SOCKS5_ID to SECRET), legacyPasswords)
+        assertEquals(
+            mapOf(SOCKS5_ID to ProfileSecrets(socks5Password = SECRET)),
+            legacySecrets,
+        )
         assertFalse(sanitizedJson.contains(SECRET))
         assertFalse(sanitizedJson.contains(PASSWORD_KEY_JSON))
         assertNull(RoutingConfigJson.decode(sanitizedJson).profiles.first { it.id == SOCKS5_ID }.socks5?.password)
     }
 
     @Test
-    fun credentialStoreKeepsPasswordOutsideRoutingConfigJson() {
+    fun plaintextBetaCredentialFileIsMigratedThenDeleted() = runTest {
         val tempDir = createTempDirectory("viroutefs-socks5-credentials").toFile()
         try {
             val routingConfigFile = File(tempDir, RoutingConfigRepository.ROUTING_CONFIG_FILENAME)
             val credentialsFile = File(tempDir, Socks5CredentialStore.FILENAME)
-            val credentialStore = Socks5CredentialStore(credentialsFile)
-            val config = configWithSocks5Password()
+            val legacyStore = Socks5CredentialStore(credentialsFile)
+            val secretStore = InMemoryProfileSecretStore()
+            val config = configWithSocks5Password(password = null)
 
-            credentialStore.save(config.socks5PasswordsByProfileId())
+            legacyStore.save(mapOf(SOCKS5_ID to SECRET))
             routingConfigFile.writeText(RoutingConfigJson.encode(config))
+            val repository = RoutingConfigRepository(tempDir, secretStore, legacyStore)
+            val loaded = repository.load()
 
             val routingJson = routingConfigFile.readText()
             assertFalse(routingJson.contains(SECRET))
             assertFalse(routingJson.contains(PASSWORD_KEY_JSON))
-            assertEquals(mapOf(SOCKS5_ID to SECRET), credentialStore.load())
-            assertTrue(credentialsFile.readText().contains(SECRET))
+            assertEquals(
+                SECRET,
+                loaded.config.profiles.first { it.id == SOCKS5_ID }.socks5?.password,
+            )
+            assertEquals(
+                mapOf(SOCKS5_ID to ProfileSecrets(socks5Password = SECRET)),
+                secretStore.load(),
+            )
+            assertFalse(credentialsFile.exists())
         } finally {
             tempDir.deleteRecursively()
         }
     }
 
     @Test
-    fun routingConfigJsonStoresVlessConfigLocallyButSummaryHidesUuid() {
+    fun routingConfigJsonRedactsVlessUuidAndRepositoryRestoresIt() = runTest {
         val uuid = "123e4567-e89b-12d3-a456-426614174000"
-        val json = RoutingConfigJson.encode(configWithVless(uuid))
-        val decoded = RoutingConfigJson.decode(json)
-        val decodedVless = decoded.profiles.first { it.id == VLESS_ID }.vless
+        val tempDir = createTempDirectory("viroutefs-vless-secrets").toFile()
+        try {
+            val secretStore = InMemoryProfileSecretStore()
+            val repository = RoutingConfigRepository(tempDir, secretStore)
+            repository.save(configWithVless(uuid))
 
-        assertTrue(json.contains(uuid))
-        assertEquals(uuid, decodedVless?.uuid)
-        assertFalse(decodedVless?.safeSummary().orEmpty().contains(uuid))
-        assertTrue(validateRoutingConfig(decoded).isEmpty())
+            val json = File(tempDir, RoutingConfigRepository.ROUTING_CONFIG_FILENAME).readText()
+            val loadedVless = repository.load().config.profiles.first { it.id == VLESS_ID }.vless
+
+            assertFalse(json.contains(uuid))
+            assertTrue(json.contains(REDACTED_SECRET))
+            assertEquals(uuid, loadedVless?.uuid)
+            assertFalse(loadedVless?.safeSummary().orEmpty().contains(uuid))
+            assertEquals(uuid, secretStore.load()[VLESS_ID]?.vlessUuid)
+        } finally {
+            tempDir.deleteRecursively()
+        }
     }
 
     private fun configWithSocks5Password(password: String? = SECRET): RoutingConfig {

@@ -73,7 +73,7 @@ import dev.vifs.viroutefs.StatusChip
 import dev.vifs.viroutefs.UiText
 import dev.vifs.viroutefs.WarningText
 import dev.vifs.viroutefs.engine.EngineCatalog
-import dev.vifs.viroutefs.engine.ProtocolAvailability
+import dev.vifs.viroutefs.engine.FeatureReadiness
 import dev.vifs.viroutefs.engine.ProtocolDescriptor
 import dev.vifs.viroutefs.engine.ReadinessItem
 import dev.vifs.viroutefs.engine.ReadinessState
@@ -893,7 +893,7 @@ private fun AddVpnTypeSheet(
                     TunnelType.Socks5 -> onAddSocks5
                     TunnelType.VLESS -> onAddVless
                     else -> if (
-                        protocol.availability == ProtocolAvailability.RuntimeReady &&
+                        protocol.canCreateProfile &&
                         singBoxProtocolSchema(protocol.type) != null
                     ) {
                         { onAddSingBox(protocol.type) }
@@ -911,11 +911,15 @@ private fun ProtocolCatalogRow(
     protocol: ProtocolDescriptor,
     onAdd: (() -> Unit)?,
 ) {
-    val ready = protocol.availability == ProtocolAvailability.RuntimeReady && onAdd != null
-    val accent = when (protocol.availability) {
-        ProtocolAvailability.RuntimeReady -> Color(0xFF1B7F46)
-        ProtocolAvailability.AuditedPlanned -> MaterialTheme.colorScheme.primary
-        ProtocolAvailability.LegacyDisabled -> Color(0xFFB3261E)
+    val ready = protocol.canCreateProfile && onAdd != null
+    val accent = when (protocol.readiness) {
+        FeatureReadiness.ProductionReady,
+        FeatureReadiness.DeviceVerified -> Color(0xFF1B7F46)
+        FeatureReadiness.RuntimeIntegrated -> MaterialTheme.colorScheme.primary
+        FeatureReadiness.ConfigSupported,
+        FeatureReadiness.ModelOnly -> Color(0xFF8A5B00)
+        FeatureReadiness.LegacyRestricted,
+        FeatureReadiness.Unavailable -> Color(0xFFB3261E)
     }
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -944,10 +948,14 @@ private fun ProtocolCatalogRow(
                         .padding(horizontal = 9.dp, vertical = 4.dp),
                 ) {
                     Text(
-                        when (protocol.availability) {
-                            ProtocolAvailability.RuntimeReady -> "Работает"
-                            ProtocolAvailability.AuditedPlanned -> "Подключается"
-                            ProtocolAvailability.LegacyDisabled -> "Устарел"
+                        when (protocol.readiness) {
+                            FeatureReadiness.ProductionReady -> "Готов"
+                            FeatureReadiness.DeviceVerified -> "Проверен"
+                            FeatureReadiness.RuntimeIntegrated -> "Нужен тест"
+                            FeatureReadiness.ConfigSupported -> "Конфигурация"
+                            FeatureReadiness.ModelOnly -> "В плане"
+                            FeatureReadiness.LegacyRestricted -> "Legacy"
+                            FeatureReadiness.Unavailable -> "Недоступен"
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = accent,
@@ -967,7 +975,7 @@ private fun ProtocolCatalogRow(
                 }
             } else {
                 Text(
-                    protocol.availability.userLabel,
+                    protocol.readiness.userLabel,
                     style = MaterialTheme.typography.labelSmall,
                     color = accent,
                 )

@@ -10,7 +10,7 @@ import dev.vifs.viroutefs.routing.defaultRouteActivationError
 import dev.vifs.viroutefs.routing.validateRoutingConfig
 
 internal enum class ReadinessState(val userLabel: String) {
-    Ready("Работает"),
+    Ready("Готово локально"),
     Attention("Нужна проверка"),
     Blocked("Нужно исправить"),
     Planned("Осталось реализовать"),
@@ -42,13 +42,19 @@ internal data class ReleaseReadinessReport(
 
 internal fun evaluateReleaseReadiness(config: RoutingConfig): ReleaseReadinessReport {
     val runtimeReady = EngineCatalog.protocols
-        .filter { it.availability == ProtocolAvailability.RuntimeReady }
+        .filter(ProtocolDescriptor::canStartRuntime)
         .map { it.type }
     val planned = EngineCatalog.protocols
-        .filter { it.availability == ProtocolAvailability.AuditedPlanned }
+        .filter {
+            it.readiness == FeatureReadiness.ModelOnly ||
+                it.readiness == FeatureReadiness.ConfigSupported
+        }
         .map { it.type }
     val legacy = EngineCatalog.protocols
-        .filter { it.availability == ProtocolAvailability.LegacyDisabled }
+        .filter {
+            it.backend == EngineBackend.LegacyAdapter ||
+                it.readiness == FeatureReadiness.LegacyRestricted
+        }
         .map { it.type }
 
     val validationErrors = validateRoutingConfig(config)
@@ -59,7 +65,7 @@ internal fun evaluateReleaseReadiness(config: RoutingConfig): ReleaseReadinessRe
         val profile = profileById[rule.targetProfileId]
         profile == null ||
             !profile.enabled ||
-            EngineCatalog.descriptor(profile.type)?.availability != ProtocolAvailability.RuntimeReady
+            EngineCatalog.descriptor(profile.type)?.canStartRuntime != true
     }
     val configuredProfiles = config.profiles.filterNot { profile ->
         profile.id in setOf(
@@ -69,7 +75,7 @@ internal fun evaluateReleaseReadiness(config: RoutingConfig): ReleaseReadinessRe
         )
     }
     val configuredUnavailableProfiles = configuredProfiles.filter { profile ->
-        EngineCatalog.descriptor(profile.type)?.availability != ProtocolAvailability.RuntimeReady
+        EngineCatalog.descriptor(profile.type)?.canStartRuntime != true
     }
     val customDnsPolicies = config.dnsPolicies.filter { policy ->
         policy.enabled && policy.id != RoutingConfigDefaults.SYSTEM_DNS_ID
@@ -142,7 +148,7 @@ internal fun evaluateReleaseReadiness(config: RoutingConfig): ReleaseReadinessRe
                         "Активных исключений: ${explicitRules.size}; правил по приложениям: $appRuleCount."
                 },
                 recommendedAction = unavailableRuleTargets.takeIf { it.isNotEmpty() }
-                    ?.let { "Выберите для этих правил включённый профиль со статусом «Работает»." },
+                    ?.let { "Выберите для этих правил включённый профиль минимум со статусом RuntimeIntegrated." },
             ),
         )
         add(
@@ -166,16 +172,18 @@ internal fun evaluateReleaseReadiness(config: RoutingConfig): ReleaseReadinessRe
             ReadinessItem(
                 id = "runtime",
                 title = "Протоколы в текущем APK",
-                state = ReadinessState.Ready,
-                summary = "${runtimeReady.size} runtime-вариантов: ${runtimeReady.joinToString { it.label }}.",
+                state = ReadinessState.Attention,
+                summary = "${runtimeReady.size} вариантов интегрированы в runtime, но ещё не имеют статуса DeviceVerified: ${runtimeReady.joinToString { it.label }}.",
+                recommendedAction = "Проверьте реальные серверы на физическом телефоне; только после этого статус можно повысить.",
             ),
         )
         add(
             ReadinessItem(
                 id = "scanner",
                 title = "Flow Scanner",
-                state = ReadinessState.Ready,
-                summary = "Показывает метаданные реальных соединений, приложение, маршрут и счётчики без записи содержимого.",
+                state = ReadinessState.Attention,
+                summary = "Подключён к потоку реальных событий runtime, но attribution ещё требует физической проверки Android 10–16.",
+                recommendedAction = "Проверить TCP/UDP и короткие соединения нескольких приложений на физическом телефоне.",
             ),
         )
         add(

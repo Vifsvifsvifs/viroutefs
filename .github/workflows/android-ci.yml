@@ -10,11 +10,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag, for example v0.12.0-beta.3'
+        description: 'Release tag, for example v0.13.0-beta.1'
         required: true
         type: string
       release_name:
-        description: 'Release title, for example ViRouteFS 0.12.0-beta.3'
+        description: 'Release title, for example ViRouteFS 0.13.0-beta.1'
         required: true
         type: string
       prerelease:
@@ -91,9 +91,9 @@ jobs:
           set -euo pipefail
           chmod +x ./gradlew
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            ./gradlew :app:testDebugUnitTest :app:assembleRelease --stacktrace
+            ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleRelease --stacktrace
           else
-            ./gradlew :app:testDebugUnitTest :app:assembleDebug --stacktrace
+            ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug --stacktrace
           fi
 
       - name: Prepare APK artifact
@@ -147,6 +147,37 @@ jobs:
             echo "version_code=${VERSION_CODE}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Verify signed release APK
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+
+          BUILD_TOOLS_DIR="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
+          ZIPALIGN="$BUILD_TOOLS_DIR/zipalign"
+          SHA256="$(sha256sum "$RELEASE_APK" | awk '{print $1}')"
+
+          "$APKSIGNER" verify --verbose --print-certs "$RELEASE_APK" | tee apk-verification.txt
+          "$ZIPALIGN" -c -P 16 4 "$RELEASE_APK"
+          unzip -l "$RELEASE_APK" | grep -q 'lib/arm64-v8a/'
+          printf '%s  %s\n' "$SHA256" "$RELEASE_APK" > "$RELEASE_APK.sha256"
+
+          CERT_SHA256="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' apk-verification.txt | head -n 1)"
+          cat > release-manifest.json <<EOF
+          {
+            "versionName": "${VERSION_NAME}",
+            "versionCode": ${VERSION_CODE},
+            "commit": "${GITHUB_SHA}",
+            "apk": "${RELEASE_APK}",
+            "sha256": "${SHA256}",
+            "certificateSha256": "${CERT_SHA256}",
+            "abi": ["arm64-v8a"],
+            "minSdk": 26,
+            "targetSdk": 36,
+            "zipalign16KiB": true
+          }
+          EOF
+
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
@@ -159,7 +190,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ViRouteFS-release-apk
-          path: ${{ env.RELEASE_APK }}
+          path: |
+            ${{ env.RELEASE_APK }}
+            ${{ env.RELEASE_APK }}.sha256
+            release-manifest.json
+            apk-verification.txt
           if-no-files-found: error
 
   publish-release:
@@ -203,7 +238,9 @@ jobs:
           fi
 
           SHA256="$(sha256sum "release-apk/${RELEASE_APK}" | awk '{print $1}')"
-          printf '%s  %s\n' "$SHA256" "$RELEASE_APK" > "release-apk/${RELEASE_APK}.sha256"
+          grep -q "^${SHA256}  ${RELEASE_APK}$" "release-apk/${RELEASE_APK}.sha256"
+          DOC_VERSION="$(printf '%s' "$VERSION_NAME" | sed -E 's/-beta[.-]?([0-9]+)/_BETA_\1/I')"
+          SOURCE_NOTES="docs/RELEASE_NOTES_${DOC_VERSION}.md"
 
           cat > release-notes.md <<EOF
           ## ViRouteFS ${VERSION_NAME}
@@ -225,6 +262,12 @@ jobs:
 
           If an older APK used a different signing key, Android requires uninstalling it once before this new signing line can be installed.
           EOF
+          if [ -f "$SOURCE_NOTES" ]; then
+            {
+              printf '\n---\n\n'
+              cat "$SOURCE_NOTES"
+            } >> release-notes.md
+          fi
 
           {
             echo "VERSION_NAME=${VERSION_NAME}"
@@ -244,6 +287,8 @@ jobs:
             "$RELEASE_TAG"
             "release-apk/$RELEASE_APK"
             "release-apk/$RELEASE_APK.sha256"
+            "release-apk/release-manifest.json"
+            "release-apk/apk-verification.txt"
             --title "$RELEASE_NAME"
             --notes-file release-notes.md
             --target "$GITHUB_SHA"

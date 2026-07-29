@@ -1,6 +1,6 @@
 # UI direction
 
-## Navigation direction for 0.12.0-beta.3
+## Navigation direction for 0.13.0-beta.1
 
 The main bottom navigation is:
 

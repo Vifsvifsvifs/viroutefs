@@ -27,7 +27,7 @@ Examples:
 - `windows / chrome.exe`;
 - `any / telegram`.
 
-Android `0.12.0-beta.3` reads the complete installed-app list and launcher icons locally and requests `QUERY_ALL_PACKAGES` because selecting any installed app is a core per-app VPN-routing feature. Labels, package names and icons are used only by the route picker and Flow Scanner; they are never uploaded, sold or used for advertising.
+Android `0.13.0-beta.1` reads the complete installed-app list and launcher icons locally and requests `QUERY_ALL_PACKAGES` because selecting any installed app is a core per-app VPN-routing feature. Labels, package names and icons are used only by the route picker and Flow Scanner; they are never uploaded, sold or used for advertising.
 
 ## Later work
 

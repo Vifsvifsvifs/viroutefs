@@ -13,10 +13,10 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import dev.vifs.viroutefs.MainActivity
-import dev.vifs.viroutefs.engine.SingBoxRoutingConfigCompiler
+import dev.vifs.viroutefs.engine.EngineOrchestrator
+import dev.vifs.viroutefs.engine.EngineOrchestratorException
 import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
-import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.defaultRouteActivationError
 import dev.vifs.viroutefs.runtime.tcp.TcpSessionState
 import dev.vifs.viroutefs.R
@@ -38,8 +38,8 @@ class ViRouteVpnService : VpnService() {
     private var tunDescriptor: ParcelFileDescriptor? = null
     private var packetLoopThread: Thread? = null
     private var runtimeThread: Thread? = null
-    private var singBoxEngineRunner: SingBoxEngineRunner? = null
-    private var byeDpiProcessManager: ByeDpiProcessManager? = null
+    private var engineOrchestrator: EngineOrchestrator? = null
+    private var singBoxEngineAdapter: SingBoxEngineAdapter? = null
     @Volatile private var packetLoopStopping: Boolean = false
     @Volatile private var runtimeStopping: Boolean = false
     private var testRoutePreviewActive: Boolean = false
@@ -79,7 +79,7 @@ class ViRouteVpnService : VpnService() {
             VpnServiceController.ACTION_CLEAR_PACKET_SUMMARIES -> {
                 packetHistory.clear()
                 connectionFlows = emptyList()
-                singBoxEngineRunner?.clearConnectionHistory()
+                singBoxEngineAdapter?.clearConnectionHistory()
                 publishActiveState(force = true)
                 return START_STICKY
             }
@@ -190,6 +190,10 @@ class ViRouteVpnService : VpnService() {
             return
         }
         if (runtimeStopping) return
+        loadResult.errorMessage?.let { error ->
+            failRuntime(error)
+            return
+        }
         val config = loadResult.config
         if (!config.emergencyBlockEnabled) {
             defaultRouteActivationError(config)?.let { error ->
@@ -208,26 +212,8 @@ class ViRouteVpnService : VpnService() {
             return
         }
 
-        val byeDpiEnabled = config.profiles.any {
-            it.enabled && it.type == TunnelType.ByeDpi
-        }
-        val byeDpiStart = if (byeDpiEnabled) {
-            ByeDpiProcessManager(applicationContext).also {
-                byeDpiProcessManager = it
-            }.start()
-        } else {
-            null
-        }
-        val compiled = SingBoxRoutingConfigCompiler(
-            byeDpiPort = byeDpiStart?.getOrNull(),
-        ).compile(config)
-        if (!config.emergencyBlockEnabled &&
-            config.defaultProfileId !in compiled.runtimeProfileIds
-        ) {
-            failRuntime("Основной маршрут не прошёл проверку движка. Контроль сети остановлен без скрытого fallback.")
-            return
-        }
-        val runner = SingBoxEngineRunner(
+        val compatibilityAdapter = ByeDpiEngineAdapter(applicationContext)
+        val singBoxAdapter = SingBoxEngineAdapter(
             service = this,
             onTunEstablished = { descriptor ->
                 tunDescriptor = descriptor
@@ -242,40 +228,38 @@ class ViRouteVpnService : VpnService() {
                 }
             },
         )
-        singBoxEngineRunner = runner
-        val startResult = runner.start(compiled.json)
-        if (startResult.isFailure || !runner.isRunning()) {
+        val orchestrator = EngineOrchestrator(
+            listOf(compatibilityAdapter, singBoxAdapter),
+        )
+        engineOrchestrator = orchestrator
+        singBoxEngineAdapter = singBoxAdapter
+        val plan = orchestrator.prepare(config).getOrElse { error ->
+            failRuntime(error.userSafeEngineMessage("Не удалось подготовить сетевые движки."))
+            return
+        }
+        val startResult = orchestrator.start(plan)
+        if (startResult.isFailure || !orchestrator.isHealthy()) {
             failRuntime(
-                startResult.exceptionOrNull()?.localizedMessage
-                    ?: "sing-box did not enter the running state.",
+                startResult.exceptionOrNull()
+                    .userSafeEngineMessage("Сетевые движки не подтвердили готовность."),
             )
             return
         }
 
         runtimeActive = true
         runtimeDetail = buildString {
-            append("sing-box routes IPv4/IPv6 traffic through ")
-            append(compiled.runtimeProfileIds.size)
-            append(" active local profile(s).")
-            loadResult.errorMessage?.let { append(" Config warning: ").append(it) }
-            compiled.warnings.take(2).takeIf { it.isNotEmpty() }?.let {
+            append("Единый VPN-маршрутизатор запущен; активных runtime-профилей: ")
+            append(singBoxAdapter.statistics().activeProfiles)
+            append(".")
+            (plan.warnings + singBoxAdapter.warnings()).take(2).takeIf { it.isNotEmpty() }?.let {
                 append(" ")
                 append(it.joinToString(" "))
-            }
-            byeDpiStart?.exceptionOrNull()?.let {
-                append(" TCP/TLS compatibility error: ")
-                append(it.localizedMessage ?: "the local proxy did not start")
-                append(". Its routes remain fail-closed.")
             }
         }.take(MAX_RUNTIME_DETAIL_LENGTH)
         publishActiveState(force = true)
         updateNotification(VpnServiceStatus.RuntimeActive)
 
-        while (!runtimeStopping && runner.isRunning()) {
-            if (byeDpiStart?.isSuccess == true && byeDpiProcessManager?.isRunning() != true) {
-                failRuntime("The TCP/TLS compatibility engine stopped unexpectedly. The VPN router was stopped to keep its routes fail-closed.")
-                return
-            }
+        while (!runtimeStopping && orchestrator.isHealthy()) {
             try {
                 Thread.sleep(RUNTIME_STATS_INTERVAL_MS)
             } catch (_: InterruptedException) {
@@ -283,7 +267,12 @@ class ViRouteVpnService : VpnService() {
             }
         }
         if (!runtimeStopping) {
-            failRuntime("The sing-box runtime stopped unexpectedly. Traffic remains fail-closed.")
+            val details = orchestrator.snapshot().errors.values.firstOrNull()
+            failRuntime(
+                details?.let {
+                    "${it.summary} ${it.recommendedAction}"
+                } ?: "Один из сетевых движков остановился. Связанный трафик оставлен заблокированным.",
+            )
         }
     }
 
@@ -339,10 +328,9 @@ class ViRouteVpnService : VpnService() {
     private fun closeTunDescriptor() {
         packetLoopStopping = true
         runtimeStopping = true
-        runCatching { singBoxEngineRunner?.stop() }
-        singBoxEngineRunner = null
-        runCatching { byeDpiProcessManager?.stop() }
-        byeDpiProcessManager = null
+        runCatching { engineOrchestrator?.stop() }
+        engineOrchestrator = null
+        singBoxEngineAdapter = null
         tunDescriptor?.let { descriptor ->
             runCatching { descriptor.close() }
         }
@@ -603,4 +591,16 @@ class ViRouteVpnService : VpnService() {
         private const val MAX_RUNTIME_DETAIL_LENGTH = 500
         private const val UI_PUBLISH_INTERVAL_MS = 250L
     }
+}
+
+private fun Throwable?.userSafeEngineMessage(fallback: String): String = when (this) {
+    is EngineOrchestratorException ->
+        "${engineError.summary} ${engineError.recommendedAction}".take(500)
+    null -> fallback
+    else -> (localizedMessage ?: fallback)
+        .replace(
+            Regex("(?i)(password|passphrase|private_key|psk|uuid|auth_key|cookie)\\s*[=:]\\s*[^\\s,;]+"),
+            "$1=<redacted>",
+        )
+        .take(500)
 }

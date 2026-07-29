@@ -27,7 +27,8 @@ class EngineCatalogTest {
     @Test
     fun legacyProtocolsAreNeverClaimedAsRuntimeReady() {
         listOf(TunnelType.Pptp, TunnelType.L2tp, TunnelType.L2tpIpSec, TunnelType.Sstp).forEach { type ->
-            assertEquals(ProtocolAvailability.LegacyDisabled, EngineCatalog.descriptor(type)?.availability)
+            assertEquals(FeatureReadiness.Unavailable, EngineCatalog.descriptor(type)?.readiness)
+            assertEquals(EngineBackend.LegacyAdapter, EngineCatalog.descriptor(type)?.backend)
         }
     }
 
@@ -35,7 +36,7 @@ class EngineCatalogTest {
     fun openVpnAndOpenConnectAreBackedByTheBundledRuntime() {
         listOf(TunnelType.OpenVpn, TunnelType.OpenConnectAnyConnect).forEach { type ->
             val descriptor = EngineCatalog.descriptor(type)
-            assertEquals(ProtocolAvailability.RuntimeReady, descriptor?.availability)
+            assertEquals(FeatureReadiness.RuntimeIntegrated, descriptor?.readiness)
             assertEquals(EngineBackend.SingBox, descriptor?.backend)
         }
     }
@@ -44,17 +45,28 @@ class EngineCatalogTest {
     fun zapret2IsAuditedButNotClaimedAsRuntimeReady() {
         val descriptor = EngineCatalog.descriptor(TunnelType.Zapret2)
 
-        assertEquals(ProtocolAvailability.AuditedPlanned, descriptor?.availability)
+        assertEquals(FeatureReadiness.Unavailable, descriptor?.readiness)
         assertEquals(EngineBackend.Zapret2, descriptor?.backend)
         assertTrue(descriptor?.summary.orEmpty().contains("NFQUEUE"))
     }
 
     @Test
-    fun everySelectableProtocolSupportsRoutingAndCustomDnsInTheProductModel() {
+    fun everyCreatableProtocolSupportsRoutingAndCustomDnsInTheProductModel() {
         assertTrue(EngineCatalog.selectableProtocols.isNotEmpty())
-        EngineCatalog.selectableProtocols.forEach { protocol ->
+        EngineCatalog.selectableProtocols.filter(ProtocolDescriptor::canCreateProfile).forEach { protocol ->
             assertTrue(protocol.supportsRouteRules, protocol.type.name)
             assertTrue(protocol.supportsCustomDns, protocol.type.name)
+        }
+    }
+
+    @Test
+    fun noProtocolClaimsDeviceVerificationWithoutPhysicalEvidence() {
+        EngineCatalog.protocols.forEach { descriptor ->
+            assertTrue(
+                descriptor.readiness != FeatureReadiness.DeviceVerified &&
+                    descriptor.readiness != FeatureReadiness.ProductionReady,
+                descriptor.type.name,
+            )
         }
     }
 }
