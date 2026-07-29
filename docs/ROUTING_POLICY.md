@@ -37,13 +37,27 @@ User profiles add VLESS, SOCKS5, advanced sing-box outbounds and endpoints.
 
 ## Profile groups
 
-Manual groups compile to a sing-box `selector`; changing the chosen member is a
-normal validated configuration reload. Latency groups compile to `urltest` and
-periodically check the user-entered HTTPS URL through only the explicitly
-listed members. `System` is never injected into a group: the user must select it
-as a member. A manual group with any unavailable member fails closed; a latency
-group requires at least two available members. Ordered failover and round-robin
-are not claimed yet.
+Manual, ordered failover and round-robin groups compile to sing-box `selector`
+outbounds. Latency groups compile to native `urltest`. Automatic groups use the
+local libbox command socket to test the user-entered HTTPS URL through only the
+explicitly listed members and to change the selector without restarting the
+VPN. Ordered failover selects the first healthy member and returns to the first
+member when it recovers. Round-robin advances the selector after each observed
+new connection so the following new connection uses the next healthy member;
+existing connections are not interrupted. A simultaneous burst may share the
+currently selected member until its connection events are observed.
+
+`System` is never injected into a group: the user must select it as a member.
+A manual group requires only its selected member to be available, a latency
+group requires two, and failover/round-robin can remain operational in a
+degraded one-member state. If no explicitly listed member is healthy, the
+selector is not replaced with `System`. Switch and availability reasons are
+kept in a bounded in-memory journal shown in Flow Scanner.
+
+sing-box keeps one URL-test history record per outbound. Therefore automatic
+groups that share a member must use the same HTTPS test URL; validation rejects
+different URLs instead of allowing one group's result to silently influence
+another.
 
 ## Emergency block
 
@@ -60,5 +74,5 @@ controlled runtime reload. The replacement is loaded, compiled and checked by
 the native engine while the current route stays active; a rejected replacement
 does not tear down the current generation. A successful change still replaces
 Android's single VPN/TUN and can reconnect briefly. No remote profile
-connectivity test runs in the background unless the user explicitly creates a
-latency group and accepts its disclosed HTTPS availability checks.
+connectivity test runs in the background unless the user explicitly creates an
+automatic group and accepts its disclosed HTTPS availability checks.

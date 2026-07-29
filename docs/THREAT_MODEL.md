@@ -6,6 +6,7 @@ decrypt HTTPS, upload traffic or run offensive security checks.
 | Threat | Primary control | Remaining validation |
 |---|---|---|
 | Traffic leak | one TUN, no implicit `System` fallback, failed routes map to Block | IPv4/IPv6 device matrix and engine-crash tests |
+| Group failover leak | automatic groups contain only explicit members; selector changes use the app-local command socket; no-member state never invents `System` | physical failover, simultaneous round-robin and network-change matrix |
 | DNS leak | DNS rules compile into the same runtime and unavailable detours reject | multi-server failover and routed leak tests |
 | VPN loop | sing-box platform protection plus app-UID exclusion for local child processes | Xray/ByeDPI network-change and IPv6-only tests |
 | Secret leak at rest | AES-256-GCM, Android Keystore, `noBackupFilesDir`, redacted main config | Android instrumentation test across upgrade |

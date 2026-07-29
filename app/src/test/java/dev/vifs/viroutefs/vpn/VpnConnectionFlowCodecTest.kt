@@ -31,4 +31,22 @@ class VpnConnectionFlowCodecTest {
 
         assertEquals(listOf(flow), decoded)
     }
+
+    @Test
+    fun profileGroupEventRoundTripsWithoutDelimiterCorruption() {
+        val event = ProfileGroupRuntimeEvent(
+            timestamp = 123_456_789L,
+            groupId = "office|group",
+            groupName = "Офис | резерв",
+            selectedProfileId = "reserve-2",
+            selectedProfileName = "Резерв №2",
+            reason = ProfileGroupRuntimeReason.Failover,
+            message = "Основной недоступен: выбран резерв | без System.",
+        )
+
+        val encoded = VpnServiceController.encodeProfileGroupEvent(event)
+        val decoded = VpnServiceController.decodeProfileGroupEvents(arrayListOf(encoded))
+
+        assertEquals(listOf(event), decoded)
+    }
 }

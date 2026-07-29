@@ -751,10 +751,11 @@ private fun PrimaryInternetCard(
                         profile?.let { "${it.name} • ${it.type.label}" }
                             ?: group?.let {
                                 "${it.name} • ${
-                                    if (it.mode == dev.vifs.viroutefs.routing.ProfileGroupMode.Manual) {
-                                        "ручная группа"
-                                    } else {
-                                        "минимальная задержка"
+                                    when (it.mode) {
+                                        dev.vifs.viroutefs.routing.ProfileGroupMode.Manual -> "ручная группа"
+                                        dev.vifs.viroutefs.routing.ProfileGroupMode.Latency -> "минимальная задержка"
+                                        dev.vifs.viroutefs.routing.ProfileGroupMode.Failover -> "резерв по порядку"
+                                        dev.vifs.viroutefs.routing.ProfileGroupMode.RoundRobin -> "по кругу"
                                     }
                                 }"
                             }

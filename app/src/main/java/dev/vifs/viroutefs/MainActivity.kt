@@ -571,7 +571,7 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
                         Column(Modifier.weight(1f)) {
                             Text(group.name, fontWeight = FontWeight.SemiBold)
                             Text(
-                                "${if (group.mode == ProfileGroupMode.Manual) "Ручной выбор" else "Минимальная задержка"} • участников: ${group.memberProfileIds.size}",
+                                "${group.mode.displayName()} • участников: ${group.memberProfileIds.size}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -660,15 +660,20 @@ private fun ProfileGroupEditorScreen(
     val mode = ProfileGroupMode.entries.firstOrNull { it.name == modeName }
         ?: ProfileGroupMode.Manual
     val availableProfiles = config.profiles.filter { profile ->
-        profile.enabled &&
-            profile.type != TunnelType.Block &&
+        profile.type != TunnelType.Block &&
             (
-                profile.type == TunnelType.Direct ||
-                    profile.type == TunnelType.ByeDpi ||
-                    profile.type == TunnelType.Socks5 ||
-                    profile.type == TunnelType.VLESS ||
-                    profile.type == TunnelType.XrayVlessReality ||
-                    profile.singBox != null
+                profile.id in memberIds ||
+                    (
+                        profile.enabled &&
+                            (
+                                profile.type == TunnelType.Direct ||
+                                    profile.type == TunnelType.ByeDpi ||
+                                    profile.type == TunnelType.Socks5 ||
+                                    profile.type == TunnelType.VLESS ||
+                                    profile.type == TunnelType.XrayVlessReality ||
+                                    profile.singBox != null
+                                )
+                        )
                 )
     }
     val draft = ProfileGroup(
@@ -720,12 +725,27 @@ private fun ProfileGroupEditorScreen(
                         onClick = { modeName = ProfileGroupMode.Latency.name },
                         label = { Text("Минимальная задержка") },
                     )
+                    FilterChip(
+                        selected = mode == ProfileGroupMode.Failover,
+                        onClick = { modeName = ProfileGroupMode.Failover.name },
+                        label = { Text("Резерв по порядку") },
+                    )
+                    FilterChip(
+                        selected = mode == ProfileGroupMode.RoundRobin,
+                        onClick = { modeName = ProfileGroupMode.RoundRobin.name },
+                        label = { Text("По кругу") },
+                    )
                 }
                 Text(
-                    if (mode == ProfileGroupMode.Manual) {
-                        "ViRouteFS всегда использует выбранного участника. Переключение применяется как проверенное обновление конфигурации."
-                    } else {
-                        "sing-box периодически обращается к указанному HTTPS-адресу через каждого участника и выбирает доступный маршрут с меньшей задержкой."
+                    when (mode) {
+                        ProfileGroupMode.Manual ->
+                            "ViRouteFS всегда использует выбранного участника. Автоматического перехода, в том числе на System, нет."
+                        ProfileGroupMode.Latency ->
+                            "Ядро периодически проверяет участников и выбирает доступный маршрут с меньшей задержкой."
+                        ProfileGroupMode.Failover ->
+                            "Используется первый доступный участник сверху вниз. System попадёт в резерв только при вашем явном выборе."
+                        ProfileGroupMode.RoundRobin ->
+                            "Каждое следующее новое соединение направляется к следующему доступному участнику по кругу."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -736,7 +756,7 @@ private fun ProfileGroupEditorScreen(
             CardBlock {
                 Text("Участники — минимум два", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "В список попадают только включённые и настроенные цели. System используется только если вы выберете его здесь явно.",
+                    "Добавить можно только включённые и настроенные цели. Уже выбранный, но ставший недоступным профиль остаётся видимым, чтобы его можно было убрать. System используется только при явном выборе.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 if (availableProfiles.isEmpty()) {
@@ -766,6 +786,8 @@ private fun ProfileGroupEditorScreen(
                                 Text(
                                     if (profile.id == RoutingConfigDefaults.SYSTEM_PROFILE_ID) {
                                         "Обычный интернет телефона — явный fallback"
+                                    } else if (!profile.enabled || !profile.hasRuntimeConfiguration()) {
+                                        "Недоступен — уберите из группы или исправьте профиль"
                                     } else {
                                         profile.type.label
                                     },
@@ -799,7 +821,57 @@ private fun ProfileGroupEditorScreen(
                 }
             }
         }
-        if (mode == ProfileGroupMode.Latency) {
+        if (mode in setOf(ProfileGroupMode.Failover, ProfileGroupMode.RoundRobin) &&
+            memberIds.size > 1
+        ) {
+            item {
+                CardBlock {
+                    Text("Порядок участников", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (mode == ProfileGroupMode.Failover) {
+                            "Первый — основной, остальные — резервы сверху вниз."
+                        } else {
+                            "Новые соединения проходят по этому списку по кругу."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    memberIds.forEachIndexed { index, id ->
+                        val profile = config.profiles.firstOrNull { it.id == id } ?: return@forEachIndexed
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "${index + 1}. ${routeTargetName(config, profile.id)}",
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                            )
+                            OutlinedButton(
+                                enabled = index > 0,
+                                onClick = {
+                                    memberIds = memberIds.toMutableList().apply {
+                                        val value = removeAt(index)
+                                        add(index - 1, value)
+                                    }
+                                },
+                            ) { Text("↑") }
+                            OutlinedButton(
+                                enabled = index < memberIds.lastIndex,
+                                onClick = {
+                                    memberIds = memberIds.toMutableList().apply {
+                                        val value = removeAt(index)
+                                        add(index + 1, value)
+                                    }
+                                },
+                            ) { Text("↓") }
+                        }
+                    }
+                }
+            }
+        }
+        if (mode != ProfileGroupMode.Manual) {
             item {
                 CardBlock {
                     Text("Проверка доступности", fontWeight = FontWeight.SemiBold)
@@ -821,13 +893,15 @@ private fun ProfileGroupEditorScreen(
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                         )
-                        OutlinedTextField(
-                            value = toleranceText,
-                            onValueChange = { toleranceText = it.filter(Char::isDigit) },
-                            label = { Text("Допуск, мс") },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                        )
+                        if (mode == ProfileGroupMode.Latency) {
+                            OutlinedTextField(
+                                value = toleranceText,
+                                onValueChange = { toleranceText = it.filter(Char::isDigit) },
+                                label = { Text("Допуск, мс") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                            )
+                        }
                     }
                 }
             }
@@ -1544,9 +1618,18 @@ private fun ProfileGroup.isRunnable(config: RoutingConfig): Boolean {
     }
     return when (mode) {
         ProfileGroupMode.Manual ->
-            selectedProfileId in memberIds && availableIds.size == memberIds.size
+            selectedProfileId in availableIds
         ProfileGroupMode.Latency -> availableIds.size >= 2
+        ProfileGroupMode.Failover,
+        ProfileGroupMode.RoundRobin -> availableIds.isNotEmpty()
     }
+}
+
+private fun ProfileGroupMode.displayName(): String = when (this) {
+    ProfileGroupMode.Manual -> "Ручной выбор"
+    ProfileGroupMode.Latency -> "Минимальная задержка"
+    ProfileGroupMode.Failover -> "Резерв по порядку"
+    ProfileGroupMode.RoundRobin -> "По кругу"
 }
 
 private fun unavailableTargetWarning(config: RoutingConfig, rule: RouteRule): List<String> {

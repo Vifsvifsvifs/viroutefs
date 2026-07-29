@@ -59,6 +59,8 @@ class ViRouteVpnService : VpnService() {
     private var lastPacketAt: Long? = null
     private val packetHistory = PacketSummaryHistory()
     @Volatile private var connectionFlows: List<VpnConnectionFlow> = emptyList()
+    @Volatile private var profileGroupEvents: List<ProfileGroupRuntimeEvent> = emptyList()
+    private val profileGroupEventLock = Any()
     private var lastUiPublishAt: Long = 0L
 
     override fun onCreate() {
@@ -85,6 +87,7 @@ class ViRouteVpnService : VpnService() {
             VpnServiceController.ACTION_CLEAR_PACKET_SUMMARIES -> {
                 packetHistory.clear()
                 connectionFlows = emptyList()
+                profileGroupEvents = emptyList()
                 singBoxEngineAdapter?.clearConnectionHistory()
                 publishActiveState(force = true)
                 return START_STICKY
@@ -241,6 +244,24 @@ class ViRouteVpnService : VpnService() {
                     publishActiveStateThrottled()
                 }
             },
+            onProfileGroupAction = { action ->
+                profileGroupEvents = synchronized(profileGroupEventLock) {
+                    (
+                        listOf(
+                            ProfileGroupRuntimeEvent(
+                                timestamp = System.currentTimeMillis(),
+                                groupId = action.groupId,
+                                groupName = action.groupName,
+                                selectedProfileId = action.selectedProfileId,
+                                selectedProfileName = action.selectedProfileName,
+                                reason = action.reason,
+                                message = action.message,
+                            ),
+                        ) + profileGroupEvents
+                        ).take(MAX_PROFILE_GROUP_EVENTS)
+                }
+                publishActiveStateThrottled()
+            },
         )
         val orchestrator = EngineOrchestrator(
             listOf(compatibilityAdapter, xrayAdapter, singBoxAdapter),
@@ -362,6 +383,7 @@ class ViRouteVpnService : VpnService() {
             onTunEstablished = {},
             onLog = {},
             onConnections = {},
+            onProfileGroupAction = {},
         )
         EngineOrchestrator(
             listOf(compatibilityAdapter, xrayAdapter, singBoxAdapter),
@@ -516,6 +538,7 @@ class ViRouteVpnService : VpnService() {
             packetInspectorPaused = packetHistory.isPaused(),
             packetSummaries = packetHistory.newestFirst(),
             connectionFlows = connectionFlows,
+            profileGroupEvents = profileGroupEvents,
         )
     }
 
@@ -539,6 +562,7 @@ class ViRouteVpnService : VpnService() {
             packetInspectorPaused = packetHistory.isPaused(),
             packetSummaries = packetHistory.newestFirst(),
             connectionFlows = connectionFlows,
+            profileGroupEvents = profileGroupEvents,
         )
     }
 
@@ -609,6 +633,7 @@ class ViRouteVpnService : VpnService() {
         packetInspectorPaused: Boolean = false,
         packetSummaries: List<PacketSummary> = emptyList(),
         connectionFlows: List<VpnConnectionFlow> = emptyList(),
+        profileGroupEvents: List<ProfileGroupRuntimeEvent> = emptyList(),
         activeTcpSessions: Int = 0,
         tcpSessionStateStats: Map<TcpSessionState, Int> = emptyMap(),
     ) {
@@ -627,6 +652,7 @@ class ViRouteVpnService : VpnService() {
             packetInspectorPaused = packetInspectorPaused,
             packetSummaries = packetSummaries,
             connectionFlows = connectionFlows,
+            profileGroupEvents = profileGroupEvents,
             activeTcpSessions = activeTcpSessions,
             tcpSessionStateStats = tcpSessionStateStats,
         )
@@ -652,6 +678,10 @@ class ViRouteVpnService : VpnService() {
             .putStringArrayListExtra(
                 VpnServiceController.EXTRA_CONNECTION_FLOWS,
                 ArrayList(connectionFlows.map(VpnServiceController::encodeConnectionFlow)),
+            )
+            .putStringArrayListExtra(
+                VpnServiceController.EXTRA_PROFILE_GROUP_EVENTS,
+                ArrayList(profileGroupEvents.map(VpnServiceController::encodeProfileGroupEvent)),
             )
             .putExtra(VpnServiceController.EXTRA_ACTIVE_TCP_SESSIONS, activeTcpSessions)
             .putStringArrayListExtra(
@@ -689,6 +719,7 @@ class ViRouteVpnService : VpnService() {
         private const val RUNTIME_STATS_INTERVAL_MS = 1_000L
         private const val MAX_RUNTIME_DETAIL_LENGTH = 500
         private const val UI_PUBLISH_INTERVAL_MS = 250L
+        private const val MAX_PROFILE_GROUP_EVENTS = 80
     }
 }
 

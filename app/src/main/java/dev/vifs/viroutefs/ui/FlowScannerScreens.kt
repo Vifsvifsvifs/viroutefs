@@ -55,6 +55,8 @@ import dev.vifs.viroutefs.vpn.Ipv4Protocol
 import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreview
 import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreviewer
 import dev.vifs.viroutefs.vpn.PacketSummary
+import dev.vifs.viroutefs.vpn.ProfileGroupRuntimeEvent
+import dev.vifs.viroutefs.vpn.ProfileGroupRuntimeReason
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
 import dev.vifs.viroutefs.vpn.VpnConnectionFlow
@@ -470,6 +472,9 @@ private fun FlowScannerListScreen(
     }
     if (showRuntime) {
         item { FlowRuntimeRow(vpnState = vpnState, onClick = onRuntimeEvent) }
+    }
+    if (vpnState.profileGroupEvents.isNotEmpty()) {
+        item { ProfileGroupJournalCard(text, vpnState.profileGroupEvents) }
     }
     if (showLiveTestRoute) {
         item { FlowTunTestRouteRow(text = text, vpnState = vpnState, onClick = onLiveEvent) }
@@ -1117,6 +1122,61 @@ private fun VpnConnectionFlow.toFlowEvent(context: Context, config: RoutingConfi
         finishedAt = closedAt,
         durationMillis = closedAt?.let { finished -> (finished - createdAt).coerceAtLeast(0L) },
     )
+}
+
+@Composable
+private fun ProfileGroupJournalCard(
+    text: UiText,
+    events: List<ProfileGroupRuntimeEvent>,
+) = CardBlock {
+    Text(
+        "Переключения групп",
+        fontWeight = FontWeight.SemiBold,
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Text(
+        "Почему резерв или round-robin выбрал именно этот маршрут. Журнал хранится только в памяти до остановки или очистки сканера.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    events.take(8).forEach { event ->
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(event.groupName, fontWeight = FontWeight.SemiBold)
+                Text(
+                    event.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    event.timestamp.formatPacketTime(text),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            StatusChip(event.reason.displayName())
+        }
+    }
+    if (events.size > 8) {
+        Text(
+            "Ещё событий: ${events.size - 8}. Очистка сканера удаляет и этот журнал.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun ProfileGroupRuntimeReason.displayName(): String = when (this) {
+    ProfileGroupRuntimeReason.InitialSelection -> "Старт"
+    ProfileGroupRuntimeReason.PrimaryRecovered -> "Основной"
+    ProfileGroupRuntimeReason.Failover -> "Резерв"
+    ProfileGroupRuntimeReason.RoundRobin -> "По кругу"
+    ProfileGroupRuntimeReason.AvailabilityRecovered -> "Восстановлен"
+    ProfileGroupRuntimeReason.AllUnavailable -> "Недоступно"
 }
 
 internal fun expectedRuntimeTags(config: RoutingConfig, decision: RouteDecision): Set<String> {

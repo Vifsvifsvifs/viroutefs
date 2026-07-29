@@ -115,13 +115,19 @@ fun defaultRouteActivationError(config: RoutingConfig): String? {
             return "В основной группе «${group.name}» не выбран активный профиль."
         }
         val availableMembers = members.filter { it.enabled && it.hasRuntimeConfiguration() }
-        if (group.mode == ProfileGroupMode.Manual &&
-            members.any { !it.enabled || !it.hasRuntimeConfiguration() }
-        ) {
-            return "Один из профилей основной группы «${group.name}» выключен или настроен не полностью. Скрытый fallback запрещён."
+        if (group.mode == ProfileGroupMode.Manual) {
+            val selected = members.firstOrNull { it.id == group.selectedProfileId }
+            if (selected == null || !selected.enabled || !selected.hasRuntimeConfiguration()) {
+                return "Выбранный профиль основной группы «${group.name}» выключен или настроен не полностью."
+            }
         }
         if (group.mode == ProfileGroupMode.Latency && availableMembers.size < 2) {
             return "В основной группе «${group.name}» осталось меньше двух доступных профилей."
+        }
+        if (group.mode in setOf(ProfileGroupMode.Failover, ProfileGroupMode.RoundRobin) &&
+            availableMembers.isEmpty()
+        ) {
+            return "В основной группе «${group.name}» нет ни одного доступного профиля."
         }
         return null
     }
@@ -176,6 +182,8 @@ data class ProfileSubscription(
 enum class ProfileGroupMode {
     Manual,
     Latency,
+    Failover,
+    RoundRobin,
 }
 
 data class TunnelProfile(
@@ -494,7 +502,9 @@ class RouteEngine(
             ?: targetGroup?.let { group ->
                 val memberId = when (group.mode) {
                     ProfileGroupMode.Manual -> group.selectedProfileId
-                    ProfileGroupMode.Latency -> group.memberProfileIds.firstOrNull { memberId ->
+                    ProfileGroupMode.Latency,
+                    ProfileGroupMode.Failover,
+                    ProfileGroupMode.RoundRobin -> group.memberProfileIds.firstOrNull { memberId ->
                         profilesById[memberId]?.let { it.enabled && it.hasRuntimeConfiguration() } == true
                     }
                 }
@@ -578,6 +588,12 @@ class RouteEngine(
         }
         if (targetGroup?.mode == ProfileGroupMode.Latency) {
             add("Фактического участника latency-группы выбирает sing-box по HTTPS-проверке; локальный предпросмотр показывает первого участника, а не угадывает runtime-результат.")
+        }
+        if (targetGroup?.mode == ProfileGroupMode.Failover) {
+            add("Фактического участника резервной группы выбирает runtime-контроллер по порядку и HTTPS-проверке; локальный предпросмотр показывает первый настроенный маршрут.")
+        }
+        if (targetGroup?.mode == ProfileGroupMode.RoundRobin) {
+            add("Round-robin распределяет новые соединения между доступными участниками; локальный предпросмотр показывает первый настроенный маршрут.")
         }
         if (selectedProfile.mockOnly &&
             selectedProfile.type != TunnelType.Socks5 &&
@@ -679,18 +695,35 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
         if (group.mode == ProfileGroupMode.Manual && group.selectedProfileId !in members) {
             add("Группа ${group.name}: выбранный профиль не входит в группу.")
         }
-        if (group.mode == ProfileGroupMode.Latency) {
+        if (group.mode != ProfileGroupMode.Manual) {
             if (!group.testUrl.startsWith("https://", ignoreCase = true)) {
                 add("Группа ${group.name}: проверка доступности должна использовать HTTPS.")
             }
             if (group.testIntervalSeconds !in 30..3600) {
                 add("Группа ${group.name}: интервал проверки должен быть от 30 до 3600 секунд.")
             }
-            if (group.toleranceMs !in 0..2000) {
+            if (group.mode == ProfileGroupMode.Latency && group.toleranceMs !in 0..2000) {
                 add("Группа ${group.name}: допуск задержки должен быть от 0 до 2000 мс.")
             }
         }
     }
+    config.profileGroups
+        .filter { it.mode != ProfileGroupMode.Manual }
+        .forEachIndexed { index, group ->
+            config.profileGroups
+                .filter { it.mode != ProfileGroupMode.Manual }
+                .drop(index + 1)
+                .filter { other ->
+                    group.memberProfileIds.any { it in other.memberProfileIds } &&
+                        group.testUrl.trim() != other.testUrl.trim()
+                }
+                .forEach { other ->
+                    add(
+                        "Группы ${group.name} и ${other.name} используют общий профиль, " +
+                            "поэтому для точной проверки у них должен быть одинаковый HTTPS-адрес.",
+                    )
+                }
+        }
     config.profiles.forEach { profile ->
         if (profile.id.isBlank()) add("Профиль без id: ${profile.name}")
         if (profile.name.isBlank()) add("Профиль ${profile.id} без имени.")

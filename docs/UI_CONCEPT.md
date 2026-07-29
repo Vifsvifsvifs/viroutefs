@@ -28,8 +28,9 @@ DNS and Settings remain full screens, but no longer compete with daily network-c
 - Flow Scanner shows metadata, not decrypted HTTPS or packet contents.
 - DNS per profile/rule is enforced by the runtime and fails closed when its selected detour is unavailable.
 - There is no telemetry, analytics, ads, tracking, cloud log upload or hidden
-  background monitoring. A user-created latency group may run its explicitly
-  disclosed HTTPS availability check.
+  background monitoring. A user-created automatic group may run its explicitly
+  disclosed HTTPS availability check; switch reasons stay in a bounded
+  in-memory journal.
 
 
 See also docs/UI_DIRECTION.md for placeholder and icon direction.

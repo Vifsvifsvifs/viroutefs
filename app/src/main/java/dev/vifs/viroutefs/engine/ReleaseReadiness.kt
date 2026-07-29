@@ -81,8 +81,10 @@ internal fun evaluateReleaseReadiness(config: RoutingConfig): ReleaseReadinessRe
                     memberIds.size < 2 ||
                     when (group.mode) {
                         ProfileGroupMode.Manual ->
-                            group.selectedProfileId !in memberIds || availableIds.size != memberIds.size
+                            group.selectedProfileId !in availableIds
                         ProfileGroupMode.Latency -> availableIds.size < 2
+                        ProfileGroupMode.Failover,
+                        ProfileGroupMode.RoundRobin -> availableIds.isEmpty()
                     }
             }
             else -> true

@@ -76,6 +76,8 @@ internal class SingBoxEngineRunner(
     private val onTunEstablished: (ParcelFileDescriptor) -> Unit,
     private val onLog: (String) -> Unit,
     private val onConnections: (List<VpnConnectionFlow>) -> Unit,
+    private val managedProfileGroups: List<ManagedProfileGroup> = emptyList(),
+    private val onProfileGroupAction: (ProfileGroupRuntimeAction) -> Unit = {},
 ) : PlatformInterface, CommandServerHandler {
     private val appContext = service.applicationContext
     private val connectivity =
@@ -83,6 +85,7 @@ internal class SingBoxEngineRunner(
     private val lock = Any()
     private var commandServer: CommandServer? = null
     private var commandClient: CommandClient? = null
+    private var profileGroupController: ProfileGroupRuntimeController? = null
     private var connections = Connections()
     private var tunDescriptor: ParcelFileDescriptor? = null
     private var defaultInterfaceListener: InterfaceUpdateListener? = null
@@ -170,20 +173,44 @@ internal class SingBoxEngineRunner(
     private fun startConnectionMonitor() {
         val options = CommandClientOptions().apply {
             addCommand(Libbox.CommandConnections)
+            if (managedProfileGroups.isNotEmpty()) addCommand(Libbox.CommandOutbounds)
         }
         val client = CommandClient(ConnectionClientHandler(), options)
+        val groupController = managedProfileGroups.takeIf(List<*>::isNotEmpty)?.let {
+            ProfileGroupRuntimeController(
+                client = client,
+                groups = managedProfileGroups,
+                onAction = onProfileGroupAction,
+                onLog = onLog,
+            )
+        }
+        synchronized(lock) {
+            commandClient = client
+            profileGroupController = groupController
+        }
         runCatching { client.connect() }
             .onSuccess {
-                synchronized(lock) { commandClient = client }
+                groupController?.start()
                 onLog("Flow Scanner connected to the local sing-box connection stream.")
             }
             .onFailure { error ->
+                synchronized(lock) {
+                    if (commandClient === client) commandClient = null
+                    if (profileGroupController === groupController) profileGroupController = null
+                }
+                groupController?.stop()
                 runCatching { client.disconnect() }
                 onLog("Flow Scanner connection stream is unavailable: ${error.message.orEmpty()}")
             }
     }
 
     private fun stopConnectionMonitor() {
+        val groupController = synchronized(lock) {
+            val current = profileGroupController
+            profileGroupController = null
+            current
+        }
+        groupController?.stop()
         val client = synchronized(lock) {
             val current = commandClient
             commandClient = null
@@ -213,7 +240,9 @@ internal class SingBoxEngineRunner(
 
         override fun writeGroups(message: OutboundGroupIterator?) = Unit
 
-        override fun writeOutbounds(message: OutboundGroupItemIterator?) = Unit
+        override fun writeOutbounds(message: OutboundGroupItemIterator?) {
+            synchronized(lock) { profileGroupController }?.updateOutbounds(message)
+        }
 
         override fun writeLogs(messageList: LogIterator?) = Unit
 
@@ -221,6 +250,16 @@ internal class SingBoxEngineRunner(
 
         override fun writeConnectionEvents(events: ConnectionEvents?) {
             if (events == null) return
+            val controller = synchronized(lock) { profileGroupController }
+            if (controller != null) {
+                val eventIterator = events.iterator()
+                while (eventIterator.hasNext()) {
+                    val event = eventIterator.next()
+                    if (event.type.toLong() != Libbox.ConnectionEventNew) continue
+                    val connection = event.connection ?: continue
+                    controller.onNewConnection(connection.chain().toStrings())
+                }
+            }
             val snapshot = synchronized(lock) {
                 connections.applyEvents(events)
                 connections.sortByDate()

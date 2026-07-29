@@ -103,6 +103,51 @@ class SingBoxRoutingConfigTest {
     }
 
     @Test
+    fun failoverAndRoundRobinCompileToControllableSelectorsInMemberOrder() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val first = socksProfile("priority-first", 1085)
+        val second = socksProfile("priority-second", 1086)
+
+        listOf(ProfileGroupMode.Failover, ProfileGroupMode.RoundRobin).forEach { mode ->
+            val group = ProfileGroup(
+                id = "managed-${mode.name}",
+                name = mode.name,
+                mode = mode,
+                memberProfileIds = listOf(second.id, first.id),
+                testUrl = "https://example.com/health",
+                testIntervalSeconds = 90,
+            )
+            val compiled = SingBoxRoutingConfigCompiler().compile(
+                base.copy(
+                    profiles = base.profiles + first + second,
+                    profileGroups = listOf(group),
+                ),
+            )
+            val outbounds = JSONObject(compiled.json).getJSONArray("outbounds")
+            val selector = (0 until outbounds.length())
+                .map(outbounds::getJSONObject)
+                .first { it.optString("tag") == runtimeProfileTag(group.id) }
+            val healthGroup = (0 until outbounds.length())
+                .map(outbounds::getJSONObject)
+                .first { it.optString("tag") == runtimeProfileGroupHealthTag(group.id) }
+            val members = selector.getJSONArray("outbounds")
+                .let { array -> (0 until array.length()).map(array::getString) }
+
+            assertEquals("selector", selector.getString("type"))
+            assertEquals(
+                listOf(runtimeProfileTag(second.id), runtimeProfileTag(first.id)),
+                members,
+            )
+            assertEquals(runtimeProfileTag(second.id), selector.getString("default"))
+            assertEquals("urltest", healthGroup.getString("type"))
+            assertEquals("https://example.com/health", healthGroup.getString("url"))
+            assertEquals("90s", healthGroup.getString("interval"))
+            assertFalse(members.contains(SING_BOX_DIRECT_TAG))
+            assertTrue(compiled.warnings.any { it.contains("System is never added") })
+        }
+    }
+
+    @Test
     fun routeConstraintsCompileToSingBoxNetworkPortsAndRanges() {
         val base = RoutingConfigDefaults.defaultConfig()
         val rule = RouteRule(

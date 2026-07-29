@@ -29,6 +29,16 @@ internal enum class VpnServiceStatus {
     Error,
 }
 
+internal data class ProfileGroupRuntimeEvent(
+    val timestamp: Long,
+    val groupId: String,
+    val groupName: String,
+    val selectedProfileId: String?,
+    val selectedProfileName: String?,
+    val reason: ProfileGroupRuntimeReason,
+    val message: String,
+)
+
 internal data class VpnServiceUiState(
     val status: VpnServiceStatus,
     val detail: String? = null,
@@ -44,6 +54,7 @@ internal data class VpnServiceUiState(
     val packetInspectorPaused: Boolean = false,
     val packetSummaries: List<PacketSummary> = emptyList(),
     val connectionFlows: List<VpnConnectionFlow> = emptyList(),
+    val profileGroupEvents: List<ProfileGroupRuntimeEvent> = emptyList(),
     val activeTcpSessions: Int = 0,
     val tcpSessionStateStats: Map<TcpSessionState, Int> = emptyMap(),
 )
@@ -149,6 +160,9 @@ internal class VpnServiceController(context: Context) {
                         connectionFlows = decodeConnectionFlows(
                             intent.getStringArrayListExtra(EXTRA_CONNECTION_FLOWS),
                         ),
+                        profileGroupEvents = decodeProfileGroupEvents(
+                            intent.getStringArrayListExtra(EXTRA_PROFILE_GROUP_EVENTS),
+                        ),
                         activeTcpSessions = intent.getIntExtra(EXTRA_ACTIVE_TCP_SESSIONS, 0),
                         tcpSessionStateStats = decodeTcpSessionStateStats(
                             intent.getStringArrayListExtra(EXTRA_TCP_SESSION_STATE_STATS),
@@ -185,6 +199,7 @@ internal class VpnServiceController(context: Context) {
         packetInspectorPaused: Boolean = false,
         packetSummaries: List<PacketSummary> = emptyList(),
         connectionFlows: List<VpnConnectionFlow> = emptyList(),
+        profileGroupEvents: List<ProfileGroupRuntimeEvent> = emptyList(),
         activeTcpSessions: Int = 0,
         tcpSessionStateStats: Map<TcpSessionState, Int> = emptyMap(),
     ) {
@@ -203,6 +218,7 @@ internal class VpnServiceController(context: Context) {
             packetInspectorPaused = packetInspectorPaused,
             packetSummaries = packetSummaries,
             connectionFlows = connectionFlows,
+            profileGroupEvents = profileGroupEvents,
             activeTcpSessions = activeTcpSessions,
             tcpSessionStateStats = tcpSessionStateStats,
         )
@@ -223,6 +239,10 @@ internal class VpnServiceController(context: Context) {
             .putExtra(EXTRA_PACKET_INSPECTOR_PAUSED, packetInspectorPaused)
             .putStringArrayListExtra(EXTRA_PACKET_SUMMARIES, ArrayList(packetSummaries.map(::encodePacketSummary)))
             .putStringArrayListExtra(EXTRA_CONNECTION_FLOWS, ArrayList(connectionFlows.map(::encodeConnectionFlow)))
+            .putStringArrayListExtra(
+                EXTRA_PROFILE_GROUP_EVENTS,
+                ArrayList(profileGroupEvents.map(::encodeProfileGroupEvent)),
+            )
             .putExtra(EXTRA_ACTIVE_TCP_SESSIONS, activeTcpSessions)
             .putStringArrayListExtra(EXTRA_TCP_SESSION_STATE_STATS, ArrayList(encodeTcpSessionStateStats(tcpSessionStateStats)))
         appContext.sendBroadcast(intent)
@@ -244,6 +264,7 @@ internal class VpnServiceController(context: Context) {
             packetInspectorPaused = state.packetInspectorPaused,
             packetSummaries = state.packetSummaries,
             connectionFlows = state.connectionFlows,
+            profileGroupEvents = state.profileGroupEvents,
             activeTcpSessions = state.activeTcpSessions,
             tcpSessionStateStats = state.tcpSessionStateStats,
         )
@@ -271,6 +292,7 @@ internal class VpnServiceController(context: Context) {
         internal const val EXTRA_PACKET_INSPECTOR_PAUSED = "packet_inspector_paused"
         internal const val EXTRA_PACKET_SUMMARIES = "packet_summaries"
         internal const val EXTRA_CONNECTION_FLOWS = "connection_flows"
+        internal const val EXTRA_PROFILE_GROUP_EVENTS = "profile_group_events"
         internal const val EXTRA_ACTIVE_TCP_SESSIONS = "active_tcp_sessions"
         internal const val EXTRA_TCP_SESSION_STATE_STATS = "tcp_session_state_stats"
         internal const val NO_PACKET_TIME = -1L
@@ -311,6 +333,22 @@ internal class VpnServiceController(context: Context) {
             .orEmpty()
             .mapNotNull(::decodeConnectionFlow)
 
+        internal fun encodeProfileGroupEvent(event: ProfileGroupRuntimeEvent): String = listOf(
+            event.timestamp.toString(),
+            event.groupId,
+            event.groupName,
+            event.selectedProfileId.orEmpty(),
+            event.selectedProfileName.orEmpty(),
+            event.reason.name,
+            event.message,
+        ).joinToString(PROFILE_GROUP_EVENT_SEPARATOR, transform = ::encodeFlowField)
+
+        internal fun decodeProfileGroupEvents(
+            encoded: ArrayList<String>?,
+        ): List<ProfileGroupRuntimeEvent> = encoded
+            .orEmpty()
+            .mapNotNull(::decodeProfileGroupEvent)
+
         private fun decodeConnectionFlow(encoded: String): VpnConnectionFlow? {
             val parts = encoded.split(CONNECTION_FLOW_SEPARATOR).map(::decodeFlowField)
             if (parts.size != CONNECTION_FLOW_FIELD_COUNT) return null
@@ -331,6 +369,22 @@ internal class VpnServiceController(context: Context) {
                     matchedRule = parts[12],
                     uplinkBytes = parts[13].toLong(),
                     downlinkBytes = parts[14].toLong(),
+                )
+            }.getOrNull()
+        }
+
+        private fun decodeProfileGroupEvent(encoded: String): ProfileGroupRuntimeEvent? {
+            val parts = encoded.split(PROFILE_GROUP_EVENT_SEPARATOR).map(::decodeFlowField)
+            if (parts.size != PROFILE_GROUP_EVENT_FIELD_COUNT) return null
+            return runCatching {
+                ProfileGroupRuntimeEvent(
+                    timestamp = parts[0].toLong(),
+                    groupId = parts[1],
+                    groupName = parts[2],
+                    selectedProfileId = parts[3].takeIf(String::isNotBlank),
+                    selectedProfileName = parts[4].takeIf(String::isNotBlank),
+                    reason = ProfileGroupRuntimeReason.valueOf(parts[5]),
+                    message = parts[6],
                 )
             }.getOrNull()
         }
@@ -371,6 +425,8 @@ internal class VpnServiceController(context: Context) {
         private const val CONNECTION_FLOW_SEPARATOR = "|"
         private const val FLOW_PACKAGE_SEPARATOR = "\u001E"
         private const val CONNECTION_FLOW_FIELD_COUNT = 15
+        private const val PROFILE_GROUP_EVENT_SEPARATOR = "|"
+        private const val PROFILE_GROUP_EVENT_FIELD_COUNT = 7
         private const val TCP_SESSION_STATE_SEPARATOR = ":"
         private const val TCP_SESSION_STATE_FIELD_COUNT = 2
 

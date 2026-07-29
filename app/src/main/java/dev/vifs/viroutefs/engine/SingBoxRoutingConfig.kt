@@ -87,15 +87,18 @@ internal class SingBoxRoutingConfigCompiler(
 
         config.profileGroups.filter { it.enabled }.forEach { group ->
             val memberIds = group.memberProfileIds.distinct()
-            val memberTags = memberIds.mapNotNull(profileTags::get)
+            val memberTags = memberIds.mapNotNull(profileTags::get).distinct()
             val groupTag = runtimeProfileTag(group.id)
             val runtimeGroup = when (group.mode) {
                 ProfileGroupMode.Manual -> {
                     val selectedTag = group.selectedProfileId?.let(profileTags::get)
-                    if (memberTags.size != memberIds.size || selectedTag == null) {
-                        warnings += "Manual group '${group.name}' has an unavailable member or selection and will fail closed."
+                    if (selectedTag == null || selectedTag !in memberTags) {
+                        warnings += "Manual group '${group.name}' has an unavailable selection and will fail closed."
                         null
                     } else {
+                        if (memberTags.size != memberIds.size) {
+                            warnings += "Manual group '${group.name}' excludes unavailable or duplicate runtime members."
+                        }
                         JSONObject()
                             .put("type", "selector")
                             .put("tag", groupTag)
@@ -110,7 +113,7 @@ internal class SingBoxRoutingConfigCompiler(
                         null
                     } else {
                         if (memberTags.size != memberIds.size) {
-                            warnings += "Latency group '${group.name}' excludes unavailable members from its explicit fallback set."
+                            warnings += "Latency group '${group.name}' excludes unavailable or duplicate runtime members from its explicit set."
                         }
                         warnings += "Latency group '${group.name}' performs an explicit HTTPS availability check at ${group.testUrl}."
                         JSONObject()
@@ -119,7 +122,35 @@ internal class SingBoxRoutingConfigCompiler(
                             .put("outbounds", JSONArray(memberTags))
                             .put("url", group.testUrl)
                             .put("interval", "${group.testIntervalSeconds}s")
+                            .put("idle_timeout", "${maxOf(group.testIntervalSeconds, 1800)}s")
                             .put("tolerance", group.toleranceMs)
+                            .put("interrupt_exist_connections", false)
+                    }
+                }
+                ProfileGroupMode.Failover,
+                ProfileGroupMode.RoundRobin -> {
+                    if (memberTags.isEmpty()) {
+                        warnings += "${group.mode.name} group '${group.name}' has no available member and will fail closed."
+                        null
+                    } else {
+                        if (memberTags.size != memberIds.size) {
+                            warnings += "${group.mode.name} group '${group.name}' excludes unavailable or duplicate runtime members from its explicit set."
+                        }
+                        warnings += "${group.mode.name} group '${group.name}' uses explicit HTTPS health checks at ${group.testUrl}; System is never added automatically."
+                        outbounds += JSONObject()
+                            .put("type", "urltest")
+                            .put("tag", runtimeProfileGroupHealthTag(group.id))
+                            .put("outbounds", JSONArray(memberTags))
+                            .put("url", group.testUrl)
+                            .put("interval", "${group.testIntervalSeconds}s")
+                            .put("idle_timeout", "${maxOf(group.testIntervalSeconds, 1800)}s")
+                            .put("tolerance", 0)
+                            .put("interrupt_exist_connections", false)
+                        JSONObject()
+                            .put("type", "selector")
+                            .put("tag", groupTag)
+                            .put("outbounds", JSONArray(memberTags))
+                            .put("default", memberTags.first())
                             .put("interrupt_exist_connections", false)
                     }
                 }
@@ -700,6 +731,9 @@ internal fun runtimeProfileTag(id: String): String = when (id) {
     "direct" -> SING_BOX_DIRECT_TAG
     else -> "profile_${safeRuntimeTagPart(id)}_${id.hashCode().toUInt().toString(16)}"
 }
+
+internal fun runtimeProfileGroupHealthTag(id: String): String =
+    "${runtimeProfileTag(id)}_health"
 
 private fun safeRuntimeTagPart(value: String): String = value
     .lowercase(Locale.ROOT)

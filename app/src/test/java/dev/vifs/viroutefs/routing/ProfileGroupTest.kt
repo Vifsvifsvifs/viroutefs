@@ -59,6 +59,64 @@ class ProfileGroupTest {
     }
 
     @Test
+    fun automaticGroupsRequireHttpsChecksButCanRunDegradedWithOneAvailableMember() {
+        val first = socksProfile("first")
+        val disabled = socksProfile("disabled").copy(enabled = false)
+        val defaults = RoutingConfigDefaults.defaultConfig()
+
+        listOf(ProfileGroupMode.Failover, ProfileGroupMode.RoundRobin).forEach { mode ->
+            val group = ProfileGroup(
+                id = mode.name,
+                name = mode.name,
+                mode = mode,
+                memberProfileIds = listOf(first.id, disabled.id),
+                testUrl = "https://example.com/health",
+            )
+            val config = defaults.copy(
+                profiles = defaults.profiles + first + disabled,
+                profileGroups = listOf(group),
+                defaultProfileId = group.id,
+            )
+
+            assertTrue(validateRoutingConfig(config).isEmpty())
+            assertNull(defaultRouteActivationError(config))
+        }
+    }
+
+    @Test
+    fun overlappingAutomaticGroupsRequireTheSameHealthUrl() {
+        val first = socksProfile("first")
+        val second = socksProfile("second")
+        val third = socksProfile("third")
+        val defaults = RoutingConfigDefaults.defaultConfig()
+        val groups = listOf(
+            ProfileGroup(
+                id = "one",
+                name = "One",
+                mode = ProfileGroupMode.Failover,
+                memberProfileIds = listOf(first.id, second.id),
+                testUrl = "https://one.example/health",
+            ),
+            ProfileGroup(
+                id = "two",
+                name = "Two",
+                mode = ProfileGroupMode.RoundRobin,
+                memberProfileIds = listOf(first.id, third.id),
+                testUrl = "https://two.example/health",
+            ),
+        )
+
+        val errors = validateRoutingConfig(
+            defaults.copy(
+                profiles = defaults.profiles + first + second + third,
+                profileGroups = groups,
+            ),
+        )
+
+        assertTrue(errors.any { it.contains("общий профиль") && it.contains("HTTPS-адрес") })
+    }
+
+    @Test
     fun removingAProfileRemovesBrokenGroupAndFailsItsRulesClosed() {
         val first = socksProfile("first")
         val second = socksProfile("second")
