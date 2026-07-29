@@ -19,7 +19,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -59,6 +61,7 @@ import dev.vifs.viroutefs.vpn.VpnConnectionFlow
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -72,6 +75,43 @@ internal enum class FlowProtocolFilter(val label: String) {
     Udp("UDP"),
     Icmp("ICMP"),
     Other("Другие"),
+}
+
+internal enum class FlowLifecycle {
+    Active,
+    Closed,
+    Snapshot,
+}
+
+internal enum class FlowLifecycleFilter(val label: String) {
+    All("Все"),
+    Active("Активные"),
+    Closed("Завершённые"),
+}
+
+internal enum class FlowActionFilter(val label: String) {
+    All("Любое действие"),
+    Allowed("Разрешено"),
+    Blocked("Заблокировано"),
+}
+
+internal enum class FlowIpVersion {
+    Ipv4,
+    Ipv6,
+    Unknown,
+}
+
+internal enum class FlowIpVersionFilter(val label: String) {
+    All("IPv4 и IPv6"),
+    Ipv4("IPv4"),
+    Ipv6("IPv6"),
+}
+
+internal enum class FlowTimeFilter(val label: String, val maxAgeMillis: Long?) {
+    All("За всё время", null),
+    Last5Minutes("5 минут", 5 * 60 * 1_000L),
+    Last30Minutes("30 минут", 30 * 60 * 1_000L),
+    LastHour("1 час", 60 * 60 * 1_000L),
 }
 
 internal data class FlowEventUi(
@@ -89,6 +129,13 @@ internal data class FlowEventUi(
     val sourceLabel: String,
     val routeCheck: String = "Предварительный расчёт",
     val appPackages: List<String> = emptyList(),
+    val lifecycle: FlowLifecycle = FlowLifecycle.Snapshot,
+    val isBlocked: Boolean = false,
+    val ipVersion: FlowIpVersion = FlowIpVersion.Unknown,
+    val observedAt: Long = 0L,
+    val finishedAt: Long? = null,
+    val durationMillis: Long? = null,
+    val closeReason: String? = null,
 ) {
     val target: String = buildString {
         append(domain)
@@ -111,6 +158,11 @@ internal fun FlowScannerScreen(
     var selectedAppPackage by rememberSaveable { mutableStateOf<String?>(null) }
     var filterQuery by rememberSaveable { mutableStateOf("") }
     var protocolFilterName by rememberSaveable { mutableStateOf(FlowProtocolFilter.All.name) }
+    var lifecycleFilterName by rememberSaveable { mutableStateOf(FlowLifecycleFilter.All.name) }
+    var actionFilterName by rememberSaveable { mutableStateOf(FlowActionFilter.All.name) }
+    var ipVersionFilterName by rememberSaveable { mutableStateOf(FlowIpVersionFilter.All.name) }
+    var timeFilterName by rememberSaveable { mutableStateOf(FlowTimeFilter.All.name) }
+    var filterClockMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var appPickerOpen by rememberSaveable { mutableStateOf(false) }
     var liveDetailsOpen by rememberSaveable { mutableStateOf(false) }
     var runtimeDetailsOpen by rememberSaveable { mutableStateOf(false) }
@@ -126,14 +178,57 @@ internal fun FlowScannerScreen(
     val protocolFilter = FlowProtocolFilter.entries
         .firstOrNull { it.name == protocolFilterName }
         ?: FlowProtocolFilter.All
-    val events = remember(allEvents, selectedAppPackage, filterQuery, protocolFilter) {
+    val lifecycleFilter = FlowLifecycleFilter.entries
+        .firstOrNull { it.name == lifecycleFilterName }
+        ?: FlowLifecycleFilter.All
+    val actionFilter = FlowActionFilter.entries
+        .firstOrNull { it.name == actionFilterName }
+        ?: FlowActionFilter.All
+    val ipVersionFilter = FlowIpVersionFilter.entries
+        .firstOrNull { it.name == ipVersionFilterName }
+        ?: FlowIpVersionFilter.All
+    val timeFilter = FlowTimeFilter.entries
+        .firstOrNull { it.name == timeFilterName }
+        ?: FlowTimeFilter.All
+    LaunchedEffect(timeFilter) {
+        filterClockMillis = System.currentTimeMillis()
+        while (timeFilter.maxAgeMillis != null) {
+            delay(30_000L)
+            filterClockMillis = System.currentTimeMillis()
+        }
+    }
+    val events = remember(
+        allEvents,
+        selectedAppPackage,
+        filterQuery,
+        protocolFilter,
+        lifecycleFilter,
+        actionFilter,
+        ipVersionFilter,
+        timeFilter,
+        filterClockMillis,
+    ) {
         filterFlowEvents(
             events = allEvents,
             appPackage = selectedAppPackage,
             query = filterQuery,
             protocol = protocolFilter,
-        )
+            lifecycle = lifecycleFilter,
+            action = actionFilter,
+            ipVersion = ipVersionFilter,
+            time = timeFilter,
+            nowMillis = filterClockMillis,
+        ).sortedByDescending(FlowEventUi::observedAt)
     }
+    val activeFilterCount = listOf(
+        selectedAppPackage != null,
+        filterQuery.isNotBlank(),
+        protocolFilter != FlowProtocolFilter.All,
+        lifecycleFilter != FlowLifecycleFilter.All,
+        actionFilter != FlowActionFilter.All,
+        ipVersionFilter != FlowIpVersionFilter.All,
+        timeFilter != FlowTimeFilter.All,
+    ).count { it }
     val appFilters = remember(vpnState.connectionFlows, selectedAppPackage, context) {
         (vpnState.connectionFlows
             .flatMap { it.appPackages }
@@ -206,6 +301,12 @@ internal fun FlowScannerScreen(
             selectedAppPackage = selectedAppPackage,
             filterQuery = filterQuery,
             protocolFilter = protocolFilter,
+            lifecycleFilter = lifecycleFilter,
+            actionFilter = actionFilter,
+            ipVersionFilter = ipVersionFilter,
+            timeFilter = timeFilter,
+            totalEventCount = allEvents.size,
+            activeFilterCount = activeFilterCount,
             onOpenAppPicker = { appPickerOpen = true },
             onFilterQuery = {
                 filterQuery = it
@@ -213,6 +314,32 @@ internal fun FlowScannerScreen(
             },
             onProtocolFilter = {
                 protocolFilterName = it.name
+                selectedEventIndex = null
+            },
+            onLifecycleFilter = {
+                lifecycleFilterName = it.name
+                selectedEventIndex = null
+            },
+            onActionFilter = {
+                actionFilterName = it.name
+                selectedEventIndex = null
+            },
+            onIpVersionFilter = {
+                ipVersionFilterName = it.name
+                selectedEventIndex = null
+            },
+            onTimeFilter = {
+                timeFilterName = it.name
+                selectedEventIndex = null
+            },
+            onResetFilters = {
+                selectedAppPackage = null
+                filterQuery = ""
+                protocolFilterName = FlowProtocolFilter.All.name
+                lifecycleFilterName = FlowLifecycleFilter.All.name
+                actionFilterName = FlowActionFilter.All.name
+                ipVersionFilterName = FlowIpVersionFilter.All.name
+                timeFilterName = FlowTimeFilter.All.name
                 selectedEventIndex = null
             },
             exportMessage = exportMessage,
@@ -249,9 +376,20 @@ private fun FlowScannerListScreen(
     selectedAppPackage: String?,
     filterQuery: String,
     protocolFilter: FlowProtocolFilter,
+    lifecycleFilter: FlowLifecycleFilter,
+    actionFilter: FlowActionFilter,
+    ipVersionFilter: FlowIpVersionFilter,
+    timeFilter: FlowTimeFilter,
+    totalEventCount: Int,
+    activeFilterCount: Int,
     onOpenAppPicker: () -> Unit,
     onFilterQuery: (String) -> Unit,
     onProtocolFilter: (FlowProtocolFilter) -> Unit,
+    onLifecycleFilter: (FlowLifecycleFilter) -> Unit,
+    onActionFilter: (FlowActionFilter) -> Unit,
+    onIpVersionFilter: (FlowIpVersionFilter) -> Unit,
+    onTimeFilter: (FlowTimeFilter) -> Unit,
+    onResetFilters: () -> Unit,
     exportMessage: String?,
     onExport: () -> Unit,
     onAppFilter: (String?) -> Unit,
@@ -308,6 +446,28 @@ private fun FlowScannerListScreen(
             }
         }
     }
+    item {
+        FlowFiltersCard(
+            events = events,
+            totalEventCount = totalEventCount,
+            activeFilterCount = activeFilterCount,
+            filterQuery = filterQuery,
+            protocolFilter = protocolFilter,
+            lifecycleFilter = lifecycleFilter,
+            actionFilter = actionFilter,
+            ipVersionFilter = ipVersionFilter,
+            timeFilter = timeFilter,
+            onFilterQuery = onFilterQuery,
+            onProtocolFilter = onProtocolFilter,
+            onLifecycleFilter = onLifecycleFilter,
+            onActionFilter = onActionFilter,
+            onIpVersionFilter = onIpVersionFilter,
+            onTimeFilter = onTimeFilter,
+            onResetFilters = onResetFilters,
+            exportMessage = exportMessage,
+            onExport = onExport,
+        )
+    }
     if (showRuntime) {
         item { FlowRuntimeRow(vpnState = vpnState, onClick = onRuntimeEvent) }
     }
@@ -318,7 +478,9 @@ private fun FlowScannerListScreen(
         item {
             CardBlock {
                 Text(
-                    if (selectedAppPackage == null) {
+                    if (totalEventCount > 0 && activeFilterCount > 0) {
+                        "Соединения есть, но ни одно не подходит под выбранные фильтры. Сбросьте часть условий или нажмите «Сбросить»."
+                    } else if (selectedAppPackage == null) {
                         text.flowEmptyState
                     } else {
                         "У выбранного приложения пока нет соединений. Откройте его и выполните нужное действие — новые подключения появятся здесь."
@@ -332,48 +494,122 @@ private fun FlowScannerListScreen(
             FlowEventRow(text = text, event = events[index], onClick = { onEvent(index) })
         }
     }
-    item {
-        CardBlock {
-            Text("Фильтр соединений", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
-            OutlinedTextField(
-                value = filterQuery,
-                onValueChange = onFilterQuery,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Адрес, домен, пакет или маршрут") },
-                placeholder = { Text("Например: 443, example.com, com.browser") },
-                singleLine = true,
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                FlowProtocolFilter.entries.forEach { option ->
-                    FilterChip(
-                        selected = protocolFilter == option,
-                        onClick = { onProtocolFilter(option) },
-                        label = { Text(option.label) },
-                    )
-                }
-            }
+}
+
+@Composable
+private fun FlowFiltersCard(
+    events: List<FlowEventUi>,
+    totalEventCount: Int,
+    activeFilterCount: Int,
+    filterQuery: String,
+    protocolFilter: FlowProtocolFilter,
+    lifecycleFilter: FlowLifecycleFilter,
+    actionFilter: FlowActionFilter,
+    ipVersionFilter: FlowIpVersionFilter,
+    timeFilter: FlowTimeFilter,
+    onFilterQuery: (String) -> Unit,
+    onProtocolFilter: (FlowProtocolFilter) -> Unit,
+    onLifecycleFilter: (FlowLifecycleFilter) -> Unit,
+    onActionFilter: (FlowActionFilter) -> Unit,
+    onIpVersionFilter: (FlowIpVersionFilter) -> Unit,
+    onTimeFilter: (FlowTimeFilter) -> Unit,
+    onResetFilters: () -> Unit,
+    exportMessage: String?,
+    onExport: () -> Unit,
+) = CardBlock {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Фильтры соединений", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
             Text(
-                "Подходящих событий: ${events.size}",
+                "Показано ${events.size} из $totalEventCount • активно фильтров: $activeFilterCount",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            OutlinedButton(
-                onClick = onExport,
-                enabled = events.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Сохранить отфильтрованные метаданные в CSV")
-            }
-            Text(
-                "Экспорт выполняется только по нажатию и не содержит payload, HTTPS-содержимое или секреты.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            exportMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
+        OutlinedButton(onClick = onResetFilters, enabled = activeFilterCount > 0) {
+            Text("Сбросить")
+        }
+    }
+    OutlinedTextField(
+        value = filterQuery,
+        onValueChange = onFilterQuery,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("Адрес, домен, пакет или маршрут") },
+        placeholder = { Text("Например: 443, example.com, com.browser") },
+        singleLine = true,
+    )
+    FlowFilterRow("Протокол") {
+        FlowProtocolFilter.entries.forEach { option ->
+            FilterChip(
+                selected = protocolFilter == option,
+                onClick = { onProtocolFilter(option) },
+                label = { Text(option.label) },
+            )
+        }
+    }
+    FlowFilterRow("Состояние") {
+        FlowLifecycleFilter.entries.forEach { option ->
+            FilterChip(
+                selected = lifecycleFilter == option,
+                onClick = { onLifecycleFilter(option) },
+                label = { Text(option.label) },
+            )
+        }
+    }
+    FlowFilterRow("Результат") {
+        FlowActionFilter.entries.forEach { option ->
+            FilterChip(
+                selected = actionFilter == option,
+                onClick = { onActionFilter(option) },
+                label = { Text(option.label) },
+            )
+        }
+    }
+    FlowFilterRow("IP-версия") {
+        FlowIpVersionFilter.entries.forEach { option ->
+            FilterChip(
+                selected = ipVersionFilter == option,
+                onClick = { onIpVersionFilter(option) },
+                label = { Text(option.label) },
+            )
+        }
+    }
+    FlowFilterRow("Начало") {
+        FlowTimeFilter.entries.forEach { option ->
+            FilterChip(
+                selected = timeFilter == option,
+                onClick = { onTimeFilter(option) },
+                label = { Text(option.label) },
+            )
+        }
+    }
+    OutlinedButton(
+        onClick = onExport,
+        enabled = events.isNotEmpty(),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text("Сохранить показанные метаданные в CSV")
+    }
+    Text(
+        "Экспорт выполняется только по нажатию и не содержит payload, HTTPS-содержимое или секреты.",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    exportMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+}
+
+@Composable
+private fun FlowFilterRow(label: String, content: @Composable () -> Unit) {
+    Text(label, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        content()
     }
 }
 
@@ -382,8 +618,14 @@ internal fun filterFlowEvents(
     appPackage: String?,
     query: String,
     protocol: FlowProtocolFilter,
+    lifecycle: FlowLifecycleFilter = FlowLifecycleFilter.All,
+    action: FlowActionFilter = FlowActionFilter.All,
+    ipVersion: FlowIpVersionFilter = FlowIpVersionFilter.All,
+    time: FlowTimeFilter = FlowTimeFilter.All,
+    nowMillis: Long = System.currentTimeMillis(),
 ): List<FlowEventUi> {
     val normalizedQuery = query.trim()
+    val oldestAllowed = time.maxAgeMillis?.let { maxAge -> nowMillis - maxAge }
     return events.filter { event ->
         val appMatches = appPackage == null || appPackage in event.appPackages
         val eventProtocol = event.portProtocol
@@ -397,6 +639,23 @@ internal fun filterFlowEvents(
             FlowProtocolFilter.Icmp -> eventProtocol == "ICMP"
             FlowProtocolFilter.Other -> eventProtocol !in setOf("TCP", "UDP", "ICMP")
         }
+        val lifecycleMatches = when (lifecycle) {
+            FlowLifecycleFilter.All -> true
+            FlowLifecycleFilter.Active -> event.lifecycle == FlowLifecycle.Active
+            FlowLifecycleFilter.Closed -> event.lifecycle == FlowLifecycle.Closed
+        }
+        val actionMatches = when (action) {
+            FlowActionFilter.All -> true
+            FlowActionFilter.Allowed -> !event.isBlocked
+            FlowActionFilter.Blocked -> event.isBlocked
+        }
+        val ipVersionMatches = when (ipVersion) {
+            FlowIpVersionFilter.All -> true
+            FlowIpVersionFilter.Ipv4 -> event.ipVersion == FlowIpVersion.Ipv4
+            FlowIpVersionFilter.Ipv6 -> event.ipVersion == FlowIpVersion.Ipv6
+        }
+        val timeMatches = oldestAllowed == null ||
+            (event.observedAt > 0L && event.observedAt in oldestAllowed..nowMillis)
         val queryMatches = normalizedQuery.isBlank() || listOf(
             event.appName,
             event.domain,
@@ -407,7 +666,13 @@ internal fun filterFlowEvents(
             event.routeCheck,
             event.appPackages.joinToString(" "),
         ).any { it.contains(normalizedQuery, ignoreCase = true) }
-        appMatches && protocolMatches && queryMatches
+        appMatches &&
+            protocolMatches &&
+            lifecycleMatches &&
+            actionMatches &&
+            ipVersionMatches &&
+            timeMatches &&
+            queryMatches
     }
 }
 
@@ -424,6 +689,13 @@ internal fun exportFlowEventsCsv(events: List<FlowEventUi>): String = buildStrin
             "reason",
             "route_check",
             "status",
+            "lifecycle",
+            "action",
+            "ip_version",
+            "observed_at_epoch_ms",
+            "finished_at_epoch_ms",
+            "duration_ms",
+            "close_reason",
             "source",
         ).joinToString(","),
     )
@@ -440,6 +712,13 @@ internal fun exportFlowEventsCsv(events: List<FlowEventUi>): String = buildStrin
                 event.routeReason,
                 event.routeCheck,
                 event.status,
+                event.lifecycle.name,
+                if (event.isBlocked) "blocked" else "allowed",
+                event.ipVersion.name,
+                event.observedAt.toString(),
+                event.finishedAt?.toString().orEmpty(),
+                event.durationMillis?.toString().orEmpty(),
+                event.closeReason.orEmpty(),
                 event.sourceLabel,
             ).joinToString(",") { value -> value.toCsvCell() },
         )
@@ -831,6 +1110,12 @@ private fun VpnConnectionFlow.toFlowEvent(context: Context, config: RoutingConfi
         sourceLabel = "Живой поток",
         routeCheck = routeCheck,
         appPackages = appPackages,
+        lifecycle = if (isActive) FlowLifecycle.Active else FlowLifecycle.Closed,
+        isBlocked = blocked,
+        ipVersion = detectIpVersion(destinationHost),
+        observedAt = createdAt,
+        finishedAt = closedAt,
+        durationMillis = closedAt?.let { finished -> (finished - createdAt).coerceAtLeast(0L) },
     )
 }
 
@@ -875,6 +1160,19 @@ private fun endpointHost(endpoint: String): String = when {
     endpoint.startsWith("[") -> endpoint.substringAfter('[').substringBefore(']')
     endpoint.count { it == ':' } == 1 -> endpoint.substringBeforeLast(':')
     else -> endpoint
+}
+
+internal fun detectIpVersion(host: String): FlowIpVersion {
+    val normalized = host.trim().removePrefix("[").removeSuffix("]")
+    if (':' in normalized) return FlowIpVersion.Ipv6
+    val octets = normalized.split('.')
+    return if (octets.size == 4 &&
+        octets.all { octet -> octet.isNotEmpty() && octet.all(Char::isDigit) && octet.toIntOrNull() in 0..255 }
+    ) {
+        FlowIpVersion.Ipv4
+    } else {
+        FlowIpVersion.Unknown
+    }
 }
 
 private fun endpointPort(endpoint: String): Int? = when {
@@ -943,6 +1241,17 @@ private fun FlowEventDetailsScreen(padding: PaddingValues, text: UiText, event: 
             FlowField(text.flowDomain, event.domain)
             FlowField(text.flowResolvedIp, event.resolvedIp ?: text.none)
             FlowField(text.flowPortProtocol, event.portProtocol)
+            FlowField("Версия IP", event.ipVersion.userLabel)
+            FlowField("Состояние", event.lifecycle.userLabel)
+            FlowField("Результат", if (event.isBlocked) "Заблокировано" else "Не заблокировано")
+            if (event.observedAt > 0L) {
+                FlowField("Начало", DateFormat.getDateTimeInstance().format(Date(event.observedAt)))
+            }
+            event.finishedAt?.let { finishedAt ->
+                FlowField("Окончание", DateFormat.getDateTimeInstance().format(Date(finishedAt)))
+                FlowField("Длительность", event.durationMillis.toReadableDuration())
+                FlowField("Причина закрытия", event.closeReason ?: "Движок не сообщил")
+            }
             FlowField(text.flowDnsPolicy, event.dnsPolicy)
             FlowField(text.flowSelectedRoute, event.selectedRoute)
             FlowField("Проверка маршрута", event.routeCheck)
@@ -971,6 +1280,34 @@ private fun FlowField(label: String, value: String) = Row(
 ) {
     Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(0.75f))
     Text(value, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+}
+
+private val FlowIpVersion.userLabel: String
+    get() = when (this) {
+        FlowIpVersion.Ipv4 -> "IPv4"
+        FlowIpVersion.Ipv6 -> "IPv6"
+        FlowIpVersion.Unknown -> "Не определена"
+    }
+
+private val FlowLifecycle.userLabel: String
+    get() = when (this) {
+        FlowLifecycle.Active -> "Активно"
+        FlowLifecycle.Closed -> "Завершено"
+        FlowLifecycle.Snapshot -> "Предварительный расчёт"
+    }
+
+private fun Long?.toReadableDuration(): String {
+    val millis = this ?: return "не определена"
+    if (millis < 1_000L) return "$millis мс"
+    val totalSeconds = millis / 1_000L
+    val hours = totalSeconds / 3_600L
+    val minutes = (totalSeconds % 3_600L) / 60L
+    val seconds = totalSeconds % 60L
+    return buildList {
+        if (hours > 0L) add("$hours ч")
+        if (minutes > 0L) add("$minutes мин")
+        if (seconds > 0L || isEmpty()) add("$seconds с")
+    }.joinToString(" ")
 }
 
 @Composable
@@ -1019,6 +1356,10 @@ private fun PacketSummary.toFlowEvent(preview: LiveRouteDecisionPreview): FlowEv
         },
         sourceLabel = "Метаданные TUN",
         routeCheck = "Предварительный расчёт: это тестовая сводка TUN, а не подтверждение живого outbound.",
+        lifecycle = FlowLifecycle.Snapshot,
+        isBlocked = blocked,
+        ipVersion = FlowIpVersion.Ipv4,
+        observedAt = timestamp,
     )
 }
 

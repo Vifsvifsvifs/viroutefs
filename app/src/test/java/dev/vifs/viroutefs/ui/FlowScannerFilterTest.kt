@@ -140,12 +140,85 @@ class FlowScannerFilterTest {
         assertTrue(runtimeProfileTag("work-vpn") in tags)
     }
 
+    @Test
+    fun combinesLifecycleActionIpVersionAndTimeFilters() {
+        val now = 1_700_000_000_000L
+        val activeBlockedIpv6 = event(
+            protocol = "443 / TCP",
+            lifecycle = FlowLifecycle.Active,
+            blocked = true,
+            ipVersion = FlowIpVersion.Ipv6,
+            observedAt = now - 60_000L,
+        )
+        val closedAllowedIpv6 = event(
+            protocol = "443 / TCP",
+            lifecycle = FlowLifecycle.Closed,
+            ipVersion = FlowIpVersion.Ipv6,
+            observedAt = now - 60_000L,
+        )
+        val oldActiveBlockedIpv6 = activeBlockedIpv6.copy(
+            domain = "old.example",
+            observedAt = now - 10 * 60_000L,
+        )
+
+        assertEquals(
+            listOf(activeBlockedIpv6),
+            filterFlowEvents(
+                events = listOf(activeBlockedIpv6, closedAllowedIpv6, oldActiveBlockedIpv6),
+                appPackage = null,
+                query = "",
+                protocol = FlowProtocolFilter.All,
+                lifecycle = FlowLifecycleFilter.Active,
+                action = FlowActionFilter.Blocked,
+                ipVersion = FlowIpVersionFilter.Ipv6,
+                time = FlowTimeFilter.Last5Minutes,
+                nowMillis = now,
+            ),
+        )
+    }
+
+    @Test
+    fun lifecycleFilterDoesNotMislabelPacketSnapshotAsLiveConnection() {
+        val snapshot = event(protocol = "443 / TCP", lifecycle = FlowLifecycle.Snapshot)
+
+        assertTrue(
+            filterFlowEvents(
+                events = listOf(snapshot),
+                appPackage = null,
+                query = "",
+                protocol = FlowProtocolFilter.All,
+                lifecycle = FlowLifecycleFilter.Active,
+            ).isEmpty(),
+        )
+        assertTrue(
+            filterFlowEvents(
+                events = listOf(snapshot),
+                appPackage = null,
+                query = "",
+                protocol = FlowProtocolFilter.All,
+                lifecycle = FlowLifecycleFilter.Closed,
+            ).isEmpty(),
+        )
+    }
+
+    @Test
+    fun detectsIpv4Ipv6AndUnknownDestinations() {
+        assertEquals(FlowIpVersion.Ipv4, detectIpVersion("192.0.2.1"))
+        assertEquals(FlowIpVersion.Ipv6, detectIpVersion("[2001:db8::1]"))
+        assertEquals(FlowIpVersion.Unknown, detectIpVersion("example.com"))
+        assertEquals(FlowIpVersion.Unknown, detectIpVersion("999.0.0.1"))
+    }
+
     private fun event(
         app: String = "App",
         domain: String = "example.test",
         protocol: String,
         route: String = "System",
         packages: List<String> = emptyList(),
+        lifecycle: FlowLifecycle = FlowLifecycle.Snapshot,
+        blocked: Boolean = false,
+        ipVersion: FlowIpVersion = FlowIpVersion.Ipv4,
+        observedAt: Long = 1_700_000_000_000L,
     ) = FlowEventUi(
         appName = app,
         domain = domain,
@@ -160,5 +233,9 @@ class FlowScannerFilterTest {
         technicalDetails = "none",
         sourceLabel = "test",
         appPackages = packages,
+        lifecycle = lifecycle,
+        isBlocked = blocked,
+        ipVersion = ipVersion,
+        observedAt = observedAt,
     )
 }
