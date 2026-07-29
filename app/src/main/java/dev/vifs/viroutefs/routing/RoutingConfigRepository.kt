@@ -87,6 +87,20 @@ class RoutingConfigRepository internal constructor(
 
     fun exportJson(config: RoutingConfig): String = RoutingConfigJson.encode(config, includeSocks5Passwords = false)
 
+    suspend fun exportEncryptedBackup(
+        config: RoutingConfig,
+        password: CharArray,
+    ): ByteArray = withContext(Dispatchers.Default) {
+        RoutingConfigBackup.encrypt(config, password)
+    }
+
+    suspend fun previewEncryptedBackup(
+        bytes: ByteArray,
+        password: CharArray,
+    ): RoutingConfig = withContext(Dispatchers.Default) {
+        RoutingConfigBackup.decrypt(bytes, password)
+    }
+
     fun importJson(json: String): Result<RoutingConfig> = runCatching {
         val config = RoutingConfigDefaults.ensureRequiredProfiles(
             RoutingConfigJson.decode(json),
