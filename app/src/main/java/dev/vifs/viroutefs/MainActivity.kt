@@ -530,7 +530,7 @@ data class InstalledAppUi(
 )
 
 @Suppress("DEPRECATION")
-private fun android.content.Context.loadInstalledAppsForRouting(): List<InstalledAppUi> {
+internal fun android.content.Context.loadInstalledAppsForRouting(): List<InstalledAppUi> {
     val applications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         packageManager.getInstalledApplications(
             PackageManager.ApplicationInfoFlags.of(0),

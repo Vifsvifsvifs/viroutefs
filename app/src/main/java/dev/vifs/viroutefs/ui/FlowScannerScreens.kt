@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -30,10 +31,12 @@ import androidx.compose.ui.unit.dp
 import dev.vifs.viroutefs.CardBlock
 import dev.vifs.viroutefs.Details
 import dev.vifs.viroutefs.Header
+import dev.vifs.viroutefs.InstalledAppUi
 import dev.vifs.viroutefs.ScreenList
 import dev.vifs.viroutefs.StatusChip
 import dev.vifs.viroutefs.UiText
 import dev.vifs.viroutefs.WarningText
+import dev.vifs.viroutefs.loadInstalledAppsForRouting
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.engine.SING_BOX_BLOCK_TAG
@@ -87,8 +90,10 @@ internal fun FlowScannerScreen(
     val context = LocalContext.current
     var selectedEventIndex by rememberSaveable { mutableStateOf<Int?>(null) }
     var selectedAppPackage by rememberSaveable { mutableStateOf<String?>(null) }
+    var appPickerOpen by rememberSaveable { mutableStateOf(false) }
     var liveDetailsOpen by rememberSaveable { mutableStateOf(false) }
     var runtimeDetailsOpen by rememberSaveable { mutableStateOf(false) }
+    val installedApps = remember(context) { context.loadInstalledAppsForRouting() }
     val allEvents = remember(vpnState.connectionFlows, vpnState.packetSummaries, config, context) {
         val previewer = LiveRouteDecisionPreviewer(config)
         vpnState.connectionFlows.map { flow -> flow.toFlowEvent(context, config) } +
@@ -99,9 +104,10 @@ internal fun FlowScannerScreen(
             allEvents.filter { packageName in it.appPackages }
         } ?: allEvents
     }
-    val appFilters = remember(vpnState.connectionFlows, context) {
-        vpnState.connectionFlows
+    val appFilters = remember(vpnState.connectionFlows, selectedAppPackage, context) {
+        (vpnState.connectionFlows
             .flatMap { it.appPackages }
+            .plus(listOfNotNull(selectedAppPackage)))
             .distinct()
             .sortedBy { context.applicationLabel(it).lowercase() }
     }
@@ -110,6 +116,17 @@ internal fun FlowScannerScreen(
     val showRuntime = vpnState.status == VpnServiceStatus.RuntimeActive
 
     when {
+        appPickerOpen -> FlowAppPickerScreen(
+            padding = padding,
+            apps = installedApps,
+            selectedPackage = selectedAppPackage,
+            onBack = { appPickerOpen = false },
+            onSelect = { packageName ->
+                selectedAppPackage = packageName
+                selectedEventIndex = null
+                appPickerOpen = false
+            },
+        )
         runtimeDetailsOpen -> FlowRuntimeDetailsScreen(
             padding = padding,
             text = text,
@@ -137,6 +154,7 @@ internal fun FlowScannerScreen(
             events = events,
             appFilters = appFilters,
             selectedAppPackage = selectedAppPackage,
+            onOpenAppPicker = { appPickerOpen = true },
             onAppFilter = {
                 selectedAppPackage = it
                 selectedEventIndex = null
@@ -163,6 +181,7 @@ private fun FlowScannerListScreen(
     events: List<FlowEventUi>,
     appFilters: List<String>,
     selectedAppPackage: String?,
+    onOpenAppPicker: () -> Unit,
     onAppFilter: (String?) -> Unit,
     onClear: () -> Unit,
     onPause: (Boolean) -> Unit,
@@ -171,10 +190,25 @@ private fun FlowScannerListScreen(
     onEvent: (Int) -> Unit,
 ) = ScreenList(padding) {
     item { FlowControlCard(text, vpnState, onClear, onPause) }
-    if (appFilters.isNotEmpty()) {
-        item {
-            CardBlock {
-                Text("Отслеживать приложение", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+    item {
+        CardBlock {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Отслеживать приложение", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        selectedAppPackage?.let { LocalContext.current.applicationLabel(it) }
+                            ?: "Показываются все приложения",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                OutlinedButton(onClick = onOpenAppPicker) { Text("Выбрать") }
+            }
+            if (appFilters.isNotEmpty()) {
                 Row(
                     modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -208,11 +242,113 @@ private fun FlowScannerListScreen(
     if (showLiveTestRoute) {
         item { FlowTunTestRouteRow(text = text, vpnState = vpnState, onClick = onLiveEvent) }
     }
-    if (events.isEmpty() && !showLiveTestRoute && !showRuntime) {
-        item { CardBlock { Text(text.flowEmptyState, style = MaterialTheme.typography.bodySmall) } }
+    if (events.isEmpty()) {
+        item {
+            CardBlock {
+                Text(
+                    if (selectedAppPackage == null) {
+                        text.flowEmptyState
+                    } else {
+                        "У выбранного приложения пока нет соединений. Откройте его и выполните нужное действие — новые подключения появятся здесь."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
     } else {
         items(events.size) { index ->
             FlowEventRow(text = text, event = events[index], onClick = { onEvent(index) })
+        }
+    }
+}
+
+@Composable
+private fun FlowAppPickerScreen(
+    padding: PaddingValues,
+    apps: List<InstalledAppUi>,
+    selectedPackage: String?,
+    onBack: () -> Unit,
+    onSelect: (String?) -> Unit,
+) {
+    var search by rememberSaveable { mutableStateOf("") }
+    val filtered = remember(apps, search) {
+        val query = search.trim()
+        if (query.isBlank()) {
+            apps
+        } else {
+            apps.filter {
+                it.label.contains(query, ignoreCase = true) ||
+                    it.packageName.contains(query, ignoreCase = true)
+            }
+        }
+    }
+    ScreenList(padding) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onBack) { Text("Назад") }
+                Header("Выбор приложения", "Можно начать наблюдение до первого соединения")
+            }
+        }
+        item {
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Название или пакет") },
+                placeholder = { Text("Например: браузер или com.example.app") },
+                singleLine = true,
+            )
+        }
+        item {
+            CardBlock {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(null) },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Все приложения", fontWeight = FontWeight.SemiBold)
+                        Text("Не ограничивать список соединений", style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (selectedPackage == null) StatusChip("Выбрано")
+                }
+            }
+        }
+        items(filtered.size) { index ->
+            val app = filtered[index]
+            CardBlock {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(app.packageName) },
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    InstalledApplicationIcon(
+                        packageName = app.packageName,
+                        contentDescription = null,
+                        modifier = Modifier.size(40.dp),
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(app.label, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        Text(
+                            app.packageName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                    when {
+                        selectedPackage == app.packageName -> StatusChip("Выбрано")
+                        app.isSystem -> StatusChip("Системное")
+                    }
+                }
+            }
+        }
+        if (filtered.isEmpty()) {
+            item { CardBlock { Text("Приложения по этому запросу не найдены.") } }
         }
     }
 }
