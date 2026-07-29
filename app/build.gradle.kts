@@ -189,6 +189,7 @@ tasks.register("printVersionCode") {
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
+    val cameraXVersion = "1.6.1"
 
     implementation(files("libs/libbox.aar"))
     implementation(fileTree(mapOf(
@@ -205,6 +206,11 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation("androidx.camera:camera-camera2:$cameraXVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraXVersion")
+    implementation("androidx.camera:camera-view:$cameraXVersion")
+    implementation("com.google.zxing:core:3.5.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")

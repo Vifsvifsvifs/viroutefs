@@ -32,6 +32,12 @@ AES-256-GCM ciphertext. Ключ не сохраняется: он формир�
 соединений. Содержимое пакетов, HTTPS, сообщения, файлы и пароли в него не
 включаются.
 
+Камера запрашивается только после явного нажатия «Сканировать QR-код» и работает
+только пока открыт экран сканирования. Кадры распознаются локальной библиотекой,
+закрываются сразу после обработки, не сохраняются и не отправляются. Найденный
+текст сначала попадает в предпросмотр со скрытыми секретами; конфигурация не
+изменяется до отдельного подтверждения импорта.
+
 ## English
 
 ViRouteFS works locally on the device. It contains no advertising, analytics
@@ -61,3 +67,9 @@ contains no secrets and is intended for diagnostics, not complete recovery.
 The manual Flow Scanner CSV export contains only visible metadata for the
 selected connections. It does not include packet payloads, HTTPS contents,
 messages, files, or passwords.
+
+Camera access is requested only after the user explicitly selects “Scan QR
+code” and is active only while the scanner screen is open. Frames are decoded
+by a local library, closed immediately after processing, never stored, and
+never uploaded. Decoded text first enters the secret-masking preview; the
+configuration is not changed until the user separately confirms the import.

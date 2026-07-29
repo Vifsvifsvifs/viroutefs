@@ -2,7 +2,9 @@
 
 package dev.vifs.viroutefs.ui
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -68,6 +70,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import dev.vifs.viroutefs.CardBlock
 import dev.vifs.viroutefs.Details
 import dev.vifs.viroutefs.Header
@@ -1283,6 +1286,7 @@ private fun ProfileImportScreen(
     }
     var duplicateResolution by rememberSaveable { mutableStateOf(ImportDuplicateResolution.Skip) }
     var fileLoading by remember { mutableStateOf(false) }
+    var qrScannerOpen by rememberSaveable { mutableStateOf(false) }
 
     fun refreshPreview(value: String = source) {
         preview = runCatching { previewProfileImport(value) }
@@ -1311,11 +1315,35 @@ private fun ProfileImportScreen(
         }
     }
 
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            qrScannerOpen = true
+            error = null
+        } else {
+            error = "Доступ к камере не предоставлен. Разрешите его в настройках Android или используйте буфер обмена и файл."
+        }
+    }
+
+    if (qrScannerOpen) {
+        ProfileQrScannerScreen(
+            padding = padding,
+            onBack = { qrScannerOpen = false },
+            onDecoded = { value ->
+                source = value
+                qrScannerOpen = false
+                refreshPreview(value)
+            },
+        )
+        return
+    }
+
     ScreenList(padding) {
         item {
             Header(
                 "Импорт VPN-профилей",
-                "Ссылки, sing-box JSON, OpenVPN и WireGuard — с безопасным предпросмотром до сохранения.",
+                "QR-код, ссылки, sing-box JSON, OpenVPN и WireGuard — с безопасным предпросмотром до сохранения.",
             )
         }
         item {
@@ -1372,6 +1400,31 @@ private fun ProfileImportScreen(
                         Text(if (fileLoading) "Чтение…" else "Из файла")
                     }
                 }
+                OutlinedButton(
+                    onClick = {
+                        val hasCamera = context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)
+                        if (!hasCamera) {
+                            error = "На устройстве не найдена камера. Используйте буфер обмена или файл."
+                        } else if (
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            qrScannerOpen = true
+                            error = null
+                        } else {
+                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
+                    },
+                    enabled = !fileLoading,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Сканировать QR-код")
+                }
+                Text(
+                    "Камера работает только на экране сканирования. Кадры обрабатываются локально, не сохраняются и не отправляются.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Button(
                     onClick = { refreshPreview() },
                     enabled = source.isNotBlank() && !fileLoading,

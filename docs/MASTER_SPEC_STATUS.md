@@ -40,7 +40,7 @@ large, installable block.
 | Milestone | State | Current evidence |
 |---|---|---|
 | M0 truthful status and architecture | Implemented in `0.13.0-beta.2`; external protocol validation still required | seven-state catalog, `EngineAdapter`, live `EngineOrchestrator`, AES-GCM/Keystore secret migration, structured errors, physically verified System route |
-| M1 profiles and import | In progress after `0.14.0-beta.1` | unified preview/apply import accepts shared text/common proxy URIs including v2rayNG VLESS/XHTTP, OpenVPN, standard WireGuard/wg-quick files and sing-box JSON; scripts in WireGuard files are never executed; secrets are masked and profiles are imported disabled; redacted JSON plus password-protected full backup/restore exist; QR/subscriptions remain |
+| M1 profiles and import | In progress after `0.14.0-beta.1` | unified preview/apply import accepts shared text/common proxy URIs including v2rayNG VLESS/XHTTP, OpenVPN, standard WireGuard/wg-quick files and sing-box JSON; local CameraX/ZXing QR scanning feeds the same masked preview and never saves before confirmation; scripts in WireGuard files are never executed; secrets are masked and profiles are imported disabled; redacted JSON plus password-protected full backup/restore exist; physical QR-camera verification and subscriptions remain |
 | M2 sing-box and Xray protocols | In progress | one sing-box TUN and multiple outbounds compile; VLESS/XHTTP is bridged through an app-private Xray-core process; protocol-specific physical matrix remains |
 | M3 strongSwan | Not started | no embedded strongSwan adapter or binary |
 | M4 legacy | Not started | warnings exist; L2TP/PPP/PPTP/SSTP engines do not |
