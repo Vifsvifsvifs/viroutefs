@@ -86,5 +86,10 @@ ViRouteFS does not silently replace an unavailable route with `System`.
 * An unexpected engine stop ends the VPN runtime and leaves the related
   traffic fail-closed.
 
-Atomic hot reload without stopping the old generation is a later M6 task.
+Reload uses a fail-safe preflight: the saved configuration is loaded, compiled,
+checked by every required adapter and accepted by the native sing-box checker
+before the healthy generation is stopped. A rejected generation leaves the
+current route active. Android still permits only one app-owned VPN/TUN, so a
+successful swap can briefly reconnect; a zero-gap dual-TUN hot swap is not
+claimed.
 

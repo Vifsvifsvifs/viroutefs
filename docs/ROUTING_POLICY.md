@@ -39,4 +39,9 @@ DNS is intercepted by the TUN runtime. A rule’s explicit policy wins; otherwis
 
 ## Configuration changes
 
-Config is written atomically. If the VPN is active, a saved change triggers a controlled runtime reload. No profile is tested in the background.
+Config is written atomically. If the VPN is active, a saved change triggers a
+controlled runtime reload. The replacement is loaded, compiled and checked by
+the native engine while the current route stays active; a rejected replacement
+does not tear down the current generation. A successful change still replaces
+Android's single VPN/TUN and can reconnect briefly. No remote profile
+connectivity test runs in the background.

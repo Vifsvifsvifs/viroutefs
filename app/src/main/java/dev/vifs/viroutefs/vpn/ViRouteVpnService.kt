@@ -10,12 +10,15 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import dev.vifs.viroutefs.MainActivity
 import dev.vifs.viroutefs.engine.EngineOrchestrator
 import dev.vifs.viroutefs.engine.EngineOrchestratorException
 import dev.vifs.viroutefs.routing.RouteRuleType
+import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
 import dev.vifs.viroutefs.routing.defaultRouteActivationError
 import dev.vifs.viroutefs.runtime.tcp.TcpSessionState
@@ -38,6 +41,8 @@ class ViRouteVpnService : VpnService() {
     private var tunDescriptor: ParcelFileDescriptor? = null
     private var packetLoopThread: Thread? = null
     private var runtimeThread: Thread? = null
+    private var reloadValidationThread: Thread? = null
+    private var reloadGeneration: Long = 0L
     private var engineOrchestrator: EngineOrchestrator? = null
     private var singBoxEngineAdapter: SingBoxEngineAdapter? = null
     @Volatile private var packetLoopStopping: Boolean = false
@@ -73,6 +78,7 @@ class ViRouteVpnService : VpnService() {
         val forceReload = intent?.action == VpnServiceController.ACTION_RELOAD
         when (intent?.action) {
             VpnServiceController.ACTION_STOP -> {
+                cancelPendingRuntimeReload()
                 stopPreview()
                 return START_NOT_STICKY
             }
@@ -98,6 +104,15 @@ class ViRouteVpnService : VpnService() {
             false,
         ) ?: false
 
+        if (forceReload &&
+            !requestedTestRoute &&
+            tunDescriptor != null &&
+            runtimeActive
+        ) {
+            startValidatedRuntimeReload()
+            return START_STICKY
+        }
+
         if (!forceReload &&
             tunDescriptor != null &&
             testRoutePreviewActive == requestedTestRoute &&
@@ -118,11 +133,13 @@ class ViRouteVpnService : VpnService() {
     }
 
     override fun onRevoke() {
+        cancelPendingRuntimeReload()
         stopPreview()
         super.onRevoke()
     }
 
     override fun onDestroy() {
+        cancelPendingRuntimeReload()
         closeTunDescriptor()
         isRunning = false
         if (lastState.status != VpnServiceStatus.Error) publishStoppedState()
@@ -168,7 +185,7 @@ class ViRouteVpnService : VpnService() {
         updateNotification(activeStatus())
     }
 
-    private fun startTunRuntime() {
+    private fun startTunRuntime(configOverride: RoutingConfig? = null) {
         testRoutePreviewActive = false
         runtimeActive = false
         runtimeStopping = false
@@ -176,25 +193,21 @@ class ViRouteVpnService : VpnService() {
         resetCounters()
         publishState(VpnServiceStatus.Starting, runtimeDetail)
         updateNotification(VpnServiceStatus.Starting)
-        runtimeThread = Thread(::establishTunRuntime, "ViRouteFS-SingBoxRuntime").apply {
+        runtimeThread = Thread(
+            { establishTunRuntime(configOverride) },
+            "ViRouteFS-SingBoxRuntime",
+        ).apply {
             isDaemon = true
             start()
         }
     }
 
-    private fun establishTunRuntime() {
-        val loadResult = runCatching {
-            runBlocking { RoutingConfigRepository(applicationContext).load() }
-        }.getOrElse { error ->
-            failRuntime(error.localizedMessage ?: "Could not load routing configuration.")
+    private fun establishTunRuntime(configOverride: RoutingConfig?) {
+        val config = configOverride ?: loadRuntimeConfig().getOrElse { error ->
+            failRuntime(error.userSafeEngineMessage("Не удалось загрузить конфигурацию маршрутов."))
             return
         }
         if (runtimeStopping) return
-        loadResult.errorMessage?.let { error ->
-            failRuntime(error)
-            return
-        }
-        val config = loadResult.config
         if (!config.emergencyBlockEnabled) {
             defaultRouteActivationError(config)?.let { error ->
                 failRuntime(error)
@@ -275,6 +288,91 @@ class ViRouteVpnService : VpnService() {
                 } ?: "Один из сетевых движков остановился. Связанный трафик оставлен заблокированным.",
             )
         }
+    }
+
+    /**
+     * Keeps the currently healthy generation alive until the replacement
+     * configuration has passed repository, structural, engine and native checks.
+     *
+     * Android owns a single VPN TUN, so a successful swap may still reconnect
+     * briefly. A rejected replacement never tears down the active generation.
+     */
+    private fun startValidatedRuntimeReload() {
+        val generation = ++reloadGeneration
+        reloadValidationThread?.interrupt()
+        runtimeDetail = "Проверяем новые настройки. Текущий маршрут остаётся активным."
+        publishActiveState(force = true)
+        updateNotification(VpnServiceStatus.RuntimeActive)
+
+        reloadValidationThread = Thread(
+            {
+                val result = loadRuntimeConfig().mapCatching { config ->
+                    check(!Thread.currentThread().isInterrupted) { "Проверка отменена." }
+                    preflightRuntimeConfig(config)
+                    config
+                }
+                Handler(Looper.getMainLooper()).post {
+                    if (generation != reloadGeneration || !isRunning) return@post
+                    reloadValidationThread = null
+                    result.onSuccess { config ->
+                        if (tunDescriptor == null || !runtimeActive) return@onSuccess
+                        runtimeDetail = "Настройки проверены. Перезапускаем сетевой маршрут."
+                        publishActiveState(force = true)
+                        closeTunDescriptor()
+                        startTunRuntime(config)
+                    }.onFailure { error ->
+                        runtimeDetail = buildString {
+                            append("Изменения не применены; прежний маршрут продолжает работать. ")
+                            append(error.userSafeEngineMessage("Проверьте изменённые настройки."))
+                        }.take(MAX_RUNTIME_DETAIL_LENGTH)
+                        publishActiveState(force = true)
+                        updateNotification(VpnServiceStatus.RuntimeActive)
+                    }
+                }
+            },
+            "ViRouteFS-ReloadPreflight",
+        ).apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun loadRuntimeConfig(): Result<RoutingConfig> = runCatching {
+        val loadResult = runBlocking { RoutingConfigRepository(applicationContext).load() }
+        loadResult.errorMessage?.let(::error)
+        loadResult.config
+    }
+
+    private fun preflightRuntimeConfig(config: RoutingConfig) {
+        if (!config.emergencyBlockEnabled) {
+            defaultRouteActivationError(config)?.let(::error)
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            config.rules.any {
+                it.enabled && (it.type == RouteRuleType.APP || it.type == RouteRuleType.APP_GROUP)
+            }
+        ) {
+            error("Маршрутизация отдельных приложений требует Android 10 или новее.")
+        }
+
+        val compatibilityAdapter = ByeDpiEngineAdapter(applicationContext)
+        val xrayAdapter = XrayEngineAdapter(applicationContext)
+        val singBoxAdapter = SingBoxEngineAdapter(
+            service = this,
+            onTunEstablished = {},
+            onLog = {},
+            onConnections = {},
+        )
+        EngineOrchestrator(
+            listOf(compatibilityAdapter, xrayAdapter, singBoxAdapter),
+        ).prepare(config).getOrThrow()
+        SingBoxRuntimeValidator.validate(applicationContext, config).getOrThrow()
+    }
+
+    private fun cancelPendingRuntimeReload() {
+        reloadGeneration += 1L
+        reloadValidationThread?.interrupt()
+        reloadValidationThread = null
     }
 
     private fun failRuntime(detail: String) {
