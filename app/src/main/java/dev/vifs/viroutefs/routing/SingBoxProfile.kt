@@ -84,7 +84,33 @@ fun validateSingBoxProfile(type: TunnelType, config: SingBoxProfileConfig): List
         "ssh" -> requireFields(root, listOf("server", "server_port", "user"), this)
         "wireguard" -> {
             requireFields(root, listOf("address", "private_key", "peers"), this)
-            if (root.optJSONArray("peers")?.length() == 0) add("WireGuard peers не может быть пустым.")
+            val addresses = root.optJSONArray("address")
+            if (addresses == null || addresses.length() == 0) {
+                add("WireGuard address не может быть пустым.")
+            }
+            val peers = root.optJSONArray("peers")
+            if (peers == null || peers.length() == 0) {
+                add("WireGuard peers не может быть пустым.")
+            } else {
+                repeat(peers.length()) { index ->
+                    val peer = peers.optJSONObject(index)
+                    if (peer == null) {
+                        add("WireGuard peer #${index + 1} должен быть объектом.")
+                    } else {
+                        requireFields(
+                            peer,
+                            listOf("address", "port", "public_key", "allowed_ips"),
+                            this,
+                        )
+                        if (peer.optInt("port", -1) !in 1..65_535) {
+                            add("WireGuard peer #${index + 1} содержит некорректный port.")
+                        }
+                        if (peer.optJSONArray("allowed_ips")?.length() == 0) {
+                            add("WireGuard peer #${index + 1} содержит пустой allowed_ips.")
+                        }
+                    }
+                }
+            }
         }
         "openvpn-client" -> {
             val hasSingleServer = root.optString("server").isNotBlank() && root.has("server_port")

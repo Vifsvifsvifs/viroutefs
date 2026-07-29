@@ -903,7 +903,7 @@ private fun ProfileImportScreen(
         item {
             Header(
                 "Импорт VPN-профилей",
-                "Ссылки, sing-box JSON и конфигурации OpenVPN — с безопасным предпросмотром до сохранения.",
+                "Ссылки, sing-box JSON, OpenVPN и WireGuard — с безопасным предпросмотром до сохранения.",
             )
         }
         item {
@@ -923,7 +923,7 @@ private fun ProfileImportScreen(
                         .fillMaxWidth()
                         .height(190.dp),
                     label = { Text("Ссылка, JSON или конфигурация") },
-                    placeholder = { Text("vless://…\nvmess://…\n{\n  \"type\": \"wireguard\"\n}") },
+                    placeholder = { Text("vless://…\nvmess://…\n[Interface]\nPrivateKey = …\n{\n  \"type\": \"wireguard\"\n}") },
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),

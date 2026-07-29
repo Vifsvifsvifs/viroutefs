@@ -33,6 +33,7 @@ The model is compiled to pinned sing-box 1.14 alpha JSON:
 - custom DNS rules use the selected detour;
 - native libbox validation runs before advanced profiles are saved.
 - OpenVPN `.ovpn` import converts common directives and inline certificate/key blocks, reports anything it did not transfer, and still requires native validation.
+- WireGuard/wg-quick `.conf` import converts `[Interface]` and multiple `[Peer]` sections to a current sing-box endpoint. Private and pre-shared keys stay encrypted; DNS is selected explicitly in ViRouteFS; shell fields such as `PostUp` are ignored and never executed.
 
 VLESS/XHTTP profiles are compiled separately to a pinned Xray-core
 configuration. Xray exposes localhost-only SOCKS endpoints and never owns an
