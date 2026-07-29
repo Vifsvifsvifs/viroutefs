@@ -46,7 +46,7 @@ large, installable block.
 | M4 legacy | Not started | warnings exist; L2TP/PPP/PPTP/SSTP engines do not |
 | M5 external adapters | Research | zapret2 feasibility is documented; ZeroTier/SoftEther/Tor/Brook are not integrated |
 | M6 routing and DNS | In progress in `0.14.0-beta.1` | app/domain/IPv4/IPv6-CIDR/default/System/Block/custom DNS exist; TCP/UDP and destination-port constraints compile to runtime; ordered DNS server lists exist; groups, automatic DNS failover and atomic reload remain |
-| M7 Flow Scanner and diagnostics | In progress | real sing-box connection events and physical-network tests exist; any installed app can be selected before its first connection with search and local icons; events can be filtered by address/domain/package/route and TCP/UDP/ICMP; full attribution matrix and routed diagnostics remain |
+| M7 Flow Scanner and diagnostics | In progress | real sing-box connection events and physical-network tests exist; any installed app can be selected before its first connection with search and local icons; events can be filtered by address/domain/package/route and TCP/UDP/ICMP, then explicitly exported as payload-free CSV metadata; full attribution matrix and routed diagnostics remain |
 | M8 audit and root tools | Not started | must remain manual, bounded and non-offensive |
 | M9 feature freeze | Blocked by M1–M8 | no freeze yet |
 | M10 full debugging | Blocked by feature completion | server lab, four-device matrix and soak tests remain |

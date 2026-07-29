@@ -3,6 +3,8 @@
 package dev.vifs.viroutefs.ui
 
 import kotlin.test.Test
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlin.test.assertEquals
 
 class FlowScannerFilterTest {
@@ -48,6 +50,23 @@ class FlowScannerFilterTest {
                 protocol = FlowProtocolFilter.Other,
             ),
         )
+    }
+
+    @Test
+    fun csvExportContainsOnlyVisibleMetadataAndEscapesValues() {
+        val source = event(
+            app = "Browser, \"Work\"",
+            domain = "example.test",
+            protocol = "443 / TCP",
+            packages = listOf("com.example.browser"),
+        ).copy(technicalDetails = "secret technical payload")
+        val csv = exportFlowEventsCsv(listOf(source))
+
+        assertTrue(csv.startsWith("application,packages,destination"))
+        assertTrue(csv.contains("\"Browser, \"\"Work\"\"\""))
+        assertTrue(csv.contains("\"com.example.browser\""))
+        assertTrue(csv.contains("\"example.test\""))
+        assertFalse(csv.contains("secret technical payload"))
     }
 
     private fun event(

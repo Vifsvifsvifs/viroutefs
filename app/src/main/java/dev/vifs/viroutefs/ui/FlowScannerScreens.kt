@@ -3,6 +3,8 @@ package dev.vifs.viroutefs.ui
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -51,6 +54,9 @@ import dev.vifs.viroutefs.vpn.VpnServiceUiState
 import dev.vifs.viroutefs.vpn.VpnConnectionFlow
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val TEST_ROUTE_CIDR = "203.0.113.0/24"
 private const val TEST_ROUTE_SOURCE = "Developer TEST-NET counter"
@@ -103,6 +109,9 @@ internal fun FlowScannerScreen(
     var appPickerOpen by rememberSaveable { mutableStateOf(false) }
     var liveDetailsOpen by rememberSaveable { mutableStateOf(false) }
     var runtimeDetailsOpen by rememberSaveable { mutableStateOf(false) }
+    var pendingCsvExport by remember { mutableStateOf("") }
+    var exportMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val installedApps = remember(context) { context.loadInstalledAppsForRouting() }
     val allEvents = remember(vpnState.connectionFlows, vpnState.packetSummaries, config, context) {
         val previewer = LiveRouteDecisionPreviewer(config)
@@ -130,6 +139,26 @@ internal fun FlowScannerScreen(
     val selectedEvent = selectedEventIndex?.let { events.getOrNull(it) }
     val showLiveTestRoute = vpnState.tunTestRouteActive || vpnState.packetSummaries.isNotEmpty()
     val showRuntime = vpnState.status == VpnServiceStatus.RuntimeActive
+    val csvExporter = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv"),
+    ) { uri ->
+        if (uri != null && pendingCsvExport.isNotBlank()) {
+            val exportText = pendingCsvExport
+            scope.launch {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openOutputStream(uri, "w")?.bufferedWriter(Charsets.UTF_8)?.use {
+                            it.write(exportText)
+                        } ?: error("Android не открыл выбранный файл.")
+                    }
+                }.onSuccess {
+                    exportMessage = "CSV сохранён. В нём только метаданные выбранных соединений."
+                }.onFailure { error ->
+                    exportMessage = "Не удалось сохранить CSV: ${error.localizedMessage ?: "неизвестная ошибка"}"
+                }
+            }
+        }
+    }
 
     when {
         appPickerOpen -> FlowAppPickerScreen(
@@ -181,6 +210,12 @@ internal fun FlowScannerScreen(
                 protocolFilterName = it.name
                 selectedEventIndex = null
             },
+            exportMessage = exportMessage,
+            onExport = {
+                pendingCsvExport = exportFlowEventsCsv(events)
+                exportMessage = null
+                csvExporter.launch("ViRouteFS-flow-metadata.csv")
+            },
             onAppFilter = {
                 selectedAppPackage = it
                 selectedEventIndex = null
@@ -212,6 +247,8 @@ private fun FlowScannerListScreen(
     onOpenAppPicker: () -> Unit,
     onFilterQuery: (String) -> Unit,
     onProtocolFilter: (FlowProtocolFilter) -> Unit,
+    exportMessage: String?,
+    onExport: () -> Unit,
     onAppFilter: (String?) -> Unit,
     onClear: () -> Unit,
     onPause: (Boolean) -> Unit,
@@ -318,6 +355,19 @@ private fun FlowScannerListScreen(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            OutlinedButton(
+                onClick = onExport,
+                enabled = events.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Сохранить отфильтрованные метаданные в CSV")
+            }
+            Text(
+                "Экспорт выполняется только по нажатию и не содержит payload, HTTPS-содержимое или секреты.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            exportMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
 }
@@ -354,6 +404,42 @@ internal fun filterFlowEvents(
         appMatches && protocolMatches && queryMatches
     }
 }
+
+internal fun exportFlowEventsCsv(events: List<FlowEventUi>): String = buildString {
+    appendLine(
+        listOf(
+            "application",
+            "packages",
+            "destination",
+            "resolved_ip",
+            "port_protocol",
+            "dns_policy",
+            "route",
+            "reason",
+            "status",
+            "source",
+        ).joinToString(","),
+    )
+    events.forEach { event ->
+        appendLine(
+            listOf(
+                event.appName,
+                event.appPackages.joinToString(" "),
+                event.domain,
+                event.resolvedIp.orEmpty(),
+                event.portProtocol,
+                event.dnsPolicy,
+                event.selectedRoute,
+                event.routeReason,
+                event.status,
+                event.sourceLabel,
+            ).joinToString(",") { value -> value.toCsvCell() },
+        )
+    }
+}
+
+private fun String.toCsvCell(): String =
+    "\"${replace("\"", "\"\"")}\""
 
 @Composable
 private fun FlowAppPickerScreen(

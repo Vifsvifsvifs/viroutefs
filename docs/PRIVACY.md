@@ -20,6 +20,10 @@ Android Keystore, а зашифрованный файл исключён из A
 пользователя. ViRouteFS не предоставляет собственные VPN-серверы и не передаёт
 данные владельцу проекта.
 
+Ручной CSV-экспорт Flow Scanner содержит только видимые метаданные выбранных
+соединений. Содержимое пакетов, HTTPS, сообщения, файлы и пароли в него не
+включаются.
+
 ## English
 
 ViRouteFS works locally on the device. It contains no advertising, analytics
@@ -38,3 +42,7 @@ app-private, created on process start, and removed on process stop.
 An export or diagnostic report is created only after an explicit user action.
 ViRouteFS provides no VPN servers of its own and sends no data to the project
 owner.
+
+The manual Flow Scanner CSV export contains only visible metadata for the
+selected connections. It does not include packet payloads, HTTPS contents,
+messages, files, or passwords.
