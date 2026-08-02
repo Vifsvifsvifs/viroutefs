@@ -177,7 +177,11 @@ jobs:
           fi
           printf '%s  %s\n' "$SHA256" "$RELEASE_APK" > "$RELEASE_APK.sha256"
 
-          CERT_SHA256="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' apk-verification.txt | head -n 1)"
+          CERT_SHA256="$(sed -n 's/^.*certificate SHA-256 digest: //p' apk-verification.txt | head -n 1)"
+          if ! printf '%s' "$CERT_SHA256" | grep -Eq '^[0-9a-fA-F]{64}$'; then
+            echo "Could not extract the signing certificate SHA-256 digest." >&2
+            exit 1
+          fi
           cat > release-manifest.json <<EOF
           {
             "versionName": "${VERSION_NAME}",

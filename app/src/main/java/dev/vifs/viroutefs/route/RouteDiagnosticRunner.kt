@@ -42,7 +42,7 @@ class RouteDiagnosticRunner(
             dnsStep = if (host.looksLikeDomain()) {
                 RouteDiagnosticStep(
                     title = "DNS",
-                    result = dnsDiagnostic.lookup(host, "системный DNS Android", "A"),
+                    result = dnsDiagnostic.lookup(host, "", "A"),
                 )
             } else {
                 RouteDiagnosticStep(

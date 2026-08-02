@@ -47,6 +47,13 @@ internal fun evaluateReleaseReadiness(config: RoutingConfig): ReleaseReadinessRe
     val runtimeReady = EngineCatalog.protocols
         .filter(ProtocolDescriptor::canStartRuntime)
         .map { it.type }
+    val deviceVerified = EngineCatalog.protocols
+        .filter {
+            it.canStartRuntime &&
+                it.readiness in setOf(FeatureReadiness.DeviceVerified, FeatureReadiness.ProductionReady)
+        }
+        .map { it.type }
+    val awaitingDeviceVerification = runtimeReady.filterNot(deviceVerified::contains)
     val planned = EngineCatalog.protocols
         .filter {
             it.readiness == FeatureReadiness.ModelOnly ||
@@ -196,7 +203,13 @@ internal fun evaluateReleaseReadiness(config: RoutingConfig): ReleaseReadinessRe
                 id = "runtime",
                 title = "Протоколы в текущем APK",
                 state = ReadinessState.Attention,
-                summary = "${runtimeReady.size} вариантов интегрированы в runtime, но ещё не имеют статуса DeviceVerified: ${runtimeReady.joinToString { it.label }}.",
+                summary = buildString {
+                    append("В runtime запускаются: ").append(runtimeReady.size).append(". ")
+                    append("DeviceVerified: ").append(deviceVerified.size)
+                    append(" — ").append(deviceVerified.joinToString { it.label }.ifBlank { "нет" }).append(". ")
+                    append("Физическая проверка нужна: ").append(awaitingDeviceVerification.size)
+                    append(" — ").append(awaitingDeviceVerification.joinToString { it.label }.ifBlank { "нет" }).append('.')
+                },
                 recommendedAction = "Проверьте реальные серверы на физическом телефоне; только после этого статус можно повысить.",
             ),
         )
