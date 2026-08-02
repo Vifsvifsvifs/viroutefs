@@ -50,6 +50,25 @@ The exact MPL-2.0 text from the pinned Xray-core revision is included in `app/sr
 
 AndroidX, Jetpack Compose, Kotlin coroutines and their exact Maven coordinates are declared in `app/build.gradle.kts`. They are primarily Apache-2.0 components. Their upstream notices and dependency metadata must remain available with any public distribution.
 
+CameraX `1.6.1` (`camera-camera2`, `camera-lifecycle`, and `camera-view`) is used
+only for the local QR camera preview and frame delivery. ZXing core `3.5.4` is
+used for local QR decoding. Both are distributed under Apache License 2.0.
+ViRouteFS does not use Google Play Services for scanning, does not modify these
+libraries, and includes the Apache-2.0 text as
+`app/src/main/assets/licenses/Apache-2.0.txt`. The upstream ZXing attribution
+notice is preserved as `app/src/main/assets/licenses/ZXing-NOTICE.txt`.
+
+- CameraX upstream: https://developer.android.com/jetpack/androidx/releases/camera
+- ZXing upstream: https://github.com/zxing/zxing
+
+SnakeYAML Engine `3.0.1` parses a bounded subset of user-supplied Clash YAML.
+It is distributed under Apache License 2.0. ViRouteFS uses the safe generic
+loader with duplicate keys, recursive keys and non-scalar keys disabled; no
+user-specified Java class is constructed.
+
+- SnakeYAML Engine upstream: https://bitbucket.org/snakeyaml/snakeyaml-engine
+- Maven coordinate: `org.snakeyaml:snakeyaml-engine:3.0.1`
+
 ## Not bundled
 
 - AndroidLibXrayLite (the wrapper was used only as an API/build reference and is not shipped);

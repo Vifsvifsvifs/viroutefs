@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -43,6 +44,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -77,9 +79,12 @@ import dev.vifs.viroutefs.diagnostics.HttpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TcpDiagnostic
 import dev.vifs.viroutefs.diagnostics.TlsDiagnostic
 import dev.vifs.viroutefs.routing.CURRENT_ROUTING_CONFIG_VERSION
+import dev.vifs.viroutefs.routing.DomainMatcherMode
 import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.routing.AppMatcher
 import dev.vifs.viroutefs.routing.AppMatcherPlatform
+import dev.vifs.viroutefs.routing.ProfileGroup
+import dev.vifs.viroutefs.routing.ProfileGroupMode
 import dev.vifs.viroutefs.routing.RouteRule
 import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.RouteTransport
@@ -87,13 +92,20 @@ import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
 import dev.vifs.viroutefs.routing.defaultRouteActivationError
+import dev.vifs.viroutefs.routing.encodeDomainMatcher
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.findConflictsForCandidate
 import dev.vifs.viroutefs.routing.findExactRouteConflicts
+import dev.vifs.viroutefs.routing.hasRuntimeConfiguration
 import dev.vifs.viroutefs.routing.isValidIpOrCidr
+import dev.vifs.viroutefs.routing.moveExplicitRule
 import dev.vifs.viroutefs.routing.parseDestinationPortRanges
+import dev.vifs.viroutefs.routing.parseDomainMatcher
 import dev.vifs.viroutefs.routing.toDisplayText
 import dev.vifs.viroutefs.routing.validateRouteEditorDraft
+import dev.vifs.viroutefs.routing.validateDomainMatcher
+import dev.vifs.viroutefs.routing.validateRoutingConfig
+import dev.vifs.viroutefs.routing.withDefaultRoute
 import dev.vifs.viroutefs.socks5.Socks5ReadinessSummary
 import dev.vifs.viroutefs.socks5.Socks5TestHistoryStore
 import dev.vifs.viroutefs.socks5.deriveSocks5ReadinessSummary
@@ -440,6 +452,8 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
     var selectedRouteId by rememberSaveable { mutableStateOf<String?>(null) }
     var creatingRoute by rememberSaveable { mutableStateOf(false) }
     var draftRoute by remember { mutableStateOf<RouteRule?>(null) }
+    var selectedGroupId by rememberSaveable { mutableStateOf<String?>(null) }
+    var creatingGroup by rememberSaveable { mutableStateOf(false) }
     val installedApps = remember(context) { context.loadInstalledAppsForRouting() }
     val historyStore = remember(context) { Socks5TestHistoryStore(context) }
     var readinessByProfile by remember(config.profiles) { mutableStateOf<Map<String, Socks5ReadinessSummary>>(emptyMap()) }
@@ -448,8 +462,11 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
             .filter { it.type == TunnelType.Socks5 }
             .associate { it.id to deriveSocks5ReadinessSummary(historyStore.recentForProfile(it.id)) }
     }
-    val userRules = config.rules.filter { it.type != RouteRuleType.DEFAULT }
+    val userRules = config.rules
+        .filter { it.type != RouteRuleType.DEFAULT }
+        .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name }.thenBy { it.id })
     val selectedRoute = userRules.firstOrNull { it.id == selectedRouteId }
+    val selectedGroup = config.profileGroups.firstOrNull { it.id == selectedGroupId }
     val conflicts = remember(config.rules) { findExactRouteConflicts(config.rules) }
     val conflictsByRuleId = remember(conflicts) { conflicts.flatMap { conflict -> conflict.ruleIds.map { it to conflict } }.groupBy({ it.first }, { it.second }) }
 
@@ -476,6 +493,24 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
         return
     }
 
+    if (selectedGroup != null || creatingGroup) {
+        ProfileGroupEditorScreen(
+            padding = padding,
+            group = selectedGroup,
+            config = config,
+            onBack = {
+                selectedGroupId = null
+                creatingGroup = false
+            },
+            onConfig = { next, message ->
+                onConfig(next, message)
+                selectedGroupId = null
+                creatingGroup = false
+            },
+        )
+        return
+    }
+
     ScreenList(padding) {
         item {
             CardBlock {
@@ -496,7 +531,7 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
                     }) { Text(text.addRoute) }
                 }
                 val defaultRouteName = config.defaultProfileId
-                    ?.let { id -> config.profiles.firstOrNull { it.id == id }?.name }
+                    ?.let { id -> routeTargetName(config, id) }
                     ?: "не выбран"
                 Text(
                     "По умолчанию: $defaultRouteName • правил: ${userRules.size}",
@@ -505,17 +540,483 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
                 )
             }
         }
+        item {
+            CardBlock {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("Группы маршрутов", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Ручной выбор или проверка задержки между явно выбранными профилями. Скрытого fallback на System нет.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    FilledTonalButton(onClick = { creatingGroup = true }) {
+                        Text("Создать")
+                    }
+                }
+                config.profileGroups.forEach { group ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { selectedGroupId = group.id }
+                            .padding(vertical = 5.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(group.name, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "${group.mode.displayName()} • участников: ${group.memberProfileIds.size}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        StatusChip(
+                            when {
+                                !group.enabled -> "Выключена"
+                                !group.isRunnable(config) -> "Нужна проверка"
+                                config.defaultProfileId == group.id -> "По умолчанию"
+                                else -> "Готова"
+                            },
+                        )
+                    }
+                }
+                if (config.profileGroups.isEmpty()) {
+                    Text(
+                        "Групп пока нет. Обычные правила продолжают указывать прямо на профиль.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
         if (userRules.isEmpty()) {
             item { CompactCard(text, text.noRoutesConfigured, text.routeEmptyState, text.routeIsolationNote) }
         } else {
-            items(userRules, key = { it.id }) { rule ->
+            itemsIndexed(userRules, key = { _, rule -> rule.id }) { index, rule ->
                 RouteRuleCard(
                     text = text,
                     rule = rule,
                     profileName = routeTargetName(config, rule.targetProfileId),
                     warnings = conflictsByRuleId[rule.id].orEmpty() + unavailableTargetWarning(config, rule),
+                    canMoveUp = index > 0,
+                    canMoveDown = index < userRules.lastIndex,
+                    onMoveUp = {
+                        onConfig(
+                            config.moveExplicitRule(rule.id, -1),
+                            "Правило «${rule.name}» поднято выше. Меньший номер применяется раньше.",
+                        )
+                    },
+                    onMoveDown = {
+                        onConfig(
+                            config.moveExplicitRule(rule.id, 1),
+                            "Правило «${rule.name}» опущено ниже. Порядок пересчитан детерминированно.",
+                        )
+                    },
                     onOpen = { selectedRouteId = rule.id },
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileGroupEditorScreen(
+    padding: PaddingValues,
+    group: ProfileGroup?,
+    config: RoutingConfig,
+    onBack: () -> Unit,
+    onConfig: (RoutingConfig, String?) -> Unit,
+) {
+    val groupId = rememberSaveable(group?.id) { group?.id ?: UUID.randomUUID().toString() }
+    var name by rememberSaveable(groupId) { mutableStateOf(group?.name.orEmpty()) }
+    var modeName by rememberSaveable(groupId) {
+        mutableStateOf((group?.mode ?: ProfileGroupMode.Manual).name)
+    }
+    var memberIds by rememberSaveable(groupId) {
+        mutableStateOf(group?.memberProfileIds.orEmpty())
+    }
+    var selectedProfileId by rememberSaveable(groupId) {
+        mutableStateOf(group?.selectedProfileId)
+    }
+    var testUrl by rememberSaveable(groupId) {
+        mutableStateOf(group?.testUrl ?: "https://www.gstatic.com/generate_204")
+    }
+    var intervalText by rememberSaveable(groupId) {
+        mutableStateOf((group?.testIntervalSeconds ?: 180).toString())
+    }
+    var toleranceText by rememberSaveable(groupId) {
+        mutableStateOf((group?.toleranceMs ?: 50).toString())
+    }
+    var enabled by rememberSaveable(groupId) { mutableStateOf(group?.enabled ?: true) }
+    var useAsDefault by rememberSaveable(groupId) {
+        mutableStateOf(config.defaultProfileId == groupId)
+    }
+    var errors by rememberSaveable(groupId) { mutableStateOf<List<String>>(emptyList()) }
+    val mode = ProfileGroupMode.entries.firstOrNull { it.name == modeName }
+        ?: ProfileGroupMode.Manual
+    val availableProfiles = config.profiles.filter { profile ->
+        profile.type != TunnelType.Block &&
+            (
+                profile.id in memberIds ||
+                    (
+                        profile.enabled &&
+                            (
+                                profile.type == TunnelType.Direct ||
+                                    profile.type == TunnelType.ByeDpi ||
+                                    profile.type == TunnelType.Socks5 ||
+                                    profile.type == TunnelType.VLESS ||
+                                    profile.type == TunnelType.XrayVlessReality ||
+                                    profile.singBox != null
+                                )
+                        )
+                )
+    }
+    val draft = ProfileGroup(
+        id = groupId,
+        name = name.trim(),
+        mode = mode,
+        memberProfileIds = memberIds.distinct(),
+        selectedProfileId = selectedProfileId,
+        testUrl = testUrl.trim(),
+        testIntervalSeconds = intervalText.toIntOrNull() ?: -1,
+        toleranceMs = toleranceText.toIntOrNull() ?: -1,
+        enabled = enabled,
+    )
+
+    ScreenList(padding) {
+        item {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(onClick = onBack) { Text("Назад") }
+                Header(
+                    if (group == null) "Новая группа маршрутов" else "Группа «${group.name}»",
+                    "Группа становится отдельной целью для приложений, доменов, IP, сетей и основного маршрута.",
+                )
+            }
+        }
+        item {
+            CardBlock {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = {
+                        name = it
+                        errors = emptyList()
+                    },
+                    label = { Text("Название группы") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+                Text("Режим", fontWeight = FontWeight.SemiBold)
+                ChipRow {
+                    FilterChip(
+                        selected = mode == ProfileGroupMode.Manual,
+                        onClick = { modeName = ProfileGroupMode.Manual.name },
+                        label = { Text("Ручной выбор") },
+                    )
+                    FilterChip(
+                        selected = mode == ProfileGroupMode.Latency,
+                        onClick = { modeName = ProfileGroupMode.Latency.name },
+                        label = { Text("Минимальная задержка") },
+                    )
+                    FilterChip(
+                        selected = mode == ProfileGroupMode.Failover,
+                        onClick = { modeName = ProfileGroupMode.Failover.name },
+                        label = { Text("Резерв по порядку") },
+                    )
+                    FilterChip(
+                        selected = mode == ProfileGroupMode.RoundRobin,
+                        onClick = { modeName = ProfileGroupMode.RoundRobin.name },
+                        label = { Text("По кругу") },
+                    )
+                }
+                Text(
+                    when (mode) {
+                        ProfileGroupMode.Manual ->
+                            "ViRouteFS всегда использует выбранного участника. Автоматического перехода, в том числе на System, нет."
+                        ProfileGroupMode.Latency ->
+                            "Ядро периодически проверяет участников и выбирает доступный маршрут с меньшей задержкой."
+                        ProfileGroupMode.Failover ->
+                            "Используется первый доступный участник сверху вниз. System попадёт в резерв только при вашем явном выборе."
+                        ProfileGroupMode.RoundRobin ->
+                            "Каждое следующее новое соединение направляется к следующему доступному участнику по кругу."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        item {
+            CardBlock {
+                Text("Участники — минимум два", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Добавить можно только включённые и настроенные цели. Уже выбранный, но ставший недоступным профиль остаётся видимым, чтобы его можно было убрать. System используется только при явном выборе.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (availableProfiles.isEmpty()) {
+                    WarningText("Сначала добавьте и включите хотя бы два рабочих профиля.")
+                } else {
+                    availableProfiles.forEach { profile ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    memberIds = if (profile.id in memberIds) {
+                                        memberIds - profile.id
+                                    } else {
+                                        memberIds + profile.id
+                                    }
+                                    if (selectedProfileId !in memberIds) {
+                                        selectedProfileId = memberIds.firstOrNull()
+                                    }
+                                    errors = emptyList()
+                                }
+                                .padding(vertical = 5.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(routeTargetName(config, profile.id), fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    if (profile.id == RoutingConfigDefaults.SYSTEM_PROFILE_ID) {
+                                        "Обычный интернет телефона — явный fallback"
+                                    } else if (!profile.enabled || !profile.hasRuntimeConfiguration()) {
+                                        "Недоступен — уберите из группы или исправьте профиль"
+                                    } else {
+                                        profile.type.label
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = profile.id in memberIds,
+                                onCheckedChange = null,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        if (mode == ProfileGroupMode.Manual && memberIds.isNotEmpty()) {
+            item {
+                CardBlock {
+                    Text("Активный участник", fontWeight = FontWeight.SemiBold)
+                    ChipRow {
+                        memberIds.mapNotNull { id -> config.profiles.firstOrNull { it.id == id } }
+                            .forEach { profile ->
+                                FilterChip(
+                                    selected = selectedProfileId == profile.id,
+                                    onClick = { selectedProfileId = profile.id },
+                                    label = { Text(routeTargetName(config, profile.id), maxLines = 1) },
+                                )
+                            }
+                    }
+                }
+            }
+        }
+        if (mode in setOf(ProfileGroupMode.Failover, ProfileGroupMode.RoundRobin) &&
+            memberIds.size > 1
+        ) {
+            item {
+                CardBlock {
+                    Text("Порядок участников", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (mode == ProfileGroupMode.Failover) {
+                            "Первый — основной, остальные — резервы сверху вниз."
+                        } else {
+                            "Новые соединения проходят по этому списку по кругу."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    memberIds.forEachIndexed { index, id ->
+                        val profile = config.profiles.firstOrNull { it.id == id } ?: return@forEachIndexed
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "${index + 1}. ${routeTargetName(config, profile.id)}",
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                            )
+                            OutlinedButton(
+                                enabled = index > 0,
+                                onClick = {
+                                    memberIds = memberIds.toMutableList().apply {
+                                        val value = removeAt(index)
+                                        add(index - 1, value)
+                                    }
+                                },
+                            ) { Text("↑") }
+                            OutlinedButton(
+                                enabled = index < memberIds.lastIndex,
+                                onClick = {
+                                    memberIds = memberIds.toMutableList().apply {
+                                        val value = removeAt(index)
+                                        add(index + 1, value)
+                                    }
+                                },
+                            ) { Text("↓") }
+                        }
+                    }
+                }
+            }
+        }
+        if (mode != ProfileGroupMode.Manual) {
+            item {
+                CardBlock {
+                    Text("Проверка доступности", fontWeight = FontWeight.SemiBold)
+                    WarningText(
+                        "Это явная фоновая проверка: указанный HTTPS-сервер увидит обычные запросы доступности от выбранных подключений. Другие данные приложения не отправляются.",
+                    )
+                    OutlinedTextField(
+                        value = testUrl,
+                        onValueChange = { testUrl = it },
+                        label = { Text("HTTPS-адрес проверки") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = intervalText,
+                            onValueChange = { intervalText = it.filter(Char::isDigit) },
+                            label = { Text("Интервал, сек") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                        )
+                        if (mode == ProfileGroupMode.Latency) {
+                            OutlinedTextField(
+                                value = toleranceText,
+                                onValueChange = { toleranceText = it.filter(Char::isDigit) },
+                                label = { Text("Допуск, мс") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            CardBlock {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Группа включена", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Выключенная группа блокирует связанные правила без перехода на другой маршрут.",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    Switch(checked = enabled, onCheckedChange = { enabled = it })
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Использовать по умолчанию", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Трафик без отдельного правила пойдёт в эту группу.",
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                    Switch(checked = useAsDefault, onCheckedChange = { useAsDefault = it })
+                }
+            }
+        }
+        if (errors.isNotEmpty()) {
+            item {
+                CardBlock {
+                    Text("Нужно исправить", fontWeight = FontWeight.SemiBold)
+                    errors.forEach { WarningText(it) }
+                }
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        val groups = if (group == null) {
+                            config.profileGroups + draft
+                        } else {
+                            config.profileGroups.map { if (it.id == group.id) draft else it }
+                        }
+                        var next = config.copy(profileGroups = groups)
+                        next = when {
+                            useAsDefault -> next.withDefaultRoute(draft.id)
+                            config.defaultProfileId == draft.id ->
+                                next.withDefaultRoute(RoutingConfigDefaults.SYSTEM_PROFILE_ID)
+                            else -> next
+                        }
+                        val validationErrors = buildList {
+                            if (useAsDefault && !enabled) {
+                                add("Группа по умолчанию должна быть включена.")
+                            }
+                            addAll(validateRoutingConfig(next))
+                        }.distinct()
+                        errors = validationErrors
+                        if (validationErrors.isEmpty()) {
+                            onConfig(
+                                next,
+                                "Группа «${draft.name}» сохранена. System не добавлялся автоматически.",
+                            )
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Сохранить")
+                }
+                if (group != null) {
+                    OutlinedButton(
+                        onClick = {
+                            var next = config.copy(
+                                profileGroups = config.profileGroups.filterNot { it.id == group.id },
+                                rules = config.rules.map { rule ->
+                                    if (rule.targetProfileId == group.id) {
+                                        rule.copy(targetProfileId = RoutingConfigDefaults.BLOCK_PROFILE_ID)
+                                    } else {
+                                        rule
+                                    }
+                                },
+                                dnsPolicies = config.dnsPolicies.map { policy ->
+                                    if (policy.resolveThroughProfileId == group.id) {
+                                        policy.copy(
+                                            enabled = false,
+                                            resolveThroughProfileId = null,
+                                            description = "${policy.description} Disabled because route group was removed.",
+                                        )
+                                    } else {
+                                        policy
+                                    }
+                                },
+                            )
+                            if (config.defaultProfileId == group.id) {
+                                next = next.withDefaultRoute(RoutingConfigDefaults.SYSTEM_PROFILE_ID)
+                            }
+                            onConfig(
+                                next,
+                                "Группа удалена. Связанные явные правила переведены в Block; основной маршрут возвращён на System.",
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Удалить")
+                    }
+                }
             }
         }
     }
@@ -530,7 +1031,7 @@ data class InstalledAppUi(
 )
 
 @Suppress("DEPRECATION")
-private fun android.content.Context.loadInstalledAppsForRouting(): List<InstalledAppUi> {
+internal fun android.content.Context.loadInstalledAppsForRouting(): List<InstalledAppUi> {
     val applications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         packageManager.getInstalledApplications(
             PackageManager.ApplicationInfoFlags.of(0),
@@ -558,7 +1059,17 @@ private fun android.content.Context.loadInstalledAppsForRouting(): List<Installe
 }
 
 @Composable
-private fun RouteRuleCard(text: UiText, rule: RouteRule, profileName: String, warnings: List<Any>, onOpen: () -> Unit) {
+private fun RouteRuleCard(
+    text: UiText,
+    rule: RouteRule,
+    profileName: String,
+    warnings: List<Any>,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onOpen: () -> Unit,
+) {
     CardBlock {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -572,9 +1083,14 @@ private fun RouteRuleCard(text: UiText, rule: RouteRule, profileName: String, wa
                 Text(matcherSummary(rule), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("→ $profileName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    StatusChip("Приоритет ${rule.priority}")
                     StatusChip(if (rule.enabled) text.on else text.off)
                     if (warnings.isNotEmpty()) StatusChip(text.warning)
                 }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                OutlinedButton(onClick = onMoveUp, enabled = canMoveUp) { Text("Выше") }
+                OutlinedButton(onClick = onMoveDown, enabled = canMoveDown) { Text("Ниже") }
             }
         }
     }
@@ -599,7 +1115,19 @@ private fun RouteDetailsScreen(
     var selectedAppPackages by rememberSaveable(rule.id) {
         mutableStateOf(rule.appMatchers.map { it.value })
     }
-    var matcherText by rememberSaveable(rule.id) { mutableStateOf(rule.matchers.firstOrNull().orEmpty()) }
+    val existingDomainMatcher = parseDomainMatcher(rule.matchers.firstOrNull().orEmpty())
+    var domainMatcherModeName by rememberSaveable(rule.id) {
+        mutableStateOf(existingDomainMatcher.mode.name)
+    }
+    var matcherText by rememberSaveable(rule.id) {
+        mutableStateOf(
+            if (rule.type == RouteRuleType.DOMAIN) {
+                existingDomainMatcher.value
+            } else {
+                rule.matchers.firstOrNull().orEmpty()
+            },
+        )
+    }
     var transportName by rememberSaveable(rule.id) { mutableStateOf(rule.transport.name) }
     var destinationPortsText by rememberSaveable(rule.id) {
         mutableStateOf(rule.destinationPorts.toDisplayText())
@@ -609,7 +1137,9 @@ private fun RouteDetailsScreen(
     val availableProfiles = config.profiles.filter { profile ->
         profile.type == TunnelType.Direct || profile.type == TunnelType.Block || profile.type == TunnelType.Socks5 || profile.type == TunnelType.VLESS || !profile.mockOnly
     }
+    val availableGroups = config.profileGroups.filter { it.enabled }
     val targetProfile = config.profiles.firstOrNull { it.id == targetProfileId }
+    val targetGroup = config.profileGroups.firstOrNull { it.id == targetProfileId }
     val context = LocalContext.current
     val historyStore = remember(context) { Socks5TestHistoryStore(context) }
     var selectedSocks5Readiness by remember(targetProfileId) { mutableStateOf<Socks5ReadinessSummary?>(null) }
@@ -630,6 +1160,9 @@ private fun RouteDetailsScreen(
     val parsedDestinationPorts = remember(destinationPortsText) {
         runCatching { parseDestinationPortRanges(destinationPortsText) }
     }
+    val domainMatcherMode = DomainMatcherMode.entries
+        .firstOrNull { it.name == domainMatcherModeName }
+        ?: DomainMatcherMode.Suffix
     val draft = remember(
         name,
         enabled,
@@ -638,6 +1171,7 @@ private fun RouteDetailsScreen(
         dnsPolicyId,
         selectedAppPackages,
         matcherText,
+        domainMatcherMode,
         transportName,
         parsedDestinationPorts,
         appsByPackage,
@@ -651,7 +1185,10 @@ private fun RouteDetailsScreen(
             dnsPolicyId = dnsPolicyId,
             matchers = when (matcherKind) {
                 RouteMatcherKind.App -> emptyList()
-                RouteMatcherKind.Domain -> listOf(matcherText.trim().trimEnd('.').lowercase(Locale.ROOT)).filter { it.isNotBlank() }
+                RouteMatcherKind.Domain ->
+                    listOf(encodeDomainMatcher(domainMatcherMode, matcherText)).filter {
+                        parseDomainMatcher(it).value.isNotBlank()
+                    }
                 RouteMatcherKind.Ip,
                 RouteMatcherKind.Network -> listOf(matcherText.trim()).filter { it.isNotBlank() }
             },
@@ -700,6 +1237,7 @@ private fun RouteDetailsScreen(
                     selectedAppPackages = selectedAppPackages,
                     appSearch = appSearch,
                     matcherText = matcherText,
+                    domainMatcherMode = domainMatcherMode,
                     onAppSearch = { appSearch = it },
                     onToggleAppPackage = { packageName ->
                         selectedAppPackages = if (packageName in selectedAppPackages) {
@@ -709,6 +1247,10 @@ private fun RouteDetailsScreen(
                         }
                     },
                     onMatcherText = { matcherText = it },
+                    onDomainMatcherMode = {
+                        domainMatcherModeName = it.name
+                        saveErrors = emptyList()
+                    },
                 )
                 Text("Транспорт и порты назначения", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
                 Text(
@@ -756,8 +1298,15 @@ private fun RouteDetailsScreen(
                             label = { Text(routeTargetName(config, profile.id), maxLines = 1) },
                         )
                     }
+                    availableGroups.forEach { group ->
+                        FilterChip(
+                            selected = targetProfileId == group.id,
+                            onClick = { targetProfileId = group.id },
+                            label = { Text("Группа: ${group.name}", maxLines = 1) },
+                        )
+                    }
                 }
-                if (availableProfiles.isEmpty()) StatusChip(text.systemBlockOnly)
+                if (availableProfiles.isEmpty() && availableGroups.isEmpty()) StatusChip(text.systemBlockOnly)
                 targetWarning.forEach { StatusChip(it) }
                 Text("DNS для этого правила", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
                 Text(
@@ -778,7 +1327,11 @@ private fun RouteDetailsScreen(
                     Text(text.enabled, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
-                Text("${text.targetProfile}: ${targetProfile?.name ?: targetProfileId}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "${text.targetProfile}: ${targetProfile?.name ?: targetGroup?.name ?: targetProfileId}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 if (targetProfile?.type == TunnelType.Socks5) {
                     Text(
                         selectedSocks5Readiness?.routeExplanationLine ?: "SOCKS5 ещё не проверен.",
@@ -847,9 +1400,11 @@ private fun RouteMatcherEditor(
     selectedAppPackages: List<String>,
     appSearch: String,
     matcherText: String,
+    domainMatcherMode: DomainMatcherMode,
     onAppSearch: (String) -> Unit,
     onToggleAppPackage: (String) -> Unit,
     onMatcherText: (String) -> Unit,
+    onDomainMatcherMode: (DomainMatcherMode) -> Unit,
 ) {
     when (kind) {
         RouteMatcherKind.App -> {
@@ -903,15 +1458,64 @@ private fun RouteMatcherEditor(
                 }
             }
         }
-        RouteMatcherKind.Domain -> OutlinedTextField(
-            value = matcherText,
-            onValueChange = onMatcherText,
-            label = { Text(text.domainHostInput) },
-            placeholder = { Text("example.org") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            isError = matcherText.isBlank(),
-        )
+        RouteMatcherKind.Domain -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Как сравнивать домен", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+            ChipRow {
+                DomainMatcherMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = domainMatcherMode == mode,
+                        onClick = { onDomainMatcherMode(mode) },
+                        label = {
+                            Text(
+                                when (mode) {
+                                    DomainMatcherMode.Exact -> "Точный"
+                                    DomainMatcherMode.Suffix -> "Домен и поддомены"
+                                    DomainMatcherMode.Keyword -> "Содержит"
+                                    DomainMatcherMode.Regex -> "Регулярное выражение"
+                                },
+                            )
+                        },
+                    )
+                }
+            }
+            Text(
+                when (domainMatcherMode) {
+                    DomainMatcherMode.Exact -> "Совпадёт только example.org, но не sub.example.org."
+                    DomainMatcherMode.Suffix -> "Совпадут example.org и все его поддомены."
+                    DomainMatcherMode.Keyword -> "Совпадёт домен, в имени которого встречается указанная часть."
+                    DomainMatcherMode.Regex -> "Экспертный режим: шаблон применяется ко всему имени домена."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            val validationError = validateDomainMatcher(domainMatcherMode, matcherText)
+            OutlinedTextField(
+                value = matcherText,
+                onValueChange = onMatcherText,
+                label = {
+                    Text(
+                        if (domainMatcherMode == DomainMatcherMode.Regex) {
+                            "Регулярное выражение"
+                        } else {
+                            text.domainHostInput
+                        },
+                    )
+                },
+                placeholder = {
+                    Text(
+                        when (domainMatcherMode) {
+                            DomainMatcherMode.Regex -> "(^|\\.)example\\.org$"
+                            DomainMatcherMode.Keyword -> "example"
+                            else -> "example.org"
+                        },
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                isError = validationError != null,
+            )
+            validationError?.let { WarningText(it) }
+        }
         RouteMatcherKind.Ip -> OutlinedTextField(
             value = matcherText,
             onValueChange = onMatcherText,
@@ -977,7 +1581,16 @@ private fun matcherSummary(rule: RouteRule): String {
         RouteRuleType.APP, RouteRuleType.APP_GROUP -> rule.appMatchers.joinToString(" • ") { app ->
             app.displayName?.let { "$it (${app.value})" } ?: app.value
         }.ifBlank { "App matcher not selected" }
-        RouteRuleType.DOMAIN -> rule.matchers.joinToString(" • ").ifBlank { "Domain / host not set" }
+        RouteRuleType.DOMAIN -> rule.matchers.joinToString(" • ") { raw ->
+            val parsed = parseDomainMatcher(raw)
+            val mode = when (parsed.mode) {
+                DomainMatcherMode.Exact -> "Точный домен"
+                DomainMatcherMode.Suffix -> "Домен и поддомены"
+                DomainMatcherMode.Keyword -> "Содержит"
+                DomainMatcherMode.Regex -> "Регулярное выражение"
+            }
+            "$mode: ${parsed.value}"
+        }.ifBlank { "Domain / host not set" }
         RouteRuleType.CIDR -> rule.matchers.joinToString(" • ").ifBlank { "IP / CIDR not set" }
         RouteRuleType.DEFAULT -> "Default System route"
     }
@@ -991,12 +1604,44 @@ private fun matcherSummary(rule: RouteRule): String {
 private fun routeTargetName(config: RoutingConfig, profileId: String): String = when (profileId) {
     RoutingConfigDefaults.SYSTEM_PROFILE_ID -> "System / Система"
     RoutingConfigDefaults.BLOCK_PROFILE_ID -> "Block / Блокировать"
-    else -> config.profiles.firstOrNull { it.id == profileId }?.name ?: profileId
+    else -> config.profiles.firstOrNull { it.id == profileId }?.name
+        ?: config.profileGroups.firstOrNull { it.id == profileId }?.let { "Группа: ${it.name}" }
+        ?: profileId
+}
+
+private fun ProfileGroup.isRunnable(config: RoutingConfig): Boolean {
+    val memberIds = memberProfileIds.distinct()
+    if (memberIds.size < 2) return false
+    val availableIds = memberIds.filter { memberId ->
+        config.profiles.firstOrNull { it.id == memberId }
+            ?.let { it.enabled && it.hasRuntimeConfiguration() } == true
+    }
+    return when (mode) {
+        ProfileGroupMode.Manual ->
+            selectedProfileId in availableIds
+        ProfileGroupMode.Latency -> availableIds.size >= 2
+        ProfileGroupMode.Failover,
+        ProfileGroupMode.RoundRobin -> availableIds.isNotEmpty()
+    }
+}
+
+private fun ProfileGroupMode.displayName(): String = when (this) {
+    ProfileGroupMode.Manual -> "Ручной выбор"
+    ProfileGroupMode.Latency -> "Минимальная задержка"
+    ProfileGroupMode.Failover -> "Резерв по порядку"
+    ProfileGroupMode.RoundRobin -> "По кругу"
 }
 
 private fun unavailableTargetWarning(config: RoutingConfig, rule: RouteRule): List<String> {
     val profile = config.profiles.firstOrNull { it.id == rule.targetProfileId }
+    val group = config.profileGroups.firstOrNull { it.id == rule.targetProfileId }
     return when {
+        group != null && !group.enabled -> listOf("Группа выключена: трафик будет заблокирован")
+        group != null && group.memberProfileIds.distinct().size < 2 ->
+            listOf("В группе меньше двух участников: трафик будет заблокирован")
+        group != null && !group.isRunnable(config) ->
+            listOf("Группа настроена не полностью: трафик будет заблокирован")
+        group != null -> emptyList()
         profile == null -> listOf("Target unavailable: fail closed")
         !profile.enabled -> listOf("Target disabled: fail closed")
         profile.type == TunnelType.Socks5 -> emptyList()
@@ -1582,7 +2227,7 @@ internal class UiText(private val language: AppLanguage) {
     val version = t("Версия", "Version", "版本")
     val privacy = t("Приватность", "Privacy", "隐私")
     val privacyShort = t("Локально: без рекламы, аналитики и скрытой отправки.", "Local-first: no ads, analytics, or hidden uploads.", "本地优先：无广告、分析或隐藏上传。")
-    val privacyDetails = t("Метаданные соединений, настройки и список установленных приложений обрабатываются только на устройстве. Список нужен для выбора приложения в маршрутах и Flow Scanner, никуда не загружается и не продаётся. Содержимое пакетов не записывается; экспорт возможен только по явному действию пользователя.", "Connection metadata, settings, and the installed-app list are processed only on the device. The list is used for the route picker and Flow Scanner, and is never uploaded or sold. Packet contents are not recorded; export requires an explicit user action.", "连接元数据、设置和已安装应用列表仅在设备上处理。该列表只用于路由选择器和 Flow Scanner，绝不会上传或出售。不会记录数据包内容；导出需要用户明确操作。")
+    val privacyDetails = t("Метаданные соединений, настройки и список установленных приложений обрабатываются только на устройстве. Список нужен для выбора приложения в маршрутах и Flow Scanner, никуда не загружается и не продаётся. Камера QR-импорта работает только на открытом экране сканирования: кадры не сохраняются и не отправляются. Полный URL подписки шифруется Android Keystore; загрузка выполняется только вручную обычным HTTPS-запросом без данных о приложениях и маршрутах. Содержимое пакетов не записывается; экспорт возможен только по явному действию пользователя.", "Connection metadata, settings, and the installed-app list are processed only on the device. The list is used for the route picker and Flow Scanner, and is never uploaded or sold. The QR import camera runs only while its scanner screen is open; frames are neither stored nor uploaded. Complete subscription URLs are encrypted with Android Keystore and fetched only by a manual ordinary HTTPS request without app or route data. Packet contents are not recorded; export requires an explicit user action.", "连接元数据、设置和已安装应用列表仅在设备上处理。该列表只用于路由选择器和 Flow Scanner，绝不会上传或出售。QR 导入相机仅在扫描界面打开时运行；画面不会保存或上传。完整订阅 URL 由 Android Keystore 加密，只能手动通过普通 HTTPS 请求获取，且不包含应用或路由数据。不会记录数据包内容；导出需要用户明确操作。")
     val configStatus = t("Конфигурация", "Configuration", "配置")
     val configLoaded = t("Локальная конфигурация загружена.", "Local configuration loaded.", "本地配置已加载。")
     val loading = t("Загрузка…", "Loading…", "正在加载…")
@@ -1824,7 +2469,7 @@ Packets are dropped after counting""",
     val projectPurposeDetails = t("Приложение не предназначено и не продвигается как средство обхода блокировок. Используйте его только законно, с разрешёнными сетями и VPN-провайдерами. Дополнительный режим совместимости с DPI не является VPN, не шифрует трафик и не скрывает IP-адрес.", "The app is not intended or marketed as an access-restriction circumvention tool. Use it lawfully and only with authorized networks and VPN providers. The optional DPI compatibility mode is not a VPN, does not encrypt traffic, and does not hide the IP address.", "本应用不用于或宣传为规避访问限制的工具。请仅在合法且获授权的网络和 VPN 服务中使用。可选 DPI 兼容模式不是 VPN，不加密流量，也不隐藏 IP 地址。")
     val licenseSummaryTitle = t("Лицензия GPL-3.0-or-later", "GPL-3.0-or-later license", "GPL-3.0-or-later 许可证")
     val licenseSummaryShort = t("Проект остаётся свободным ПО под GPL-3.0-or-later.", "The project remains free software under GPL-3.0-or-later.", "项目仍是 GPL-3.0-or-later 下的自由软件。")
-    val licenseSummaryDetails = t("Вы можете изучать, изменять и распространять код при соблюдении GPL. В APK включены тексты GPL-3.0, лицензии sing-box, MPL-2.0 для Xray-core и MIT-лицензии ByeDPI; точные версии, хэши и скрипты воспроизводимой сборки находятся в репозитории.", "You may study, modify, and redistribute the code under the GPL. The APK includes GPL-3.0, the sing-box license, MPL-2.0 for Xray-core, and the ByeDPI MIT license; exact versions, hashes, and reproducible build scripts are in the repository.", "可按 GPL 条款研究、修改和再分发代码。APK 内含 GPL-3.0、sing-box 许可证、Xray-core 的 MPL-2.0 和 ByeDPI MIT 许可证；精确版本、哈希和可复现构建脚本位于代码仓库中。")
+    val licenseSummaryDetails = t("Вы можете изучать, изменять и распространять код при соблюдении GPL. В APK включены тексты GPL-3.0, лицензии sing-box, MPL-2.0 для Xray-core, MIT-лицензии ByeDPI и Apache-2.0 для AndroidX/CameraX/ZXing/SnakeYAML Engine; точные версии, хэши и скрипты воспроизводимой сборки находятся в репозитории.", "You may study, modify, and redistribute the code under the GPL. The APK includes GPL-3.0, the sing-box license, MPL-2.0 for Xray-core, the ByeDPI MIT license, and Apache-2.0 for AndroidX/CameraX/ZXing/SnakeYAML Engine; exact versions, hashes, and reproducible build scripts are in the repository.", "可按 GPL 条款研究、修改和再分发代码。APK 内含 GPL-3.0、sing-box 许可证、Xray-core 的 MPL-2.0、ByeDPI MIT 许可证以及 AndroidX/CameraX/ZXing/SnakeYAML Engine 的 Apache-2.0；精确版本、哈希和可复现构建脚本位于代码仓库中。")
     val currentBetaLimitations = t("Границы beta", "Beta boundaries", "Beta 限制")
     val betaLimitationsShort = t("Нужна проверка на реальном arm64-телефоне. OpenVPN/OpenConnect и живые события Flow Scanner подключены, но IKEv2/IPsec и устаревшие L2TP/PPTP/SSTP ещё требуют отдельных Android-движков.", "Real arm64 device testing is still required. OpenVPN/OpenConnect and live Flow Scanner events are connected, while IKEv2/IPsec and legacy L2TP/PPTP/SSTP still need separate Android engines.", "仍需在真实 arm64 设备上测试。OpenVPN/OpenConnect 和实时 Flow Scanner 事件已接入，而 IKEv2/IPsec 与旧版 L2TP/PPTP/SSTP 仍需要单独的 Android 引擎。")
     val betaLimitationsDetails = t("Beta можно включать без VPN: System использует обычный мобильный интернет или Wi‑Fi, а отдельные правила направляют выбранный трафик в VPN, Block или режим совместимости TCP/TLS. APK содержит sing-box 1.14 alpha для большинства протоколов и отдельный локальный Xray-core для VLESS/XHTTP. Flow Scanner показывает метаданные без содержимого пакетов и расшифровки HTTPS. Все внешние туннели ещё требуют физической проверки.", "The beta can start without a VPN: System uses normal mobile data or Wi-Fi, while explicit rules send selected traffic to a VPN, Block, or TCP/TLS Compatibility. The APK contains sing-box 1.14 alpha for most protocols and an app-private Xray-core process for VLESS/XHTTP. Flow Scanner shows metadata without packet payloads or HTTPS decryption. Every external tunnel still requires physical verification.", "Beta 无需 VPN 即可启动：System 使用普通移动数据或 Wi-Fi，明确规则可将选定流量发送到 VPN、Block 或 TCP/TLS 兼容模式。APK 对多数协议使用 sing-box 1.14 alpha，并为 VLESS/XHTTP 内置独立的本地 Xray-core 进程。Flow Scanner 仅显示元数据，不记录数据包内容，也不解密 HTTPS。所有外部隧道仍需真机验证。")

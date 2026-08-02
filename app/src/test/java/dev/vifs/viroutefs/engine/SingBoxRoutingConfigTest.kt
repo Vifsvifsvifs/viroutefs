@@ -4,10 +4,14 @@ package dev.vifs.viroutefs.engine
 
 import dev.vifs.viroutefs.routing.AppMatcher
 import dev.vifs.viroutefs.routing.AppMatcherPlatform
+import dev.vifs.viroutefs.routing.DnsHostOverride
 import dev.vifs.viroutefs.routing.DnsPolicy
 import dev.vifs.viroutefs.routing.DnsServerConfig
 import dev.vifs.viroutefs.routing.DnsPolicyType
 import dev.vifs.viroutefs.routing.DestinationPortRange
+import dev.vifs.viroutefs.routing.DomainMatcherMode
+import dev.vifs.viroutefs.routing.ProfileGroup
+import dev.vifs.viroutefs.routing.ProfileGroupMode
 import dev.vifs.viroutefs.routing.RouteRule
 import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.RouteTransport
@@ -16,6 +20,7 @@ import dev.vifs.viroutefs.routing.SingBoxProfileConfig
 import dev.vifs.viroutefs.routing.SingBoxProfileKind
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
+import dev.vifs.viroutefs.routing.encodeDomainMatcher
 import dev.vifs.viroutefs.routing.singBoxProfileTemplate
 import dev.vifs.viroutefs.socks5.Socks5ProfileConfig
 import dev.vifs.viroutefs.vless.VlessProfileConfig
@@ -27,6 +32,122 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SingBoxRoutingConfigTest {
+    @Test
+    fun manualGroupCompilesToExplicitSelectorAndRoutesThroughGroupTag() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val first = socksProfile("group-first", 1081)
+        val second = socksProfile("group-second", 1082)
+        val group = ProfileGroup(
+            id = "manual-group",
+            name = "Manual group",
+            mode = ProfileGroupMode.Manual,
+            memberProfileIds = listOf(first.id, second.id),
+            selectedProfileId = second.id,
+        )
+        val rule = base.rules.first().copy(
+            id = "manual-group-default",
+            targetProfileId = group.id,
+        )
+        val compiled = SingBoxRoutingConfigCompiler().compile(
+            base.copy(
+                profiles = base.profiles + first + second,
+                profileGroups = listOf(group),
+                rules = listOf(rule),
+                defaultProfileId = group.id,
+            ),
+        )
+        val root = JSONObject(compiled.json)
+        val outbounds = root.getJSONArray("outbounds")
+        val selector = (0 until outbounds.length())
+            .map(outbounds::getJSONObject)
+            .first { it.optString("type") == "selector" }
+
+        assertEquals(runtimeProfileTag(group.id), selector.getString("tag"))
+        assertEquals(runtimeProfileTag(second.id), selector.getString("default"))
+        assertEquals(runtimeProfileTag(group.id), root.getJSONObject("route").getString("final"))
+        assertTrue(group.id in compiled.runtimeProfileIds)
+    }
+
+    @Test
+    fun latencyGroupCompilesToExplicitHttpsUrlTestWithoutSystemFallback() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val first = socksProfile("latency-first", 1083)
+        val second = socksProfile("latency-second", 1084)
+        val group = ProfileGroup(
+            id = "latency-group",
+            name = "Fastest office",
+            mode = ProfileGroupMode.Latency,
+            memberProfileIds = listOf(first.id, second.id),
+            testUrl = "https://example.com/health",
+            testIntervalSeconds = 120,
+            toleranceMs = 75,
+        )
+        val compiled = SingBoxRoutingConfigCompiler().compile(
+            base.copy(
+                profiles = base.profiles + first + second,
+                profileGroups = listOf(group),
+            ),
+        )
+        val outbounds = JSONObject(compiled.json).getJSONArray("outbounds")
+        val urlTest = (0 until outbounds.length())
+            .map(outbounds::getJSONObject)
+            .first { it.optString("type") == "urltest" }
+        val members = urlTest.getJSONArray("outbounds")
+            .let { array -> (0 until array.length()).map(array::getString) }
+
+        assertEquals(listOf(runtimeProfileTag(first.id), runtimeProfileTag(second.id)), members)
+        assertEquals("https://example.com/health", urlTest.getString("url"))
+        assertEquals("120s", urlTest.getString("interval"))
+        assertEquals(75, urlTest.getInt("tolerance"))
+        assertFalse(members.contains(SING_BOX_DIRECT_TAG))
+        assertTrue(compiled.warnings.any { it.contains("explicit HTTPS availability check") })
+    }
+
+    @Test
+    fun failoverAndRoundRobinCompileToControllableSelectorsInMemberOrder() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val first = socksProfile("priority-first", 1085)
+        val second = socksProfile("priority-second", 1086)
+
+        listOf(ProfileGroupMode.Failover, ProfileGroupMode.RoundRobin).forEach { mode ->
+            val group = ProfileGroup(
+                id = "managed-${mode.name}",
+                name = mode.name,
+                mode = mode,
+                memberProfileIds = listOf(second.id, first.id),
+                testUrl = "https://example.com/health",
+                testIntervalSeconds = 90,
+            )
+            val compiled = SingBoxRoutingConfigCompiler().compile(
+                base.copy(
+                    profiles = base.profiles + first + second,
+                    profileGroups = listOf(group),
+                ),
+            )
+            val outbounds = JSONObject(compiled.json).getJSONArray("outbounds")
+            val selector = (0 until outbounds.length())
+                .map(outbounds::getJSONObject)
+                .first { it.optString("tag") == runtimeProfileTag(group.id) }
+            val healthGroup = (0 until outbounds.length())
+                .map(outbounds::getJSONObject)
+                .first { it.optString("tag") == runtimeProfileGroupHealthTag(group.id) }
+            val members = selector.getJSONArray("outbounds")
+                .let { array -> (0 until array.length()).map(array::getString) }
+
+            assertEquals("selector", selector.getString("type"))
+            assertEquals(
+                listOf(runtimeProfileTag(second.id), runtimeProfileTag(first.id)),
+                members,
+            )
+            assertEquals(runtimeProfileTag(second.id), selector.getString("default"))
+            assertEquals("urltest", healthGroup.getString("type"))
+            assertEquals("https://example.com/health", healthGroup.getString("url"))
+            assertEquals("90s", healthGroup.getString("interval"))
+            assertFalse(members.contains(SING_BOX_DIRECT_TAG))
+            assertTrue(compiled.warnings.any { it.contains("System is never added") })
+        }
+    }
+
     @Test
     fun routeConstraintsCompileToSingBoxNetworkPortsAndRanges() {
         val base = RoutingConfigDefaults.defaultConfig()
@@ -63,7 +184,59 @@ class SingBoxRoutingConfigTest {
     }
 
     @Test
-    fun customDnsServersCompileInPriorityOrderWithoutDeprecatedCacheFlag() {
+    fun domainModesCompileToDistinctNativeSingBoxFields() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val cases = listOf(
+            Triple(DomainMatcherMode.Exact, "exact.example", "domain"),
+            Triple(DomainMatcherMode.Suffix, "suffix.example", "domain_suffix"),
+            Triple(DomainMatcherMode.Keyword, "keyword", "domain_keyword"),
+            Triple(DomainMatcherMode.Regex, "(^|\\.)regex\\.example$", "domain_regex"),
+        )
+        val rules = cases.mapIndexed { index, (mode, value, _) ->
+            RouteRule(
+                id = "domain-$index",
+                name = "Domain $index",
+                type = RouteRuleType.DOMAIN,
+                targetProfileId = RoutingConfigDefaults.BLOCK_PROFILE_ID,
+                priority = index + 1,
+                matchers = listOf(encodeDomainMatcher(mode, value)),
+                reason = "test",
+                technicalDetails = "test",
+                recommendedAction = "test",
+            )
+        }
+        val compiledRules = JSONObject(
+            SingBoxRoutingConfigCompiler().compile(
+                base.copy(rules = rules + base.rules),
+            ).json,
+        ).getJSONObject("route").getJSONArray("rules").let { array ->
+            (0 until array.length()).map(array::getJSONObject)
+        }
+
+        cases.forEach { (mode, value, field) ->
+            assertTrue(
+                compiledRules.any { it.optJSONArray(field)?.optString(0) == value },
+                "$mode should compile to $field",
+            )
+        }
+    }
+
+    private fun socksProfile(id: String, port: Int): TunnelProfile = TunnelProfile(
+        id = id,
+        name = id,
+        type = TunnelType.Socks5,
+        description = "group fixture",
+        enabled = true,
+        mockOnly = false,
+        socks5 = Socks5ProfileConfig(
+            name = id,
+            host = "192.0.2.10",
+            port = port,
+        ),
+    )
+
+    @Test
+    fun customDnsServersCompileAsOrderedFailoverWithoutDeprecatedCacheFlag() {
         val base = RoutingConfigDefaults.defaultConfig()
         val policy = DnsPolicy(
             id = "multi-dns",
@@ -74,9 +247,24 @@ class SingBoxRoutingConfigTest {
                 DnsServerConfig("second", "https://dns.google/dns-query", priority = 20),
                 DnsServerConfig("first", "tls://1.1.1.1", priority = 10),
             ),
+            fallbackEnabled = true,
+            queryTimeoutSeconds = 7,
         )
+        val defaultRule = base.rules.single { it.type == RouteRuleType.DEFAULT }
         val compiled = SingBoxRoutingConfigCompiler().compile(
-            base.copy(dnsPolicies = base.dnsPolicies + policy),
+            base.copy(
+                dnsPolicies = base.dnsPolicies + policy,
+                rules = base.rules.map {
+                    if (it.id == defaultRule.id) it.copy(dnsPolicyId = policy.id) else it
+                },
+                hostOverrides = listOf(
+                    DnsHostOverride(
+                        id = "router",
+                        hostname = "router.test",
+                        ipAddress = "192.0.2.1",
+                    ),
+                ),
+            ),
         )
         val dns = JSONObject(compiled.json).getJSONObject("dns")
         val servers = dns.getJSONArray("servers")
@@ -85,10 +273,47 @@ class SingBoxRoutingConfigTest {
             .filter { it.optString("type") in setOf("tls", "https") }
 
         assertEquals(listOf("tls", "https"), custom.map { it.getString("type") })
+        assertEquals("dns_bootstrap", custom[1].getString("domain_resolver"))
         assertEquals(4096, dns.getInt("cache_capacity"))
         assertEquals("10s", dns.getString("timeout"))
         assertFalse(dns.has("independent_cache"))
-        assertTrue(compiled.warnings.any { it.contains("priority order") })
+        val dnsRules = dns.getJSONArray("rules")
+        val actions = (0 until dnsRules.length())
+            .map(dnsRules::getJSONObject)
+        assertEquals("route", actions[0].getString("action"))
+        assertEquals(listOf("evaluate", "respond", "route"), actions.drop(1).map { it.getString("action") })
+        assertEquals("7s", actions[1].getString("timeout"))
+        assertTrue(actions[2].getBoolean("match_response"))
+        assertEquals("7s", actions[3].getString("timeout"))
+        assertTrue(compiled.warnings.any { it.contains("tries 2 servers sequentially") })
+    }
+
+    @Test
+    fun legacyMultiDnsKeepsPrimaryOnlyUntilFallbackIsEnabled() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val policy = DnsPolicy(
+            id = "legacy-multi",
+            name = "Legacy multi",
+            type = DnsPolicyType.Custom,
+            description = "test",
+            servers = listOf(
+                DnsServerConfig("first", "1.1.1.1", priority = 0),
+                DnsServerConfig("second", "8.8.8.8", priority = 1),
+            ),
+        )
+        val compiled = SingBoxRoutingConfigCompiler().compile(
+            base.copy(
+                dnsPolicies = base.dnsPolicies + policy,
+                rules = base.rules.map { it.copy(dnsPolicyId = policy.id) },
+            ),
+        )
+        val dnsRules = JSONObject(compiled.json)
+            .getJSONObject("dns")
+            .getJSONArray("rules")
+
+        assertEquals(1, dnsRules.length())
+        assertEquals("route", dnsRules.getJSONObject(0).getString("action"))
+        assertTrue(compiled.warnings.any { it.contains("fallback is disabled") })
     }
 
     @Test
@@ -168,12 +393,16 @@ class SingBoxRoutingConfigTest {
         val root = JSONObject(compiled.json)
         val routeRule = root.getJSONObject("route").getJSONArray("rules").getJSONObject(2)
         val dnsRule = root.getJSONObject("dns").getJSONArray("rules").getJSONObject(0)
-        val dnsServer = root.getJSONObject("dns").getJSONArray("servers").getJSONObject(1)
+        val dnsServers = root.getJSONObject("dns").getJSONArray("servers")
+        val dnsServer = (0 until dnsServers.length())
+            .map(dnsServers::getJSONObject)
+            .first { it.getString("type") == "tls" }
 
         assertEquals("com.example.work", routeRule.getJSONArray("package_name").getString(0))
         assertEquals("com.example.work", dnsRule.getJSONArray("package_name").getString(0))
         assertEquals("tls", dnsServer.getString("type"))
         assertEquals(compiled.profileTags.getValue(profile.id), dnsServer.getString("detour"))
+        assertEquals("dns_bootstrap", root.getJSONObject("route").getString("default_domain_resolver"))
         assertTrue(root.getJSONObject("route").getBoolean("find_process"))
     }
 

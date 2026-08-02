@@ -31,4 +31,36 @@ class VpnConnectionFlowCodecTest {
 
         assertEquals(listOf(flow), decoded)
     }
+
+    @Test
+    fun profileGroupEventRoundTripsWithoutDelimiterCorruption() {
+        val event = ProfileGroupRuntimeEvent(
+            timestamp = 123_456_789L,
+            groupId = "office|group",
+            groupName = "Офис | резерв",
+            selectedProfileId = "reserve-2",
+            selectedProfileName = "Резерв №2",
+            reason = ProfileGroupRuntimeReason.Failover,
+            message = "Основной недоступен: выбран резерв | без System.",
+        )
+
+        val encoded = VpnServiceController.encodeProfileGroupEvent(event)
+        val decoded = VpnServiceController.decodeProfileGroupEvents(arrayListOf(encoded))
+
+        assertEquals(listOf(event), decoded)
+    }
+
+    @Test
+    fun dnsFallbackEventRoundTripsWithoutSavingQueryNames() {
+        val event = DnsFallbackRuntimeEvent(
+            timestamp = 987_654_321L,
+            policyNames = listOf("Работа | резерв", "Личный DNS"),
+            message = "Основной сервер не ответил; запрос продолжен без сохранения имени.",
+        )
+
+        val encoded = VpnServiceController.encodeDnsFallbackEvent(event)
+        val decoded = VpnServiceController.decodeDnsFallbackEvents(arrayListOf(encoded))
+
+        assertEquals(listOf(event), decoded)
+    }
 }

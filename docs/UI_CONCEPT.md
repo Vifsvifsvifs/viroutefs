@@ -4,7 +4,7 @@ ViRouteFS 0.12 beta organizes the Android app around four primary tasks:
 
 1. **Control / Контроль** — one primary network-control action, the phone's default route, quick safety actions, configuration health, and user VPN profiles.
 2. **Routes / Маршруты** — assign installed apps, domains, IP addresses, or CIDR networks to a VPN/proxy, `System`, `Block`, or **Совместимость TCP/TLS**.
-3. **Scanner / Сканер** — live local connection metadata and per-app filtering without payload capture. Installed-app icons appear in the picker, filters and connection rows.
+3. **Scanner / Сканер** — live local connection metadata and per-app filtering without payload capture. Installed-app icons appear in the picker, filters and connection rows. Filters remain above the event list and cover protocol, active/closed state, allowed/blocked result, IPv4/IPv6 and recent start time.
 4. **More / Ещё** — DNS policies, diagnostics/tools, settings, updates, help, licensing, and developer controls.
 
 DNS and Settings remain full screens, but no longer compete with daily network-control tasks in the bottom navigation.
@@ -27,7 +27,10 @@ DNS and Settings remain full screens, but no longer compete with daily network-c
 - IKEv2/IPsec and legacy L2TP/PPTP/SSTP do not have audited Android adapters and must not be shown as working.
 - Flow Scanner shows metadata, not decrypted HTTPS or packet contents.
 - DNS per profile/rule is enforced by the runtime and fails closed when its selected detour is unavailable.
-- There is no telemetry, analytics, ads, tracking, cloud log upload or background monitoring.
+- There is no telemetry, analytics, ads, tracking, cloud log upload or hidden
+  background monitoring. A user-created automatic group may run its explicitly
+  disclosed HTTPS availability check; switch reasons stay in a bounded
+  in-memory journal.
 
 
 See also docs/UI_DIRECTION.md for placeholder and icon direction.

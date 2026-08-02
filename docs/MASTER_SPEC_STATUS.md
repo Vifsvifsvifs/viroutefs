@@ -40,13 +40,14 @@ large, installable block.
 | Milestone | State | Current evidence |
 |---|---|---|
 | M0 truthful status and architecture | Implemented in `0.13.0-beta.2`; external protocol validation still required | seven-state catalog, `EngineAdapter`, live `EngineOrchestrator`, AES-GCM/Keystore secret migration, structured errors, physically verified System route |
-| M1 profiles and import | In progress in `0.14.0-beta.1` | unified preview/apply import accepts shared text/common proxy URIs including v2rayNG VLESS/XHTTP, OpenVPN text and sing-box JSON; secrets are masked and profiles are imported disabled; QR/subscriptions/encrypted full export remain |
+| M1 profiles and import | In progress in `0.14.0-beta.2` | unified preview/apply import accepts shared text/common proxy URIs including v2rayNG VLESS/XHTTP, OpenVPN, standard WireGuard/wg-quick files and sing-box JSON; local CameraX/ZXing QR scanning feeds the same masked preview; manual HTTPS subscriptions support URI/Base64/sing-box JSON and a bounded Clash YAML subset with SSRF/size/count controls, encrypted URLs, stable route-preserving merges and explicit previews; scripts in WireGuard files are never executed; secrets are masked and profiles are imported disabled; redacted JSON plus password-protected full backup/restore exist; physical QR/subscription verification, optional explicitly consented background refresh and additional Clash variants remain |
 | M2 sing-box and Xray protocols | In progress | one sing-box TUN and multiple outbounds compile; VLESS/XHTTP is bridged through an app-private Xray-core process; protocol-specific physical matrix remains |
 | M3 strongSwan | Not started | no embedded strongSwan adapter or binary |
 | M4 legacy | Not started | warnings exist; L2TP/PPP/PPTP/SSTP engines do not |
 | M5 external adapters | Research | zapret2 feasibility is documented; ZeroTier/SoftEther/Tor/Brook are not integrated |
-| M6 routing and DNS | In progress in `0.14.0-beta.1` | app/domain/IPv4/IPv6-CIDR/default/System/Block/custom DNS exist; TCP/UDP and destination-port constraints compile to runtime; ordered DNS server lists exist; groups, automatic DNS failover and atomic reload remain |
-| M7 Flow Scanner and diagnostics | In progress | real sing-box connection events and physical-network tests exist; full attribution matrix and routed diagnostics remain |
+| M6 routing and DNS | Implemented in `0.14.0-beta.2`, device matrix pending | app/exact-domain/suffix/keyword/regex/IPv4/IPv6-CIDR/default/System/Block/custom DNS exist; deterministic visible priority ordering, TCP/UDP and destination-port constraints compile to runtime; manual, explicit HTTPS latency, ordered failover and new-connection round-robin groups exist with an in-memory switch journal; DNS has ordered sequential fallback, per-server timeout, privacy-preserving reason journal and endpoint bootstrap; fail-safe reload preflight exists; Android single-TUN swaps can briefly reconnect |
+| M6 data portability | Implemented in `0.14.0-beta.2`, device verification pending | redacted diagnostic JSON plus password-protected full `.vrfs` backup; AES-256-GCM/PBKDF2, size/KDF bounds, masked preview, native pre-apply check and explicit replace |
+| M7 Flow Scanner and diagnostics | In progress | real sing-box connection events and physical-network tests exist; actual outbounds are compared with a local app/domain/IP/port/transport rule calculation; any installed app can be preselected; events support application/text/protocol/lifecycle/action/IP-version/time filters, completion time and duration, plus explicit payload-free CSV export; engine close reason, PCAP and the full physical attribution matrix remain |
 | M8 audit and root tools | Not started | must remain manual, bounded and non-offensive |
 | M9 feature freeze | Blocked by M1–M8 | no freeze yet |
 | M10 full debugging | Blocked by feature completion | server lab, four-device matrix and soak tests remain |
@@ -56,7 +57,7 @@ large, installable block.
 ## Immediate completion order
 
 1. Finish structured import/export and secret-aware profile lifecycle.
-2. Finish matchers, profile groups, DNS failover and atomic reload.
+2. Physically verify DNS fallback, all group modes and fail-safe reload, and measure the successful single-TUN reconnect.
 3. Finish sing-box structured protocol support and routed diagnostics.
 4. Add audited native adapters: strongSwan, then legacy, then external.
 5. Finish scanner, local audit, optional root tools and PCAP export.

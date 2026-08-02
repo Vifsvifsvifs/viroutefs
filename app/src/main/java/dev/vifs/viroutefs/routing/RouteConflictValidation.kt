@@ -9,6 +9,28 @@ data class RouteConflict(
     val message: String,
 )
 
+fun RoutingConfig.moveExplicitRule(ruleId: String, offset: Int): RoutingConfig {
+    if (offset == 0) return this
+    val ordered = rules
+        .filter { it.type != RouteRuleType.DEFAULT }
+        .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name }.thenBy { it.id })
+        .toMutableList()
+    val currentIndex = ordered.indexOfFirst { it.id == ruleId }
+    if (currentIndex < 0) return this
+    val targetIndex = (currentIndex + offset).coerceIn(0, ordered.lastIndex)
+    if (targetIndex == currentIndex) return this
+    val moved = ordered.removeAt(currentIndex)
+    ordered.add(targetIndex, moved)
+    val normalizedPriorities = ordered
+        .mapIndexed { index, rule -> rule.id to (index + 1) * 10 }
+        .toMap()
+    return copy(
+        rules = rules.map { rule ->
+            normalizedPriorities[rule.id]?.let { priority -> rule.copy(priority = priority) } ?: rule
+        },
+    )
+}
+
 fun findExactRouteConflicts(rules: List<RouteRule>): List<RouteConflict> {
     val explicitRules = rules.filter { it.enabled && it.type != RouteRuleType.DEFAULT }
     return buildList {
@@ -31,7 +53,13 @@ fun validateRouteEditorDraft(candidate: RouteRule, rules: List<RouteRule>): List
             if (candidate.appMatchers.isEmpty()) add("Select at least one installed app.")
         }
         RouteRuleType.DOMAIN -> {
-            if (candidate.matchers.none { it.trim().isNotBlank() }) add("Domain / host matcher is required.")
+            val matcher = candidate.matchers.firstOrNull()?.takeIf { it.isNotBlank() }
+            if (matcher == null) {
+                add("Domain / host matcher is required.")
+            } else {
+                val parsed = parseDomainMatcher(matcher)
+                validateDomainMatcher(parsed.mode, parsed.value)?.let(::add)
+            }
         }
         RouteRuleType.CIDR -> {
             val value = candidate.matchers.firstOrNull()?.trim().orEmpty()
@@ -65,7 +93,7 @@ fun isValidIpv4(text: String): Boolean {
 }
 
 fun normalizedMatcherKey(type: RouteRuleType, raw: String): String = when (type) {
-    RouteRuleType.DOMAIN -> raw.trim().trimEnd('.').lowercase(Locale.ROOT)
+    RouteRuleType.DOMAIN -> parseDomainMatcher(raw).let { encodeDomainMatcher(it.mode, it.value) }
     RouteRuleType.CIDR -> raw.trim().lowercase(Locale.ROOT)
     RouteRuleType.APP, RouteRuleType.APP_GROUP -> raw.trim().lowercase(Locale.ROOT)
     RouteRuleType.DEFAULT -> ""

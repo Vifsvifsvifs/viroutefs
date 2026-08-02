@@ -207,17 +207,28 @@ internal class EngineOrchestratorException(
 ) : IllegalStateException(engineError.summary, engineError.cause)
 
 internal fun RoutingConfig.routedProfileIds(): Set<String> = buildSet {
-    add(defaultProfileId ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID)
-    rules.filter { it.enabled }.forEach { rule ->
-        add(rule.targetProfileId)
-        rule.dnsPolicyId
-            ?.let { policyId -> dnsPolicies.firstOrNull { it.id == policyId } }
-            ?.resolveThroughProfileId
-            ?.let(::add)
+    val targetIds = buildSet {
+        add(defaultProfileId ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID)
+        rules.filter { it.enabled }.forEach { rule ->
+            add(rule.targetProfileId)
+            rule.dnsPolicyId
+                ?.let { policyId -> dnsPolicies.firstOrNull { it.id == policyId } }
+                ?.resolveThroughProfileId
+                ?.let(::add)
+        }
+        profiles.filter { it.enabled && it.dnsPolicyId != null }.forEach { profile ->
+            dnsPolicies.firstOrNull { it.id == profile.dnsPolicyId }
+                ?.resolveThroughProfileId
+                ?.let(::add)
+        }
     }
-    profiles.filter { it.enabled && it.dnsPolicyId != null }.forEach { profile ->
-        dnsPolicies.firstOrNull { it.id == profile.dnsPolicyId }
-            ?.resolveThroughProfileId
-            ?.let(::add)
+    val groupsById = profileGroups.associateBy { it.id }
+    targetIds.forEach { targetId ->
+        val group = groupsById[targetId]
+        if (group == null) {
+            add(targetId)
+        } else if (group.enabled) {
+            addAll(group.memberProfileIds)
+        }
     }
 }

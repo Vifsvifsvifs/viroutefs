@@ -10,12 +10,15 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import dev.vifs.viroutefs.MainActivity
 import dev.vifs.viroutefs.engine.EngineOrchestrator
 import dev.vifs.viroutefs.engine.EngineOrchestratorException
 import dev.vifs.viroutefs.routing.RouteRuleType
+import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
 import dev.vifs.viroutefs.routing.defaultRouteActivationError
 import dev.vifs.viroutefs.runtime.tcp.TcpSessionState
@@ -38,6 +41,8 @@ class ViRouteVpnService : VpnService() {
     private var tunDescriptor: ParcelFileDescriptor? = null
     private var packetLoopThread: Thread? = null
     private var runtimeThread: Thread? = null
+    private var reloadValidationThread: Thread? = null
+    private var reloadGeneration: Long = 0L
     private var engineOrchestrator: EngineOrchestrator? = null
     private var singBoxEngineAdapter: SingBoxEngineAdapter? = null
     @Volatile private var packetLoopStopping: Boolean = false
@@ -54,6 +59,10 @@ class ViRouteVpnService : VpnService() {
     private var lastPacketAt: Long? = null
     private val packetHistory = PacketSummaryHistory()
     @Volatile private var connectionFlows: List<VpnConnectionFlow> = emptyList()
+    @Volatile private var profileGroupEvents: List<ProfileGroupRuntimeEvent> = emptyList()
+    @Volatile private var dnsFallbackEvents: List<DnsFallbackRuntimeEvent> = emptyList()
+    private val profileGroupEventLock = Any()
+    private val dnsFallbackEventLock = Any()
     private var lastUiPublishAt: Long = 0L
 
     override fun onCreate() {
@@ -73,12 +82,15 @@ class ViRouteVpnService : VpnService() {
         val forceReload = intent?.action == VpnServiceController.ACTION_RELOAD
         when (intent?.action) {
             VpnServiceController.ACTION_STOP -> {
+                cancelPendingRuntimeReload()
                 stopPreview()
                 return START_NOT_STICKY
             }
             VpnServiceController.ACTION_CLEAR_PACKET_SUMMARIES -> {
                 packetHistory.clear()
                 connectionFlows = emptyList()
+                profileGroupEvents = emptyList()
+                dnsFallbackEvents = emptyList()
                 singBoxEngineAdapter?.clearConnectionHistory()
                 publishActiveState(force = true)
                 return START_STICKY
@@ -97,6 +109,15 @@ class ViRouteVpnService : VpnService() {
             VpnServiceController.EXTRA_TEST_ROUTE_ENABLED,
             false,
         ) ?: false
+
+        if (forceReload &&
+            !requestedTestRoute &&
+            tunDescriptor != null &&
+            runtimeActive
+        ) {
+            startValidatedRuntimeReload()
+            return START_STICKY
+        }
 
         if (!forceReload &&
             tunDescriptor != null &&
@@ -118,11 +139,13 @@ class ViRouteVpnService : VpnService() {
     }
 
     override fun onRevoke() {
+        cancelPendingRuntimeReload()
         stopPreview()
         super.onRevoke()
     }
 
     override fun onDestroy() {
+        cancelPendingRuntimeReload()
         closeTunDescriptor()
         isRunning = false
         if (lastState.status != VpnServiceStatus.Error) publishStoppedState()
@@ -168,7 +191,7 @@ class ViRouteVpnService : VpnService() {
         updateNotification(activeStatus())
     }
 
-    private fun startTunRuntime() {
+    private fun startTunRuntime(configOverride: RoutingConfig? = null) {
         testRoutePreviewActive = false
         runtimeActive = false
         runtimeStopping = false
@@ -176,25 +199,21 @@ class ViRouteVpnService : VpnService() {
         resetCounters()
         publishState(VpnServiceStatus.Starting, runtimeDetail)
         updateNotification(VpnServiceStatus.Starting)
-        runtimeThread = Thread(::establishTunRuntime, "ViRouteFS-SingBoxRuntime").apply {
+        runtimeThread = Thread(
+            { establishTunRuntime(configOverride) },
+            "ViRouteFS-SingBoxRuntime",
+        ).apply {
             isDaemon = true
             start()
         }
     }
 
-    private fun establishTunRuntime() {
-        val loadResult = runCatching {
-            runBlocking { RoutingConfigRepository(applicationContext).load() }
-        }.getOrElse { error ->
-            failRuntime(error.localizedMessage ?: "Could not load routing configuration.")
+    private fun establishTunRuntime(configOverride: RoutingConfig?) {
+        val config = configOverride ?: loadRuntimeConfig().getOrElse { error ->
+            failRuntime(error.userSafeEngineMessage("Не удалось загрузить конфигурацию маршрутов."))
             return
         }
         if (runtimeStopping) return
-        loadResult.errorMessage?.let { error ->
-            failRuntime(error)
-            return
-        }
-        val config = loadResult.config
         if (!config.emergencyBlockEnabled) {
             defaultRouteActivationError(config)?.let { error ->
                 failRuntime(error)
@@ -227,6 +246,45 @@ class ViRouteVpnService : VpnService() {
                     connectionFlows = flows
                     publishActiveStateThrottled()
                 }
+            },
+            onProfileGroupAction = { action ->
+                profileGroupEvents = synchronized(profileGroupEventLock) {
+                    (
+                        listOf(
+                            ProfileGroupRuntimeEvent(
+                                timestamp = System.currentTimeMillis(),
+                                groupId = action.groupId,
+                                groupName = action.groupName,
+                                selectedProfileId = action.selectedProfileId,
+                                selectedProfileName = action.selectedProfileName,
+                                reason = action.reason,
+                                message = action.message,
+                            ),
+                        ) + profileGroupEvents
+                        ).take(MAX_PROFILE_GROUP_EVENTS)
+                }
+                publishActiveStateThrottled()
+            },
+            onDnsFallback = { policyNames ->
+                val displayNames = policyNames.distinct().sorted()
+                val subject = when (displayNames.size) {
+                    0 -> "Один из DNS-серверов"
+                    1 -> "Основной сервер политики «${displayNames.single()}»"
+                    else -> "Основной сервер одной из политик: ${displayNames.joinToString()}"
+                }
+                dnsFallbackEvents = synchronized(dnsFallbackEventLock) {
+                    (
+                        listOf(
+                            DnsFallbackRuntimeEvent(
+                                timestamp = System.currentTimeMillis(),
+                                policyNames = displayNames,
+                                message = "$subject не ответил или вернул сетевую ошибку. " +
+                                    "Движок продолжил этот DNS-запрос на следующем сервере; имя запрошенного домена не сохранено.",
+                            ),
+                        ) + dnsFallbackEvents
+                        ).take(MAX_DNS_FALLBACK_EVENTS)
+                }
+                publishActiveStateThrottled()
             },
         )
         val orchestrator = EngineOrchestrator(
@@ -275,6 +333,92 @@ class ViRouteVpnService : VpnService() {
                 } ?: "Один из сетевых движков остановился. Связанный трафик оставлен заблокированным.",
             )
         }
+    }
+
+    /**
+     * Keeps the currently healthy generation alive until the replacement
+     * configuration has passed repository, structural, engine and native checks.
+     *
+     * Android owns a single VPN TUN, so a successful swap may still reconnect
+     * briefly. A rejected replacement never tears down the active generation.
+     */
+    private fun startValidatedRuntimeReload() {
+        val generation = ++reloadGeneration
+        reloadValidationThread?.interrupt()
+        runtimeDetail = "Проверяем новые настройки. Текущий маршрут остаётся активным."
+        publishActiveState(force = true)
+        updateNotification(VpnServiceStatus.RuntimeActive)
+
+        reloadValidationThread = Thread(
+            {
+                val result = loadRuntimeConfig().mapCatching { config ->
+                    check(!Thread.currentThread().isInterrupted) { "Проверка отменена." }
+                    preflightRuntimeConfig(config)
+                    config
+                }
+                Handler(Looper.getMainLooper()).post {
+                    if (generation != reloadGeneration || !isRunning) return@post
+                    reloadValidationThread = null
+                    result.onSuccess { config ->
+                        if (tunDescriptor == null || !runtimeActive) return@onSuccess
+                        runtimeDetail = "Настройки проверены. Перезапускаем сетевой маршрут."
+                        publishActiveState(force = true)
+                        closeTunDescriptor()
+                        startTunRuntime(config)
+                    }.onFailure { error ->
+                        runtimeDetail = buildString {
+                            append("Изменения не применены; прежний маршрут продолжает работать. ")
+                            append(error.userSafeEngineMessage("Проверьте изменённые настройки."))
+                        }.take(MAX_RUNTIME_DETAIL_LENGTH)
+                        publishActiveState(force = true)
+                        updateNotification(VpnServiceStatus.RuntimeActive)
+                    }
+                }
+            },
+            "ViRouteFS-ReloadPreflight",
+        ).apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun loadRuntimeConfig(): Result<RoutingConfig> = runCatching {
+        val loadResult = runBlocking { RoutingConfigRepository(applicationContext).load() }
+        loadResult.errorMessage?.let(::error)
+        loadResult.config
+    }
+
+    private fun preflightRuntimeConfig(config: RoutingConfig) {
+        if (!config.emergencyBlockEnabled) {
+            defaultRouteActivationError(config)?.let(::error)
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            config.rules.any {
+                it.enabled && (it.type == RouteRuleType.APP || it.type == RouteRuleType.APP_GROUP)
+            }
+        ) {
+            error("Маршрутизация отдельных приложений требует Android 10 или новее.")
+        }
+
+        val compatibilityAdapter = ByeDpiEngineAdapter(applicationContext)
+        val xrayAdapter = XrayEngineAdapter(applicationContext)
+        val singBoxAdapter = SingBoxEngineAdapter(
+            service = this,
+            onTunEstablished = {},
+            onLog = {},
+            onConnections = {},
+            onProfileGroupAction = {},
+        )
+        EngineOrchestrator(
+            listOf(compatibilityAdapter, xrayAdapter, singBoxAdapter),
+        ).prepare(config).getOrThrow()
+        SingBoxRuntimeValidator.validate(applicationContext, config).getOrThrow()
+    }
+
+    private fun cancelPendingRuntimeReload() {
+        reloadGeneration += 1L
+        reloadValidationThread?.interrupt()
+        reloadValidationThread = null
     }
 
     private fun failRuntime(detail: String) {
@@ -418,6 +562,8 @@ class ViRouteVpnService : VpnService() {
             packetInspectorPaused = packetHistory.isPaused(),
             packetSummaries = packetHistory.newestFirst(),
             connectionFlows = connectionFlows,
+            profileGroupEvents = profileGroupEvents,
+            dnsFallbackEvents = dnsFallbackEvents,
         )
     }
 
@@ -441,6 +587,8 @@ class ViRouteVpnService : VpnService() {
             packetInspectorPaused = packetHistory.isPaused(),
             packetSummaries = packetHistory.newestFirst(),
             connectionFlows = connectionFlows,
+            profileGroupEvents = profileGroupEvents,
+            dnsFallbackEvents = dnsFallbackEvents,
         )
     }
 
@@ -511,6 +659,8 @@ class ViRouteVpnService : VpnService() {
         packetInspectorPaused: Boolean = false,
         packetSummaries: List<PacketSummary> = emptyList(),
         connectionFlows: List<VpnConnectionFlow> = emptyList(),
+        profileGroupEvents: List<ProfileGroupRuntimeEvent> = emptyList(),
+        dnsFallbackEvents: List<DnsFallbackRuntimeEvent> = emptyList(),
         activeTcpSessions: Int = 0,
         tcpSessionStateStats: Map<TcpSessionState, Int> = emptyMap(),
     ) {
@@ -529,6 +679,8 @@ class ViRouteVpnService : VpnService() {
             packetInspectorPaused = packetInspectorPaused,
             packetSummaries = packetSummaries,
             connectionFlows = connectionFlows,
+            profileGroupEvents = profileGroupEvents,
+            dnsFallbackEvents = dnsFallbackEvents,
             activeTcpSessions = activeTcpSessions,
             tcpSessionStateStats = tcpSessionStateStats,
         )
@@ -554,6 +706,14 @@ class ViRouteVpnService : VpnService() {
             .putStringArrayListExtra(
                 VpnServiceController.EXTRA_CONNECTION_FLOWS,
                 ArrayList(connectionFlows.map(VpnServiceController::encodeConnectionFlow)),
+            )
+            .putStringArrayListExtra(
+                VpnServiceController.EXTRA_PROFILE_GROUP_EVENTS,
+                ArrayList(profileGroupEvents.map(VpnServiceController::encodeProfileGroupEvent)),
+            )
+            .putStringArrayListExtra(
+                VpnServiceController.EXTRA_DNS_FALLBACK_EVENTS,
+                ArrayList(dnsFallbackEvents.map(VpnServiceController::encodeDnsFallbackEvent)),
             )
             .putExtra(VpnServiceController.EXTRA_ACTIVE_TCP_SESSIONS, activeTcpSessions)
             .putStringArrayListExtra(
@@ -591,6 +751,8 @@ class ViRouteVpnService : VpnService() {
         private const val RUNTIME_STATS_INTERVAL_MS = 1_000L
         private const val MAX_RUNTIME_DETAIL_LENGTH = 500
         private const val UI_PUBLISH_INTERVAL_MS = 250L
+        private const val MAX_PROFILE_GROUP_EVENTS = 80
+        private const val MAX_DNS_FALLBACK_EVENTS = 80
     }
 }
 

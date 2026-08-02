@@ -10,7 +10,7 @@ Required built-in profiles are restored during migration:
 
 The default rule targets `System`, which means the phone's normal mobile-data or Wi-Fi uplink. Network control can start without adding a VPN profile. Explicit app/domain/IP/CIDR rules may select a VPN/proxy, `Block`, **Совместимость TCP/TLS** or `System`.
 
-Older configurations with no default route, or with the old temporary `Block` default, migrate back to `System`. Schema 10 adds IPv6-aware matchers, TCP/UDP and destination-port constraints, plus ordered DNS server lists. Missing new fields keep the previous unrestricted route and legacy single-DNS behavior.
+Older configurations with no default route, or with the old temporary `Block` default, migrate back to `System`. Schema 10 adds IPv6-aware matchers, TCP/UDP and destination-port constraints, plus ordered DNS server lists. Schema 13 adds explicit sequential DNS fallback and a bounded per-server timeout. Missing new fields keep the previous unrestricted route and primary-only DNS behavior.
 
 ## Secrets
 
@@ -33,6 +33,7 @@ The model is compiled to pinned sing-box 1.14 alpha JSON:
 - custom DNS rules use the selected detour;
 - native libbox validation runs before advanced profiles are saved.
 - OpenVPN `.ovpn` import converts common directives and inline certificate/key blocks, reports anything it did not transfer, and still requires native validation.
+- WireGuard/wg-quick `.conf` import converts `[Interface]` and multiple `[Peer]` sections to a current sing-box endpoint. Private and pre-shared keys stay encrypted; DNS is selected explicitly in ViRouteFS; shell fields such as `PostUp` are ignored and never executed.
 
 VLESS/XHTTP profiles are compiled separately to a pinned Xray-core
 configuration. Xray exposes localhost-only SOCKS endpoints and never owns an

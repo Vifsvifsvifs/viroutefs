@@ -5,6 +5,8 @@ package dev.vifs.viroutefs.engine
 import dev.vifs.viroutefs.routing.AppMatcherPlatform
 import dev.vifs.viroutefs.routing.DnsPolicy
 import dev.vifs.viroutefs.routing.DnsPolicyType
+import dev.vifs.viroutefs.routing.DomainMatcherMode
+import dev.vifs.viroutefs.routing.ProfileGroupMode
 import dev.vifs.viroutefs.routing.RouteRule
 import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.RouteTransport
@@ -13,7 +15,9 @@ import dev.vifs.viroutefs.routing.SingBoxProfileKind
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.normalizedSingBoxProfileObject
+import dev.vifs.viroutefs.routing.isValidIpOrCidr
 import dev.vifs.viroutefs.routing.orderedServers
+import dev.vifs.viroutefs.routing.parseDomainMatcher
 import dev.vifs.viroutefs.socks5.validateSocks5Profile
 import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.VlessSecurityMode
@@ -82,6 +86,83 @@ internal class SingBoxRoutingConfigCompiler(
             }
         }
 
+        config.profileGroups.filter { it.enabled }.forEach { group ->
+            val memberIds = group.memberProfileIds.distinct()
+            val memberTags = memberIds.mapNotNull(profileTags::get).distinct()
+            val groupTag = runtimeProfileTag(group.id)
+            val runtimeGroup = when (group.mode) {
+                ProfileGroupMode.Manual -> {
+                    val selectedTag = group.selectedProfileId?.let(profileTags::get)
+                    if (selectedTag == null || selectedTag !in memberTags) {
+                        warnings += "Manual group '${group.name}' has an unavailable selection and will fail closed."
+                        null
+                    } else {
+                        if (memberTags.size != memberIds.size) {
+                            warnings += "Manual group '${group.name}' excludes unavailable or duplicate runtime members."
+                        }
+                        JSONObject()
+                            .put("type", "selector")
+                            .put("tag", groupTag)
+                            .put("outbounds", JSONArray(memberTags))
+                            .put("default", selectedTag)
+                            .put("interrupt_exist_connections", false)
+                    }
+                }
+                ProfileGroupMode.Latency -> {
+                    if (memberTags.size < 2) {
+                        warnings += "Latency group '${group.name}' has fewer than two available members and will fail closed."
+                        null
+                    } else {
+                        if (memberTags.size != memberIds.size) {
+                            warnings += "Latency group '${group.name}' excludes unavailable or duplicate runtime members from its explicit set."
+                        }
+                        warnings += "Latency group '${group.name}' performs an explicit HTTPS availability check at ${group.testUrl}."
+                        JSONObject()
+                            .put("type", "urltest")
+                            .put("tag", groupTag)
+                            .put("outbounds", JSONArray(memberTags))
+                            .put("url", group.testUrl)
+                            .put("interval", "${group.testIntervalSeconds}s")
+                            .put("idle_timeout", "${maxOf(group.testIntervalSeconds, 1800)}s")
+                            .put("tolerance", group.toleranceMs)
+                            .put("interrupt_exist_connections", false)
+                    }
+                }
+                ProfileGroupMode.Failover,
+                ProfileGroupMode.RoundRobin -> {
+                    if (memberTags.isEmpty()) {
+                        warnings += "${group.mode.name} group '${group.name}' has no available member and will fail closed."
+                        null
+                    } else {
+                        if (memberTags.size != memberIds.size) {
+                            warnings += "${group.mode.name} group '${group.name}' excludes unavailable or duplicate runtime members from its explicit set."
+                        }
+                        warnings += "${group.mode.name} group '${group.name}' uses explicit HTTPS health checks at ${group.testUrl}; System is never added automatically."
+                        outbounds += JSONObject()
+                            .put("type", "urltest")
+                            .put("tag", runtimeProfileGroupHealthTag(group.id))
+                            .put("outbounds", JSONArray(memberTags))
+                            .put("url", group.testUrl)
+                            .put("interval", "${group.testIntervalSeconds}s")
+                            .put("idle_timeout", "${maxOf(group.testIntervalSeconds, 1800)}s")
+                            .put("tolerance", 0)
+                            .put("interrupt_exist_connections", false)
+                        JSONObject()
+                            .put("type", "selector")
+                            .put("tag", groupTag)
+                            .put("outbounds", JSONArray(memberTags))
+                            .put("default", memberTags.first())
+                            .put("interrupt_exist_connections", false)
+                    }
+                }
+            }
+            runtimeGroup?.let { outbound ->
+                outbounds += outbound
+                profileTags[group.id] = groupTag
+                runtimeProfileIds += group.id
+            }
+        }
+
         val routeRules = JSONArray()
         if (config.emergencyBlockEnabled) {
             warnings += "Emergency network block is enabled; all supported device flows are routed to Block."
@@ -101,7 +182,7 @@ internal class SingBoxRoutingConfigCompiler(
 
             config.rules
                 .filter { it.enabled && it.type != RouteRuleType.DEFAULT }
-                .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name })
+                .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name }.thenBy { it.id })
                 .forEach { rule ->
                     val targetTag = profileTags[rule.targetProfileId] ?: SING_BOX_BLOCK_TAG
                     if (targetTag == SING_BOX_BLOCK_TAG && profileTags[rule.targetProfileId] == null) {
@@ -160,7 +241,7 @@ internal class SingBoxRoutingConfigCompiler(
                     .put("final", defaultTag)
                     .put("find_process", config.hasEnabledAppRules())
                     .put("auto_detect_interface", true)
-                    .put("default_domain_resolver", dnsResult.defaultServerTag),
+                    .put("default_domain_resolver", dnsResult.outboundDomainResolverTag),
             )
 
         return SingBoxCompiledRuntime(
@@ -311,7 +392,17 @@ internal class SingBoxRoutingConfigCompiler(
     ): CompiledDns {
         val servers = JSONArray()
         val rules = JSONArray()
+        val bootstrapTag = "dns_bootstrap"
         val systemTag = "dns_system"
+        // Tunnel and encrypted-DNS server hostnames must be resolvable before
+        // their own route exists. This local resolver uses Android's current
+        // underlying network and is limited to endpoint bootstrapping; normal
+        // application DNS still follows the selected policy below.
+        servers.put(
+            JSONObject()
+                .put("type", "local")
+                .put("tag", bootstrapTag),
+        )
         servers.put(
             JSONObject()
                 .put("type", "local")
@@ -323,40 +414,63 @@ internal class SingBoxRoutingConfigCompiler(
                 },
         )
 
-        val usablePolicyTags = linkedMapOf<String, String>()
-        config.dnsPolicies.filter { it.enabled }.forEach { policy ->
+        val policyRuntimes = linkedMapOf<String, DnsPolicyRuntime>()
+        config.dnsPolicies.forEach { policy ->
+            if (!policy.enabled) {
+                policyRuntimes[policy.id] = DnsPolicyRuntime(reject = true)
+                return@forEach
+            }
             if (policy.type != DnsPolicyType.Custom || policy.orderedServers().isEmpty()) {
-                usablePolicyTags[policy.id] = systemTag
+                policyRuntimes[policy.id] = DnsPolicyRuntime(
+                    serverTags = listOf(systemTag),
+                    timeoutSeconds = 10,
+                )
                 return@forEach
             }
             val policyTag = dnsTag(policy.id)
             val detour = policy.resolveThroughProfileId?.let(profileTags::get)
             if (policy.resolveThroughProfileId != null && detour == null) {
                 warnings += "DNS policy '${policy.name}' requires an unavailable profile and will reject matching DNS requests."
-                addDnsRejectRulesForPolicy(config, policy, rules)
+                policyRuntimes[policy.id] = DnsPolicyRuntime(reject = true)
                 return@forEach
             }
             if (detour == SING_BOX_BLOCK_TAG) {
                 warnings += "DNS policy '${policy.name}' is assigned to Block and will reject matching DNS requests."
-                addDnsRejectRulesForPolicy(config, policy, rules)
+                policyRuntimes[policy.id] = DnsPolicyRuntime(reject = true)
                 return@forEach
             }
 
-            val policyServers = parseDnsServers(policy, policyTag, detour, warnings)
+            val policyServers = parseDnsServers(
+                policy = policy,
+                baseTag = policyTag,
+                detour = detour,
+                domainResolverTag = bootstrapTag,
+                warnings = warnings,
+            )
             if (policyServers.isEmpty()) {
                 warnings += "DNS policy '${policy.name}' has no valid server and will reject matching DNS requests."
-                addDnsRejectRulesForPolicy(config, policy, rules)
+                policyRuntimes[policy.id] = DnsPolicyRuntime(reject = true)
                 return@forEach
             }
             policyServers.forEach { (_, server) -> servers.put(server) }
-            val primaryTag = policyServers.first().first
-            usablePolicyTags[policy.id] = primaryTag
-            addDnsRouteRulesForPolicy(config, policy, primaryTag, rules)
-            if (policyServers.size > 1) {
-                warnings += "DNS policy '${policy.name}' stores ${policyServers.size} servers in priority order; the first valid server is currently primary."
+            val fallbackEnabled = policy.fallbackEnabled && policyServers.size > 1
+            policyRuntimes[policy.id] = DnsPolicyRuntime(
+                serverTags = policyServers.map { it.first },
+                fallbackEnabled = fallbackEnabled,
+                timeoutSeconds = policy.queryTimeoutSeconds.coerceIn(1, 30),
+            )
+            when {
+                fallbackEnabled -> warnings +=
+                    "DNS policy '${policy.name}' tries ${policyServers.size} servers sequentially, " +
+                        "waiting up to ${policy.queryTimeoutSeconds.coerceIn(1, 30)}s for each. " +
+                        "It advances only after a transport error or timeout; valid DNS responses, including NXDOMAIN, are returned."
+                policyServers.size > 1 -> warnings +=
+                    "DNS policy '${policy.name}' has ${policyServers.size} ordered servers, but fallback is disabled; only the first valid server is used."
             }
         }
 
+        // Hosts-like entries are intentional local answers and must win even
+        // when the selected default DNS policy compiles to an unconditional rule.
         config.hostOverrides
             .filter { it.enabled && it.hostname.isNotBlank() && it.ipAddress.isNotBlank() }
             .forEachIndexed { index, override ->
@@ -381,10 +495,44 @@ internal class SingBoxRoutingConfigCompiler(
                 )
             }
 
-        val defaultPolicyId = config.defaultProfileId
-            ?.let { id -> config.profiles.firstOrNull { it.id == id } }
-            ?.dnsPolicyId
-        val defaultServerTag = defaultPolicyId?.let(usablePolicyTags::get) ?: systemTag
+        val sortedRules = config.rules
+            .filter { it.enabled }
+            .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name }.thenBy { it.id })
+        sortedRules
+            .filterNot { it.type == RouteRuleType.DEFAULT }
+            .forEach { routeRule ->
+                val policyId = effectiveDnsPolicyId(config, routeRule) ?: return@forEach
+                addDnsPolicyRules(
+                    routeRule = routeRule,
+                    runtime = policyRuntimes[policyId] ?: DnsPolicyRuntime(reject = true),
+                    output = rules,
+                )
+            }
+
+        val defaultRule = sortedRules.firstOrNull { it.type == RouteRuleType.DEFAULT }
+        val defaultPolicyId = defaultRule?.let { effectiveDnsPolicyId(config, it) }
+            ?: config.defaultProfileId
+                ?.let { id -> config.profiles.firstOrNull { it.id == id } }
+                ?.dnsPolicyId
+        val defaultRuntime = defaultPolicyId
+            ?.let { policyRuntimes[it] ?: DnsPolicyRuntime(reject = true) }
+            ?: DnsPolicyRuntime(serverTags = listOf(systemTag), timeoutSeconds = 10)
+        addDnsPolicyRules(
+            routeRule = defaultRule ?: RouteRule(
+                id = "runtime-default-dns",
+                name = "Runtime default DNS",
+                type = RouteRuleType.DEFAULT,
+                targetProfileId = config.defaultProfileId.orEmpty(),
+                priority = Int.MAX_VALUE,
+                matchers = emptyList(),
+                reason = "Runtime default DNS policy.",
+                technicalDetails = "Generated only when an imported configuration has no explicit default rule.",
+                recommendedAction = "Keep one explicit default route.",
+            ),
+            runtime = defaultRuntime,
+            output = rules,
+        )
+        val defaultServerTag = defaultRuntime.serverTags.firstOrNull() ?: systemTag
         return CompiledDns(
             options = JSONObject()
                 .put("servers", servers)
@@ -393,7 +541,7 @@ internal class SingBoxRoutingConfigCompiler(
                 .put("strategy", "prefer_ipv4")
                 .put("cache_capacity", 4096)
                 .put("timeout", "10s"),
-            defaultServerTag = defaultServerTag,
+            outboundDomainResolverTag = bootstrapTag,
         )
     }
 
@@ -401,10 +549,11 @@ internal class SingBoxRoutingConfigCompiler(
         policy: DnsPolicy,
         baseTag: String,
         detour: String?,
+        domainResolverTag: String,
         warnings: MutableList<String>,
     ): List<Pair<String, JSONObject>> = policy.orderedServers().mapIndexedNotNull { index, configured ->
         val tag = if (index == 0) baseTag else "${baseTag}_${index + 1}"
-        runCatching { dnsServer(configured.address, tag, detour) }
+        runCatching { dnsServer(configured.address, tag, detour, domainResolverTag) }
             .onFailure {
                 warnings += "DNS server '${configured.address}' in '${policy.name}' is invalid: ${it.message.orEmpty()}"
             }
@@ -412,7 +561,12 @@ internal class SingBoxRoutingConfigCompiler(
             ?.let { tag to it }
     }
 
-    private fun dnsServer(raw: String, tag: String, detour: String?): JSONObject {
+    private fun dnsServer(
+        raw: String,
+        tag: String,
+        detour: String?,
+        domainResolverTag: String,
+    ): JSONObject {
         if (raw.equals("local", ignoreCase = true) || raw.equals("localhost", ignoreCase = true)) {
             return JSONObject().put("type", "local").put("tag", tag)
         }
@@ -454,35 +608,40 @@ internal class SingBoxRoutingConfigCompiler(
                             .put("server_name", host),
                     )
                 }
+                if (!isValidIpOrCidr(host)) {
+                    put("domain_resolver", domainResolverTag)
+                }
                 detour?.let { put("detour", it) }
             }
     }
 
-    private fun addDnsRouteRulesForPolicy(
-        config: RoutingConfig,
-        policy: DnsPolicy,
-        serverTag: String,
+    private fun addDnsPolicyRules(
+        routeRule: RouteRule,
+        runtime: DnsPolicyRuntime,
         output: JSONArray,
     ) {
-        config.rules
-            .filter { it.enabled && effectiveDnsPolicyId(config, it) == policy.id }
-            .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name })
-            .forEach { routeRule ->
-                routeRule.toDnsMatchRule("route", serverTag)?.let(output::put)
-            }
-    }
-
-    private fun addDnsRejectRulesForPolicy(
-        config: RoutingConfig,
-        policy: DnsPolicy,
-        output: JSONArray,
-    ) {
-        config.rules
-            .filter { it.enabled && effectiveDnsPolicyId(config, it) == policy.id }
-            .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name })
-            .forEach { routeRule ->
-                routeRule.toDnsMatchRule("reject", null)?.let(output::put)
-            }
+        if (runtime.reject || runtime.serverTags.isEmpty()) {
+            routeRule.toDnsMatchRule("reject", null)?.let(output::put)
+            return
+        }
+        val timeout = "${runtime.timeoutSeconds}s"
+        if (!runtime.fallbackEnabled || runtime.serverTags.size == 1) {
+            routeRule.toDnsMatchRule("route", runtime.serverTags.first())
+                ?.put("timeout", timeout)
+                ?.let(output::put)
+            return
+        }
+        runtime.serverTags.dropLast(1).forEach { serverTag ->
+            routeRule.toDnsMatchRule("evaluate", serverTag)
+                ?.put("timeout", timeout)
+                ?.let(output::put)
+            routeRule.toDnsMatchRule("respond", null)
+                ?.put("match_response", true)
+                ?.let(output::put)
+        }
+        routeRule.toDnsMatchRule("route", runtime.serverTags.last())
+            ?.put("timeout", timeout)
+            ?.let(output::put)
     }
 
     private fun effectiveDnsPolicyId(config: RoutingConfig, rule: RouteRule): String? =
@@ -521,14 +680,12 @@ internal class SingBoxRoutingConfigCompiler(
         val keyword = mutableListOf<String>()
         val regex = mutableListOf<String>()
         values.map(String::trim).filter(String::isNotBlank).forEach { raw ->
-            val value = raw.lowercase(Locale.ROOT).trimEnd('.')
-            when {
-                value.startsWith("full:") -> exact += value.removePrefix("full:")
-                value.startsWith("keyword:") -> keyword += value.removePrefix("keyword:")
-                value.startsWith("regexp:") -> regex += value.removePrefix("regexp:")
-                value.startsWith("domain:") -> suffix += value.removePrefix("domain:").removePrefix("*.")
-                value.startsWith("*.") -> suffix += value.removePrefix("*.")
-                else -> suffix += value
+            val parsed = parseDomainMatcher(raw)
+            when (parsed.mode) {
+                DomainMatcherMode.Exact -> exact += parsed.value
+                DomainMatcherMode.Suffix -> suffix += parsed.value
+                DomainMatcherMode.Keyword -> keyword += parsed.value
+                DomainMatcherMode.Regex -> regex += parsed.value
             }
         }
         return DomainMatchFields(
@@ -627,7 +784,14 @@ internal class SingBoxRoutingConfigCompiler(
 
     private data class CompiledDns(
         val options: JSONObject,
-        val defaultServerTag: String,
+        val outboundDomainResolverTag: String,
+    )
+
+    private data class DnsPolicyRuntime(
+        val serverTags: List<String> = emptyList(),
+        val fallbackEnabled: Boolean = false,
+        val timeoutSeconds: Int = 5,
+        val reject: Boolean = false,
     )
 
     private data class DomainMatchFields(
@@ -653,6 +817,9 @@ internal fun runtimeProfileTag(id: String): String = when (id) {
     "direct" -> SING_BOX_DIRECT_TAG
     else -> "profile_${safeRuntimeTagPart(id)}_${id.hashCode().toUInt().toString(16)}"
 }
+
+internal fun runtimeProfileGroupHealthTag(id: String): String =
+    "${runtimeProfileTag(id)}_health"
 
 private fun safeRuntimeTagPart(value: String): String = value
     .lowercase(Locale.ROOT)

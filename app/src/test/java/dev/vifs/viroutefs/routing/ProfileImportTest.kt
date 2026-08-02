@@ -6,8 +6,10 @@ import java.nio.charset.StandardCharsets
 import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.json.JSONObject
 
 class ProfileImportTest {
     @Test
@@ -65,6 +67,90 @@ class ProfileImportTest {
 
         assertEquals(TunnelType.OpenVpn, preview.candidates.single().profile.type)
         assertFalse(preview.candidates.single().profile.enabled)
+    }
+
+    @Test
+    fun wireGuardConfImportsAsDisabledEndpointAndMasksKeys() {
+        val privateKey = Base64.getEncoder().encodeToString(ByteArray(32) { 1 })
+        val publicKey = Base64.getEncoder().encodeToString(ByteArray(32) { 2 })
+        val preSharedKey = Base64.getEncoder().encodeToString(ByteArray(32) { 3 })
+        val preview = previewProfileImport(
+            """
+            [Interface]
+            PrivateKey = $privateKey
+            Address = 10.20.0.2/32, fd00:20::2/128
+            DNS = 9.9.9.9
+            MTU = 1380
+            PostUp = should-never-run
+
+            [Peer]
+            PublicKey = $publicKey
+            PresharedKey = $preSharedKey
+            AllowedIPs = 0.0.0.0/0, ::/0
+            Endpoint = vpn.example:51820
+            PersistentKeepalive = 25
+            """.trimIndent(),
+        )
+        val candidate = preview.candidates.single()
+        val profile = candidate.profile
+        val endpoint = JSONObject(profile.singBox!!.optionsJson)
+        val peer = endpoint.getJSONArray("peers").getJSONObject(0)
+
+        assertEquals(TunnelType.WireGuard, profile.type)
+        assertFalse(profile.enabled)
+        assertEquals(SingBoxProfileKind.Endpoint, profile.singBox.kind)
+        assertEquals(2, endpoint.getJSONArray("address").length())
+        assertEquals(1380, endpoint.getInt("mtu"))
+        assertEquals("vpn.example", peer.getString("address"))
+        assertEquals(51820, peer.getInt("port"))
+        assertEquals(25, peer.getInt("persistent_keepalive_interval"))
+        assertFalse(candidate.maskedPreview.contains(privateKey))
+        assertFalse(candidate.maskedPreview.contains(preSharedKey))
+        assertTrue(candidate.warnings.any { it.contains("DNS") })
+        assertTrue(candidate.warnings.any { it.contains("postup") })
+    }
+
+    @Test
+    fun wireGuardConfRejectsInvalidKeyWithoutLeakingIt() {
+        val error = assertFailsWith<IllegalArgumentException> {
+            importWireGuardProfile(
+                """
+                [Interface]
+                PrivateKey = definitely-not-a-wireguard-key
+                Address = 10.0.0.2/32
+                [Peer]
+                PublicKey = also-invalid
+                AllowedIPs = 0.0.0.0/0
+                Endpoint = vpn.example:51820
+                """.trimIndent(),
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("PrivateKey"))
+        assertFalse(error.message.orEmpty().contains("definitely-not"))
+    }
+
+    @Test
+    fun wireGuardConfAcceptsBracketedIpv6PeerEndpoint() {
+        val privateKey = Base64.getEncoder().encodeToString(ByteArray(32) { 4 })
+        val publicKey = Base64.getEncoder().encodeToString(ByteArray(32) { 5 })
+        val imported = importWireGuardProfile(
+            """
+            [Interface]
+            PrivateKey = $privateKey
+            Address = fd00:40::2/128
+            [Peer]
+            PublicKey = $publicKey
+            AllowedIPs = ::/0
+            Endpoint = [2001:db8::40]:51820
+            """.trimIndent(),
+        )
+        val peer = JSONObject(imported.optionsJson)
+            .getJSONArray("peers")
+            .getJSONObject(0)
+
+        assertEquals("2001:db8::40", peer.getString("address"))
+        assertEquals(51820, peer.getInt("port"))
     }
 
     @Test

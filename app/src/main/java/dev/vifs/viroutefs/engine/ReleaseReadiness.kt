@@ -3,10 +3,13 @@
 package dev.vifs.viroutefs.engine
 
 import dev.vifs.viroutefs.routing.RouteRuleType
+import dev.vifs.viroutefs.routing.ProfileGroupMode
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
+import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.defaultRouteActivationError
+import dev.vifs.viroutefs.routing.hasRuntimeConfiguration
 import dev.vifs.viroutefs.routing.validateRoutingConfig
 
 internal enum class ReadinessState(val userLabel: String) {
@@ -61,11 +64,31 @@ internal fun evaluateReleaseReadiness(config: RoutingConfig): ReleaseReadinessRe
     val defaultRouteError = defaultRouteActivationError(config)
     val explicitRules = config.rules.filter { it.enabled && it.type != RouteRuleType.DEFAULT }
     val profileById = config.profiles.associateBy { it.id }
+    val groupById = config.profileGroups.associateBy { it.id }
+    fun TunnelProfile.isRuntimeAvailable(): Boolean =
+        enabled &&
+            hasRuntimeConfiguration() &&
+            EngineCatalog.descriptor(type)?.canStartRuntime == true
     val unavailableRuleTargets = explicitRules.filter { rule ->
         val profile = profileById[rule.targetProfileId]
-        profile == null ||
-            !profile.enabled ||
-            EngineCatalog.descriptor(profile.type)?.canStartRuntime != true
+        val group = groupById[rule.targetProfileId]
+        when {
+            profile != null -> !profile.isRuntimeAvailable()
+            group != null -> {
+                val memberIds = group.memberProfileIds.distinct()
+                val availableIds = memberIds.filter { profileById[it]?.isRuntimeAvailable() == true }
+                !group.enabled ||
+                    memberIds.size < 2 ||
+                    when (group.mode) {
+                        ProfileGroupMode.Manual ->
+                            group.selectedProfileId !in availableIds
+                        ProfileGroupMode.Latency -> availableIds.size < 2
+                        ProfileGroupMode.Failover,
+                        ProfileGroupMode.RoundRobin -> availableIds.isEmpty()
+                    }
+            }
+            else -> true
+        }
     }
     val configuredProfiles = config.profiles.filterNot { profile ->
         profile.id in setOf(
@@ -75,7 +98,7 @@ internal fun evaluateReleaseReadiness(config: RoutingConfig): ReleaseReadinessRe
         )
     }
     val configuredUnavailableProfiles = configuredProfiles.filter { profile ->
-        EngineCatalog.descriptor(profile.type)?.canStartRuntime != true
+        !profile.isRuntimeAvailable()
     }
     val customDnsPolicies = config.dnsPolicies.filter { policy ->
         policy.enabled && policy.id != RoutingConfigDefaults.SYSTEM_DNS_ID

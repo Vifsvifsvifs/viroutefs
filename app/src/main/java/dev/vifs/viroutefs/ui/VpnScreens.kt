@@ -2,7 +2,9 @@
 
 package dev.vifs.viroutefs.ui
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -68,6 +70,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import dev.vifs.viroutefs.CardBlock
 import dev.vifs.viroutefs.Details
 import dev.vifs.viroutefs.Header
@@ -83,7 +86,9 @@ import dev.vifs.viroutefs.engine.ReadinessState
 import dev.vifs.viroutefs.engine.ReleaseReadinessReport
 import dev.vifs.viroutefs.engine.evaluateReleaseReadiness
 import dev.vifs.viroutefs.routing.RoutingConfig
+import dev.vifs.viroutefs.routing.RoutingConfigBackup
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
+import dev.vifs.viroutefs.routing.RoutingConfigRepository
 import dev.vifs.viroutefs.routing.ImportDuplicateResolution
 import dev.vifs.viroutefs.routing.ProfileImportPreview
 import dev.vifs.viroutefs.routing.RouteRuleType
@@ -98,6 +103,7 @@ import dev.vifs.viroutefs.routing.singBoxProfileTemplate
 import dev.vifs.viroutefs.routing.singBoxProtocolSchema
 import dev.vifs.viroutefs.routing.validateSingBoxProfile
 import dev.vifs.viroutefs.routing.withDefaultRoute
+import dev.vifs.viroutefs.routing.withoutProfile
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_NOTICE
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_SECRET_NOTICE
 import dev.vifs.viroutefs.runtime.tcp.DevTcpBridgeSnapshot
@@ -175,6 +181,7 @@ internal fun VpnScreen(
     var addVless by rememberSaveable { mutableStateOf(false) }
     var addSingBoxTypeName by rememberSaveable { mutableStateOf<String?>(null) }
     var showProfileImport by rememberSaveable { mutableStateOf(!initialImportSource.isNullOrBlank()) }
+    var showConfigBackup by rememberSaveable { mutableStateOf(false) }
     var profileImportSource by rememberSaveable { mutableStateOf(initialImportSource.orEmpty()) }
     LaunchedEffect(initialImportSource) {
         if (!initialImportSource.isNullOrBlank()) {
@@ -228,6 +235,19 @@ internal fun VpnScreen(
                 showProfileImport = false
                 profileImportSource = ""
                 onProfileImportConsumed()
+            },
+        )
+        return
+    }
+
+    if (showConfigBackup) {
+        ConfigBackupScreen(
+            padding = padding,
+            config = config,
+            onBack = { showConfigBackup = false },
+            onConfig = { next, message ->
+                onConfig(next, message)
+                showConfigBackup = false
             },
         )
         return
@@ -409,6 +429,11 @@ internal fun VpnScreen(
                         nativeCheckRunning = false
                     }
                 },
+            )
+        }
+        item {
+            ConfigurationBackupCard(
+                onOpen = { showConfigBackup = true },
             )
         }
         item {
@@ -697,6 +722,9 @@ private fun PrimaryInternetCard(
     val profile = config.defaultProfileId?.let { id ->
         config.profiles.firstOrNull { it.id == id }
     }
+    val group = config.defaultProfileId?.let { id ->
+        config.profileGroups.firstOrNull { it.id == id }
+    }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -720,7 +748,18 @@ private fun PrimaryInternetCard(
                 Column(Modifier.weight(1f)) {
                     Text("Основной маршрут", style = MaterialTheme.typography.labelMedium)
                     Text(
-                        profile?.let { "${it.name} • ${it.type.label}" } ?: "Не выбран",
+                        profile?.let { "${it.name} • ${it.type.label}" }
+                            ?: group?.let {
+                                "${it.name} • ${
+                                    when (it.mode) {
+                                        dev.vifs.viroutefs.routing.ProfileGroupMode.Manual -> "ручная группа"
+                                        dev.vifs.viroutefs.routing.ProfileGroupMode.Latency -> "минимальная задержка"
+                                        dev.vifs.viroutefs.routing.ProfileGroupMode.Failover -> "резерв по порядку"
+                                        dev.vifs.viroutefs.routing.ProfileGroupMode.RoundRobin -> "по кругу"
+                                    }
+                                }"
+                            }
+                            ?: "Не выбран",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
@@ -731,6 +770,8 @@ private fun PrimaryInternetCard(
                 activationError
                     ?: if (profile?.type == TunnelType.Direct) {
                         "Обычный мобильный интернет или Wi‑Fi. VPN-профиль не обязателен."
+                    } else if (group != null) {
+                        "Трафик без отдельного правила идёт через явно настроенную группу."
                     } else {
                         "Трафик без отдельного правила идёт через этот профиль."
                     },
@@ -851,6 +892,381 @@ private fun ReadinessItemRow(item: ReadinessItem) {
 }
 
 @Composable
+private fun ConfigurationBackupCard(
+    onOpen: () -> Unit,
+) {
+    CardBlock {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text("Резервная копия", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Зашифрованный полный архив или очищенный файл для диагностики.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            FilledTonalButton(onClick = onOpen) {
+                Text("Открыть")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConfigBackupScreen(
+    padding: PaddingValues,
+    config: RoutingConfig,
+    onBack: () -> Unit,
+    onConfig: (RoutingConfig, String?) -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val repository = remember(context) { RoutingConfigRepository(context.applicationContext) }
+    var exportPassword by rememberSaveable { mutableStateOf("") }
+    var exportPasswordConfirmation by rememberSaveable { mutableStateOf("") }
+    var importPassword by rememberSaveable { mutableStateOf("") }
+    var pendingEncryptedExport by remember { mutableStateOf<ByteArray?>(null) }
+    var pendingImport by remember { mutableStateOf<ByteArray?>(null) }
+    var importedConfig by remember { mutableStateOf<RoutingConfig?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var message by rememberSaveable { mutableStateOf<String?>(null) }
+
+    fun clearSensitiveUiState() {
+        exportPassword = ""
+        exportPasswordConfirmation = ""
+        importPassword = ""
+        pendingEncryptedExport?.fill(0)
+        pendingEncryptedExport = null
+        pendingImport?.fill(0)
+        pendingImport = null
+        importedConfig = null
+    }
+
+    val safeExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri != null) {
+            busy = true
+            scope.launch {
+                runCatching {
+                    val bytes = withContext(Dispatchers.Default) {
+                        repository.exportJson(config).toByteArray(Charsets.UTF_8)
+                    }
+                    try {
+                        writeConfigDocument(context, uri, bytes)
+                    } finally {
+                        bytes.fill(0)
+                    }
+                }.onSuccess {
+                    message = "Очищенный диагностический файл сохранён без секретов."
+                }.onFailure { error ->
+                    message = error.localizedMessage ?: "Не удалось сохранить файл."
+                }
+                busy = false
+            }
+        }
+    }
+    val encryptedExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri ->
+        val payload = pendingEncryptedExport
+        pendingEncryptedExport = null
+        if (uri == null || payload == null) {
+            payload?.fill(0)
+        } else {
+            busy = true
+            scope.launch {
+                runCatching {
+                    writeConfigDocument(context, uri, payload)
+                }.onSuccess {
+                    message = "Полная зашифрованная копия сохранена. Храните пароль отдельно."
+                    exportPassword = ""
+                    exportPasswordConfirmation = ""
+                }.onFailure { error ->
+                    message = error.localizedMessage ?: "Не удалось сохранить резервную копию."
+                }
+                payload.fill(0)
+                busy = false
+            }
+        }
+    }
+    val encryptedImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            busy = true
+            scope.launch {
+                runCatching {
+                    readConfigDocument(context, uri)
+                }.onSuccess { bytes ->
+                    pendingImport?.fill(0)
+                    pendingImport = bytes
+                    importedConfig = null
+                    importPassword = ""
+                    message = "Файл выбран. Введите его пароль и проверьте содержимое."
+                }.onFailure { error ->
+                    message = error.localizedMessage ?: "Не удалось прочитать резервную копию."
+                }
+                busy = false
+            }
+        }
+    }
+
+    ScreenList(padding) {
+        item {
+            Header(
+                "Резервная копия настроек",
+                "Экспорт выполняется только по вашему действию. ViRouteFS ничего не отправляет в облако.",
+            )
+        }
+        item {
+            CardBlock {
+                Text("Очищенный экспорт", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Профили, правила и DNS для диагностики. Пароли, UUID, ключи, PSK, cookie и приватные параметры заменяются маркерами; такой файл не является полной копией.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(
+                    onClick = { safeExportLauncher.launch("viroutefs-settings-redacted.json") },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Сохранить без секретов")
+                }
+            }
+        }
+        item {
+            CardBlock {
+                Text("Полная зашифрованная копия", fontWeight = FontWeight.SemiBold)
+                WarningText(
+                    "Архив содержит все данные подключения. Он защищён AES-256-GCM, а ключ формируется из пароля через PBKDF2-HMAC-SHA256. Потерянный пароль восстановить нельзя.",
+                )
+                OutlinedTextField(
+                    value = exportPassword,
+                    onValueChange = { exportPassword = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Новый пароль — минимум ${RoutingConfigBackup.MIN_PASSWORD_LENGTH} символов") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = exportPasswordConfirmation,
+                    onValueChange = { exportPasswordConfirmation = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Повторите пароль") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                )
+                Button(
+                    onClick = {
+                        val password = exportPassword.toCharArray()
+                        val validation = RoutingConfigBackup.validatePassword(password)
+                        when {
+                            validation != null -> {
+                                message = validation
+                                password.fill('\u0000')
+                            }
+                            exportPassword != exportPasswordConfirmation -> {
+                                message = "Пароли не совпадают."
+                                password.fill('\u0000')
+                            }
+                            else -> {
+                                busy = true
+                                scope.launch {
+                                    runCatching {
+                                        repository.exportEncryptedBackup(config, password)
+                                    }.onSuccess { bytes ->
+                                        pendingEncryptedExport?.fill(0)
+                                        pendingEncryptedExport = bytes
+                                        encryptedExportLauncher.launch("viroutefs-backup.vrfs")
+                                    }.onFailure { error ->
+                                        message = error.localizedMessage ?: "Не удалось создать резервную копию."
+                                    }
+                                    password.fill('\u0000')
+                                    busy = false
+                                }
+                            }
+                        }
+                    },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (busy) "Подготовка…" else "Создать полную копию")
+                }
+            }
+        }
+        item {
+            CardBlock {
+                Text("Восстановление полной копии", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Сначала файл расшифровывается и проверяется без изменения текущих настроек. Применение всегда отдельной кнопкой заменит все профили, правила и DNS.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(
+                    onClick = {
+                        encryptedImportLauncher.launch(
+                            arrayOf("application/octet-stream", "application/json", "*/*"),
+                        )
+                    },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (pendingImport == null) "Выбрать .vrfs" else "Выбрать другой файл")
+                }
+                if (pendingImport != null) {
+                    Text(
+                        "Выбран зашифрованный файл: ${pendingImport!!.size / 1024 + 1} КБ",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    OutlinedTextField(
+                        value = importPassword,
+                        onValueChange = {
+                            importPassword = it
+                            importedConfig = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Пароль файла") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                    )
+                    Button(
+                        onClick = {
+                            val bytes = pendingImport ?: return@Button
+                            val password = importPassword.toCharArray()
+                            busy = true
+                            scope.launch {
+                                runCatching {
+                                    repository.previewEncryptedBackup(bytes, password)
+                                }.onSuccess { restored ->
+                                    importedConfig = restored
+                                    message = "Копия расшифрована и структурно проверена."
+                                }.onFailure { error ->
+                                    importedConfig = null
+                                    message = error.localizedMessage ?: "Не удалось проверить резервную копию."
+                                }
+                                password.fill('\u0000')
+                                busy = false
+                            }
+                        },
+                        enabled = !busy && importPassword.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Расшифровать и проверить")
+                    }
+                }
+            }
+        }
+        importedConfig?.let { restored ->
+            item {
+                CardBlock {
+                    Text("Предварительный просмотр", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Профилей: ${restored.profiles.size}; групп: ${restored.profileGroups.size}; правил: ${restored.rules.size}; DNS-политик: ${restored.dnsPolicies.size}.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    restored.profiles
+                        .filterNot {
+                            it.id in setOf(
+                                RoutingConfigDefaults.SYSTEM_PROFILE_ID,
+                                RoutingConfigDefaults.BLOCK_PROFILE_ID,
+                                RoutingConfigDefaults.BYEDPI_PROFILE_ID,
+                            )
+                        }
+                        .take(10)
+                        .forEach { profile ->
+                            Text("• ${profile.name} — ${profile.type.label}", style = MaterialTheme.typography.bodySmall)
+                        }
+                    WarningText("После применения текущая конфигурация будет полностью заменена.")
+                    Button(
+                        onClick = {
+                            busy = true
+                            scope.launch {
+                                val nativeResult = withContext(Dispatchers.IO) {
+                                    SingBoxRuntimeValidator.validate(context.applicationContext, restored)
+                                }
+                                nativeResult.onSuccess {
+                                    clearSensitiveUiState()
+                                    onConfig(
+                                        restored,
+                                        "Зашифрованная резервная копия восстановлена и принята сетевым движком.",
+                                    )
+                                }.onFailure { error ->
+                                    message = "Копия не применена: ${error.localizedMessage ?: "движок отклонил конфигурацию"}"
+                                }
+                                busy = false
+                            }
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Заменить текущие настройки")
+                    }
+                }
+            }
+        }
+        message?.let { currentMessage ->
+            item {
+                CardBlock {
+                    Text(currentMessage, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+        item {
+            OutlinedButton(
+                onClick = {
+                    clearSensitiveUiState()
+                    onBack()
+                },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Назад")
+            }
+        }
+    }
+}
+
+private suspend fun writeConfigDocument(
+    context: Context,
+    uri: Uri,
+    bytes: ByteArray,
+) = withContext(Dispatchers.IO) {
+    context.contentResolver.openOutputStream(uri, "w")?.use { output ->
+        output.write(bytes)
+        output.flush()
+    } ?: error("Android не предоставил доступ к выбранному файлу.")
+}
+
+private suspend fun readConfigDocument(
+    context: Context,
+    uri: Uri,
+    maxBytes: Int = 16 * 1024 * 1024,
+): ByteArray = withContext(Dispatchers.IO) {
+    val input = context.contentResolver.openInputStream(uri)
+        ?: error("Android не предоставил доступ к выбранному файлу.")
+    input.use { stream ->
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0
+        while (true) {
+            val read = stream.read(buffer)
+            if (read < 0) break
+            total += read
+            require(total <= maxBytes) { "Файл слишком большой. Максимум — 16 МБ." }
+            output.write(buffer, 0, read)
+        }
+        output.toByteArray()
+    }
+}
+
+@Composable
 private fun ProfileImportScreen(
     padding: PaddingValues,
     config: RoutingConfig,
@@ -871,6 +1287,7 @@ private fun ProfileImportScreen(
     }
     var duplicateResolution by rememberSaveable { mutableStateOf(ImportDuplicateResolution.Skip) }
     var fileLoading by remember { mutableStateOf(false) }
+    var qrScannerOpen by rememberSaveable { mutableStateOf(false) }
 
     fun refreshPreview(value: String = source) {
         preview = runCatching { previewProfileImport(value) }
@@ -899,11 +1316,41 @@ private fun ProfileImportScreen(
         }
     }
 
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            qrScannerOpen = true
+            error = null
+        } else {
+            error = "Доступ к камере не предоставлен. Разрешите его в настройках Android или используйте буфер обмена и файл."
+        }
+    }
+
+    if (qrScannerOpen) {
+        ProfileQrScannerScreen(
+            padding = padding,
+            onBack = { qrScannerOpen = false },
+            onDecoded = { value ->
+                source = value
+                qrScannerOpen = false
+                refreshPreview(value)
+            },
+        )
+        return
+    }
+
     ScreenList(padding) {
         item {
             Header(
                 "Импорт VPN-профилей",
-                "Ссылки, sing-box JSON и конфигурации OpenVPN — с безопасным предпросмотром до сохранения.",
+                "QR-код, ссылки, sing-box JSON, OpenVPN и WireGuard — с безопасным предпросмотром до сохранения.",
+            )
+        }
+        item {
+            ProfileSubscriptionsCard(
+                config = config,
+                onConfig = onConfig,
             )
         }
         item {
@@ -923,7 +1370,7 @@ private fun ProfileImportScreen(
                         .fillMaxWidth()
                         .height(190.dp),
                     label = { Text("Ссылка, JSON или конфигурация") },
-                    placeholder = { Text("vless://…\nvmess://…\n{\n  \"type\": \"wireguard\"\n}") },
+                    placeholder = { Text("vless://…\nvmess://…\n[Interface]\nPrivateKey = …\n{\n  \"type\": \"wireguard\"\n}") },
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -960,6 +1407,31 @@ private fun ProfileImportScreen(
                         Text(if (fileLoading) "Чтение…" else "Из файла")
                     }
                 }
+                OutlinedButton(
+                    onClick = {
+                        val hasCamera = context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)
+                        if (!hasCamera) {
+                            error = "На устройстве не найдена камера. Используйте буфер обмена или файл."
+                        } else if (
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            qrScannerOpen = true
+                            error = null
+                        } else {
+                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
+                    },
+                    enabled = !fileLoading,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Сканировать QR-код")
+                }
+                Text(
+                    "Камера работает только на экране сканирования. Кадры обрабатываются локально, не сохраняются и не отправляются.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Button(
                     onClick = { refreshPreview() },
                     enabled = source.isNotBlank() && !fileLoading,
@@ -1478,7 +1950,7 @@ private fun NetworkProfileDetailsScreen(
                 if (usedRuleNames.isNotEmpty()) WarningText(text.profileUsedMessage(usedRuleNames.joinToString(" • ")))
                 OutlinedButton(
                     enabled = canDelete,
-                    onClick = { onConfig(config.copy(profiles = config.profiles.filterNot { it.id == profile.id }), text.profileDeleted) },
+                    onClick = { onConfig(config.withoutProfile(profile.id), text.profileDeleted) },
                 ) { Text(text.delete) }
             }
         }
@@ -1897,7 +2369,7 @@ private fun SingBoxProfileEditorScreen(
                         enabled = usedRules.isEmpty(),
                         onClick = {
                             onConfig(
-                                config.copy(profiles = config.profiles.filterNot { it.id == profile.id }),
+                                config.withoutProfile(profile.id),
                                 text.profileDeleted,
                             )
                             onBack()
@@ -2447,12 +2919,7 @@ private fun VlessProfileEditorScreen(
                     OutlinedButton(
                         onClick = {
                             onConfig(
-                                config.copy(
-                                    profiles = config.profiles.filterNot { it.id == profile.id },
-                                    rules = config.rules.map { rule ->
-                                        if (rule.targetProfileId == profile.id) rule.copy(targetProfileId = RoutingConfigDefaults.BLOCK_PROFILE_ID) else rule
-                                    },
-                                ),
+                                config.withoutProfile(profile.id),
                                 text.profileDeleted,
                             )
                             onBack()
@@ -2736,12 +3203,7 @@ private fun Socks5ProfileEditorScreen(
                     OutlinedButton(
                         onClick = {
                             onConfig(
-                                config.copy(
-                                    profiles = config.profiles.filterNot { it.id == profile.id },
-                                    rules = config.rules.map { rule ->
-                                        if (rule.targetProfileId == profile.id) rule.copy(targetProfileId = RoutingConfigDefaults.BLOCK_PROFILE_ID) else rule
-                                    },
-                                ),
+                                config.withoutProfile(profile.id),
                                 text.profileDeleted,
                             )
                             onBack()

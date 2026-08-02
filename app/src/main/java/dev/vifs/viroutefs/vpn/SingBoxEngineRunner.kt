@@ -76,6 +76,10 @@ internal class SingBoxEngineRunner(
     private val onTunEstablished: (ParcelFileDescriptor) -> Unit,
     private val onLog: (String) -> Unit,
     private val onConnections: (List<VpnConnectionFlow>) -> Unit,
+    private val managedProfileGroups: List<ManagedProfileGroup> = emptyList(),
+    private val onProfileGroupAction: (ProfileGroupRuntimeAction) -> Unit = {},
+    private val dnsFallbackPolicyNames: List<String> = emptyList(),
+    private val onDnsFallback: (List<String>) -> Unit = {},
 ) : PlatformInterface, CommandServerHandler {
     private val appContext = service.applicationContext
     private val connectivity =
@@ -83,6 +87,7 @@ internal class SingBoxEngineRunner(
     private val lock = Any()
     private var commandServer: CommandServer? = null
     private var commandClient: CommandClient? = null
+    private var profileGroupController: ProfileGroupRuntimeController? = null
     private var connections = Connections()
     private var tunDescriptor: ParcelFileDescriptor? = null
     private var defaultInterfaceListener: InterfaceUpdateListener? = null
@@ -170,20 +175,45 @@ internal class SingBoxEngineRunner(
     private fun startConnectionMonitor() {
         val options = CommandClientOptions().apply {
             addCommand(Libbox.CommandConnections)
+            if (managedProfileGroups.isNotEmpty()) addCommand(Libbox.CommandOutbounds)
+            if (dnsFallbackPolicyNames.isNotEmpty()) addCommand(Libbox.CommandLog)
         }
         val client = CommandClient(ConnectionClientHandler(), options)
+        val groupController = managedProfileGroups.takeIf(List<*>::isNotEmpty)?.let {
+            ProfileGroupRuntimeController(
+                client = client,
+                groups = managedProfileGroups,
+                onAction = onProfileGroupAction,
+                onLog = onLog,
+            )
+        }
+        synchronized(lock) {
+            commandClient = client
+            profileGroupController = groupController
+        }
         runCatching { client.connect() }
             .onSuccess {
-                synchronized(lock) { commandClient = client }
+                groupController?.start()
                 onLog("Flow Scanner connected to the local sing-box connection stream.")
             }
             .onFailure { error ->
+                synchronized(lock) {
+                    if (commandClient === client) commandClient = null
+                    if (profileGroupController === groupController) profileGroupController = null
+                }
+                groupController?.stop()
                 runCatching { client.disconnect() }
                 onLog("Flow Scanner connection stream is unavailable: ${error.message.orEmpty()}")
             }
     }
 
     private fun stopConnectionMonitor() {
+        val groupController = synchronized(lock) {
+            val current = profileGroupController
+            profileGroupController = null
+            current
+        }
+        groupController?.stop()
         val client = synchronized(lock) {
             val current = commandClient
             commandClient = null
@@ -213,14 +243,37 @@ internal class SingBoxEngineRunner(
 
         override fun writeGroups(message: OutboundGroupIterator?) = Unit
 
-        override fun writeOutbounds(message: OutboundGroupItemIterator?) = Unit
+        override fun writeOutbounds(message: OutboundGroupItemIterator?) {
+            synchronized(lock) { profileGroupController }?.updateOutbounds(message)
+        }
 
-        override fun writeLogs(messageList: LogIterator?) = Unit
+        override fun writeLogs(messageList: LogIterator?) {
+            if (messageList == null || dnsFallbackPolicyNames.isEmpty()) return
+            while (messageList.hasNext()) {
+                val message = messageList.next()?.message.orEmpty()
+                if (message.contains(DNS_EVALUATE_FAILURE_MARKER, ignoreCase = true)) {
+                    // The engine log contains the queried hostname. ViRouteFS
+                    // intentionally drops it and emits only a generic,
+                    // bounded in-memory fallback event.
+                    onDnsFallback(dnsFallbackPolicyNames)
+                }
+            }
+        }
 
         override fun writeStatus(message: StatusMessage?) = Unit
 
         override fun writeConnectionEvents(events: ConnectionEvents?) {
             if (events == null) return
+            val controller = synchronized(lock) { profileGroupController }
+            if (controller != null) {
+                val eventIterator = events.iterator()
+                while (eventIterator.hasNext()) {
+                    val event = eventIterator.next()
+                    if (event.type.toLong() != Libbox.ConnectionEventNew) continue
+                    val connection = event.connection ?: continue
+                    controller.onNewConnection(connection.chain().toStrings())
+                }
+            }
             val snapshot = synchronized(lock) {
                 connections.applyEvents(events)
                 connections.sortByDate()
@@ -675,6 +728,7 @@ internal class SingBoxEngineRunner(
         const val MAX_MTU = 9000
         const val MAX_LOG_LENGTH = 600
         const val MAX_FLOW_HISTORY = 250
+        const val DNS_EVALUATE_FAILURE_MARKER = "exchange failed for"
         const val DNS_TIMEOUT_SECONDS = 30L
         const val DNS_RCODE_SERVER_FAILURE = 2
         const val DNS_RCODE_NAME_ERROR = 3

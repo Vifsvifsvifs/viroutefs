@@ -50,6 +50,7 @@ fun previewProfileImport(source: String): ProfileImportPreview {
     require(normalized.isNotBlank()) { "Вставьте ссылку, JSON или содержимое файла профиля." }
     val warnings = mutableListOf<String>()
     val profiles = when {
+        normalized.looksLikeWireGuard() -> listOf(importWireGuardCandidate(normalized))
         normalized.looksLikeOpenVpn() -> listOf(importOpenVpnCandidate(normalized))
         normalized.startsWith("{") || normalized.startsWith("[") -> importJsonCandidates(normalized, warnings)
         else -> normalized.lineSequence()
@@ -62,6 +63,9 @@ fun previewProfileImport(source: String): ProfileImportPreview {
                     .getOrNull()
             }
             .toList()
+    }
+    require(profiles.size <= MAX_SUBSCRIPTION_PROFILES) {
+        "За один раз можно импортировать не более $MAX_SUBSCRIPTION_PROFILES профилей."
     }
     val unique = profiles.distinctBy(ImportedProfileCandidate::fingerprint)
     if (unique.size < profiles.size) warnings += "Одинаковые профили внутри импорта объединены."
@@ -511,6 +515,16 @@ private fun importOpenVpnCandidate(source: String): ImportedProfileCandidate {
     )
 }
 
+private fun importWireGuardCandidate(source: String): ImportedProfileCandidate {
+    val imported = importWireGuardProfile(source)
+    return advancedCandidate(
+        TunnelType.WireGuard,
+        imported.suggestedName,
+        JSONObject(imported.optionsJson),
+        imported.warnings,
+    )
+}
+
 private fun advancedCandidate(
     type: TunnelType,
     name: String,
@@ -551,6 +565,11 @@ private fun candidate(
 private fun String.looksLikeOpenVpn(): Boolean =
     lineSequence().any { it.trim().startsWith("remote ") } &&
         lineSequence().any { it.trim().equals("client", true) }
+
+private fun String.looksLikeWireGuard(): Boolean =
+    lineSequence().any { it.trim().equals("[Interface]", true) } &&
+        lineSequence().any { it.trim().equals("[Peer]", true) } &&
+        lineSequence().any { it.trim().startsWith("PrivateKey", true) }
 
 private fun parseHostPort(value: String): Pair<String, Int> {
     val uri = URI("ss://$value")

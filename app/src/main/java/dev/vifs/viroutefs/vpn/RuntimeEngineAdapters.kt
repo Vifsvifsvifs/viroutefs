@@ -20,12 +20,15 @@ import dev.vifs.viroutefs.engine.SingBoxRoutingConfigCompiler
 import dev.vifs.viroutefs.engine.XrayLocalProfile
 import dev.vifs.viroutefs.engine.compileXrayRuntime
 import dev.vifs.viroutefs.engine.routedProfileIds
+import dev.vifs.viroutefs.engine.runtimeProfileGroupHealthTag
 import dev.vifs.viroutefs.engine.validateXrayProfile
+import dev.vifs.viroutefs.routing.ProfileGroupMode
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.defaultRouteActivationError
+import dev.vifs.viroutefs.routing.orderedServers
 import dev.vifs.viroutefs.routing.validateRoutingConfig
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -378,6 +381,8 @@ internal class SingBoxEngineAdapter(
     private val onTunEstablished: (ParcelFileDescriptor) -> Unit,
     private val onLog: (String) -> Unit,
     private val onConnections: (List<VpnConnectionFlow>) -> Unit,
+    private val onProfileGroupAction: (ProfileGroupRuntimeAction) -> Unit = {},
+    private val onDnsFallback: (List<String>) -> Unit = {},
 ) : EngineAdapter {
     override val id: String = ID
     override val backend: EngineBackend = EngineBackend.SingBox
@@ -496,11 +501,55 @@ internal class SingBoxEngineAdapter(
             }
             compiledWarnings = nativeConfig.warnings
             activeProfiles = nativeConfig.runtimeProfileIds.size
+            val managedGroups = config.profileGroups
+                .filter {
+                    it.enabled &&
+                        (
+                            it.mode == ProfileGroupMode.Failover ||
+                                it.mode == ProfileGroupMode.RoundRobin
+                            )
+                }
+                .mapNotNull { group ->
+                    val members = group.memberProfileIds
+                        .distinct()
+                        .mapNotNull { profileId ->
+                            val profile = config.profiles.firstOrNull { it.id == profileId }
+                                ?: return@mapNotNull null
+                            val tag = nativeConfig.profileTags[profileId] ?: return@mapNotNull null
+                            RuntimeGroupMember(
+                                profileId = profile.id,
+                                profileName = profile.name,
+                                outboundTag = tag,
+                            )
+                        }
+                        .distinctBy(RuntimeGroupMember::outboundTag)
+                    members.takeIf(List<*>::isNotEmpty)?.let {
+                        ManagedProfileGroup(
+                            groupId = group.id,
+                            groupName = group.name,
+                            groupTag = nativeConfig.profileTags.getValue(group.id),
+                            healthGroupTag = runtimeProfileGroupHealthTag(group.id),
+                            mode = group.mode,
+                            members = members,
+                            testIntervalSeconds = group.testIntervalSeconds,
+                        )
+                    }
+                }
             val nextRunner = SingBoxEngineRunner(
                 service = service,
                 onTunEstablished = onTunEstablished,
                 onLog = onLog,
                 onConnections = onConnections,
+                managedProfileGroups = managedGroups,
+                onProfileGroupAction = onProfileGroupAction,
+                dnsFallbackPolicyNames = config.dnsPolicies
+                    .filter {
+                        it.enabled &&
+                            it.fallbackEnabled &&
+                            it.orderedServers().size > 1
+                    }
+                    .map { it.name },
+                onDnsFallback = onDnsFallback,
             )
             runner = nextRunner
             state = EngineState.Connecting
