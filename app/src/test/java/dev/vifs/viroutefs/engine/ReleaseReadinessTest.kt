@@ -22,6 +22,10 @@ class ReleaseReadinessTest {
         assertEquals(ReadinessState.Ready, defaultRoute.state)
         assertTrue(defaultRoute.summary.contains("интернет", ignoreCase = true))
         assertTrue(report.runtimeReadyProtocols.contains(TunnelType.OpenVpn))
+        val runtimeSummary = report.items.single { it.id == "runtime" }.summary
+        assertTrue(runtimeSummary.contains("DeviceVerified: 1"))
+        assertTrue(runtimeSummary.contains(TunnelType.Direct.label))
+        assertTrue(runtimeSummary.contains("Физическая проверка нужна: ${report.runtimeReadyProtocols.size - 1}"))
     }
 
     @Test
