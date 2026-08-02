@@ -148,6 +148,12 @@ private fun DnsLookupCheckerCard(text: UiText) {
         }
         if (server.isBlank()) {
             Text(text.noDns, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            Text(
+                text.dnsCheckerHint,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         result?.let { CompactDnsResult(text, it) }
     }

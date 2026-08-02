@@ -2341,6 +2341,11 @@ internal class UiText(private val language: AppLanguage) {
     val domain = t("Домен", "Domain", "域名")
     val type = t("Тип", "Type", "类型")
     val dnsServer = t("DNS-сервер", "DNS server", "DNS 服务器")
+    val dnsCheckerHint = t(
+        "Поддерживаются IP/имя, udp://, tcp://, tls:// и https://…/dns-query. Проверка идёт вне TUN.",
+        "Supports an IP/name, udp://, tcp://, tls://, and https://…/dns-query. The check runs outside the TUN.",
+        "支持 IP/名称、udp://、tcp://、tls:// 和 https://…/dns-query。检查在 TUN 外运行。",
+    )
     val check = t("Проверить", "Check", "检查")
     val dnsResult = t("Результат DNS", "DNS result", "DNS 结果")
     val policies = t("Политики", "Policies", "策略")
