@@ -7,7 +7,7 @@ import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.validateVlessProfile
 import java.util.Locale
 
-const val CURRENT_ROUTING_CONFIG_VERSION = 12
+const val CURRENT_ROUTING_CONFIG_VERSION = 13
 const val MOCK_PROFILE_LIMITATION = "Профиль пока не подключает реальный тоннель. Он используется для симуляции маршрутов."
 const val SOCKS5_RUNTIME_STATUS = "SOCKS5 forwarding is available through the local sing-box TUN runtime."
 const val VLESS_ROUTE_DECISION_STATUS = "VLESS forwarding is available through the local sing-box TUN runtime."
@@ -275,6 +275,12 @@ data class DnsPolicy(
     val description: String,
     val enabled: Boolean = true,
     val servers: List<DnsServerConfig> = emptyList(),
+    /**
+     * Existing configurations keep their former primary-only behavior. New
+     * custom policies enable this explicitly from the DNS editor.
+     */
+    val fallbackEnabled: Boolean = false,
+    val queryTimeoutSeconds: Int = 5,
 )
 
 data class DnsServerConfig(
@@ -768,8 +774,11 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
     config.dnsPolicies.forEach { policy ->
         if (policy.id.isBlank()) add("DNS-политика без id: ${policy.name}")
         if (policy.name.isBlank()) add("DNS-политика ${policy.id} без имени.")
-        policy.resolveThroughProfileId?.takeIf { it !in profileIds }?.let {
-            add("DNS-политика ${policy.name} ссылается на отсутствующий профиль $it.")
+        policy.resolveThroughProfileId?.takeIf { it !in targetIds }?.let {
+            add("DNS-политика ${policy.name} ссылается на отсутствующий профиль или группу $it.")
+        }
+        if (policy.queryTimeoutSeconds !in 1..30) {
+            add("DNS-политика ${policy.name}: тайм-аут запроса должен быть от 1 до 30 секунд.")
         }
         policy.orderedServers().forEach { server ->
             if (server.id.isBlank()) add("DNS-политика ${policy.name}: сервер без id.")

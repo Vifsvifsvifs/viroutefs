@@ -56,6 +56,7 @@ import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreview
 import dev.vifs.viroutefs.vpn.LiveRouteDecisionPreviewer
 import dev.vifs.viroutefs.vpn.PacketSummary
 import dev.vifs.viroutefs.vpn.ProfileGroupRuntimeEvent
+import dev.vifs.viroutefs.vpn.DnsFallbackRuntimeEvent
 import dev.vifs.viroutefs.vpn.ProfileGroupRuntimeReason
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
@@ -475,6 +476,9 @@ private fun FlowScannerListScreen(
     }
     if (vpnState.profileGroupEvents.isNotEmpty()) {
         item { ProfileGroupJournalCard(text, vpnState.profileGroupEvents) }
+    }
+    if (vpnState.dnsFallbackEvents.isNotEmpty()) {
+        item { DnsFallbackJournalCard(text, vpnState.dnsFallbackEvents) }
     }
     if (showLiveTestRoute) {
         item { FlowTunTestRouteRow(text = text, vpnState = vpnState, onClick = onLiveEvent) }
@@ -1177,6 +1181,48 @@ private fun ProfileGroupRuntimeReason.displayName(): String = when (this) {
     ProfileGroupRuntimeReason.RoundRobin -> "По кругу"
     ProfileGroupRuntimeReason.AvailabilityRecovered -> "Восстановлен"
     ProfileGroupRuntimeReason.AllUnavailable -> "Недоступно"
+}
+
+@Composable
+private fun DnsFallbackJournalCard(
+    text: UiText,
+    events: List<DnsFallbackRuntimeEvent>,
+) = CardBlock {
+    Text(
+        "Резервные DNS-серверы",
+        fontWeight = FontWeight.SemiBold,
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Text(
+        "Здесь видно, почему запрос перешёл на следующий DNS. Доменные имена и ответы не сохраняются; журнал живёт только в памяти.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    events.take(8).forEach { event ->
+        Column(Modifier.fillMaxWidth()) {
+            Text(
+                event.policyNames.joinToString().ifBlank { "Активная DNS-политика" },
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                event.message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                event.timestamp.formatPacketTime(text),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    if (events.size > 8) {
+        Text(
+            "Ещё событий: ${events.size - 8}. Очистка сканера удаляет и этот журнал.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 internal fun expectedRuntimeTags(config: RoutingConfig, decision: RouteDecision): Set<String> {

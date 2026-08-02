@@ -49,4 +49,18 @@ class VpnConnectionFlowCodecTest {
 
         assertEquals(listOf(event), decoded)
     }
+
+    @Test
+    fun dnsFallbackEventRoundTripsWithoutSavingQueryNames() {
+        val event = DnsFallbackRuntimeEvent(
+            timestamp = 987_654_321L,
+            policyNames = listOf("Работа | резерв", "Личный DNS"),
+            message = "Основной сервер не ответил; запрос продолжен без сохранения имени.",
+        )
+
+        val encoded = VpnServiceController.encodeDnsFallbackEvent(event)
+        val decoded = VpnServiceController.decodeDnsFallbackEvents(arrayListOf(encoded))
+
+        assertEquals(listOf(event), decoded)
+    }
 }

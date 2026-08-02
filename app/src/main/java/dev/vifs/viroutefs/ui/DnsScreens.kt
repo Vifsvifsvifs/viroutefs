@@ -89,6 +89,7 @@ internal fun DnsScreen(padding: PaddingValues, text: UiText, config: RoutingConf
                     serverText = "tls://1.1.1.1",
                     resolveThroughProfileId = config.defaultProfileId,
                     description = "Пользовательский DNS для выбранных профилей и правил.",
+                    fallbackEnabled = true,
                 )
             },
             onHostOverrides = { selectedRoute = DnsRoute.HostOverrides },
@@ -191,6 +192,17 @@ private fun DnsPolicySummaryCard(text: UiText, policy: DnsPolicy, config: Routin
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (policy.type == DnsPolicyType.Custom && policy.orderedServers().size > 1) {
+                    Text(
+                        if (policy.fallbackEnabled) {
+                            "Резерв включён · ${policy.queryTimeoutSeconds} с на сервер"
+                        } else {
+                            "Резерв отключён · используется только первый сервер"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             StatusChip(if (policy.enabled) text.on else text.off)
         }
@@ -212,6 +224,10 @@ private fun DnsPolicyDetailsScreen(
     }
     var description by rememberSaveable(policy.id) { mutableStateOf(policy.description) }
     var enabled by rememberSaveable(policy.id) { mutableStateOf(policy.enabled) }
+    var fallbackEnabled by rememberSaveable(policy.id) { mutableStateOf(policy.fallbackEnabled) }
+    var queryTimeoutText by rememberSaveable(policy.id) {
+        mutableStateOf(policy.queryTimeoutSeconds.toString())
+    }
     var resolveThroughProfileId by rememberSaveable(policy.id) {
         mutableStateOf(policy.resolveThroughProfileId)
     }
@@ -242,9 +258,36 @@ private fun DnsPolicyDetailsScreen(
                         maxLines = 7,
                     )
                     Text(
-                        "Первый адрес — основной. Каждый следующий указывайте с новой строки. Поддерживаются IP, udp://, tcp://, tls://, quic://, https:// и h3://.",
+                        "Первый адрес — основной, следующие — резервные. Каждый адрес указывайте с новой строки. Поддерживаются IP, udp://, tcp://, tls://, quic://, https:// и h3://.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Switch(
+                            checked = fallbackEnabled,
+                            onCheckedChange = { fallbackEnabled = it },
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text("Переходить на резервный DNS", style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                "Только после тайм-аута или сетевой ошибки. Обычный ответ, включая «домен не найден», принимается без переключения.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = queryTimeoutText,
+                        onValueChange = { value ->
+                            queryTimeoutText = value.filter(Char::isDigit).take(2)
+                        },
+                        label = { Text("Тайм-аут одного DNS-сервера, секунд") },
+                        supportingText = { Text("От 1 до 30 секунд") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
                     )
                     Text("Через какой VPN отправлять DNS", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -308,6 +351,8 @@ private fun DnsPolicyDetailsScreen(
                                 description = description.ifBlank { policy.description },
                                 enabled = enabled,
                                 servers = dnsServers,
+                                fallbackEnabled = fallbackEnabled && dnsServers.size > 1,
+                                queryTimeoutSeconds = queryTimeoutText.toIntOrNull()?.coerceIn(1, 30) ?: 5,
                             )
                             if (isNew) config.dnsPolicies + updated else config.dnsPolicies.map {
                                 if (it.id == policy.id) updated else it

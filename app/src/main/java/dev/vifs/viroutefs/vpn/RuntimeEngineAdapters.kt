@@ -28,6 +28,7 @@ import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.defaultRouteActivationError
+import dev.vifs.viroutefs.routing.orderedServers
 import dev.vifs.viroutefs.routing.validateRoutingConfig
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -381,6 +382,7 @@ internal class SingBoxEngineAdapter(
     private val onLog: (String) -> Unit,
     private val onConnections: (List<VpnConnectionFlow>) -> Unit,
     private val onProfileGroupAction: (ProfileGroupRuntimeAction) -> Unit = {},
+    private val onDnsFallback: (List<String>) -> Unit = {},
 ) : EngineAdapter {
     override val id: String = ID
     override val backend: EngineBackend = EngineBackend.SingBox
@@ -540,6 +542,14 @@ internal class SingBoxEngineAdapter(
                 onConnections = onConnections,
                 managedProfileGroups = managedGroups,
                 onProfileGroupAction = onProfileGroupAction,
+                dnsFallbackPolicyNames = config.dnsPolicies
+                    .filter {
+                        it.enabled &&
+                            it.fallbackEnabled &&
+                            it.orderedServers().size > 1
+                    }
+                    .map { it.name },
+                onDnsFallback = onDnsFallback,
             )
             runner = nextRunner
             state = EngineState.Connecting

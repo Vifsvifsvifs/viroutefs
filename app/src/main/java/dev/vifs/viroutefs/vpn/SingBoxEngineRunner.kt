@@ -78,6 +78,8 @@ internal class SingBoxEngineRunner(
     private val onConnections: (List<VpnConnectionFlow>) -> Unit,
     private val managedProfileGroups: List<ManagedProfileGroup> = emptyList(),
     private val onProfileGroupAction: (ProfileGroupRuntimeAction) -> Unit = {},
+    private val dnsFallbackPolicyNames: List<String> = emptyList(),
+    private val onDnsFallback: (List<String>) -> Unit = {},
 ) : PlatformInterface, CommandServerHandler {
     private val appContext = service.applicationContext
     private val connectivity =
@@ -174,6 +176,7 @@ internal class SingBoxEngineRunner(
         val options = CommandClientOptions().apply {
             addCommand(Libbox.CommandConnections)
             if (managedProfileGroups.isNotEmpty()) addCommand(Libbox.CommandOutbounds)
+            if (dnsFallbackPolicyNames.isNotEmpty()) addCommand(Libbox.CommandLog)
         }
         val client = CommandClient(ConnectionClientHandler(), options)
         val groupController = managedProfileGroups.takeIf(List<*>::isNotEmpty)?.let {
@@ -244,7 +247,18 @@ internal class SingBoxEngineRunner(
             synchronized(lock) { profileGroupController }?.updateOutbounds(message)
         }
 
-        override fun writeLogs(messageList: LogIterator?) = Unit
+        override fun writeLogs(messageList: LogIterator?) {
+            if (messageList == null || dnsFallbackPolicyNames.isEmpty()) return
+            while (messageList.hasNext()) {
+                val message = messageList.next()?.message.orEmpty()
+                if (message.contains(DNS_EVALUATE_FAILURE_MARKER, ignoreCase = true)) {
+                    // The engine log contains the queried hostname. ViRouteFS
+                    // intentionally drops it and emits only a generic,
+                    // bounded in-memory fallback event.
+                    onDnsFallback(dnsFallbackPolicyNames)
+                }
+            }
+        }
 
         override fun writeStatus(message: StatusMessage?) = Unit
 
@@ -714,6 +728,7 @@ internal class SingBoxEngineRunner(
         const val MAX_MTU = 9000
         const val MAX_LOG_LENGTH = 600
         const val MAX_FLOW_HISTORY = 250
+        const val DNS_EVALUATE_FAILURE_MARKER = "exchange failed for"
         const val DNS_TIMEOUT_SECONDS = 30L
         const val DNS_RCODE_SERVER_FAILURE = 2
         const val DNS_RCODE_NAME_ERROR = 3

@@ -36,7 +36,7 @@ AndroidLibXrayLite is not bundled. A second Gomobile AAR would conflict with sin
 
 ## DNS invariant
 
-A route or profile may use Android system DNS or an explicit UDP, TCP, TLS, QUIC, HTTPS or HTTP/3 upstream. The DNS request may be detoured through a selected runtime profile. If that profile is unavailable or is `Block`, resolution is rejected instead of falling back to another resolver.
+A route or profile may use Android system DNS or an explicit UDP, TCP, TLS, QUIC, HTTPS or HTTP/3 upstream. The DNS request may be detoured through a selected runtime profile. If that profile is unavailable or is `Block`, resolution is rejected instead of falling back to System. An explicitly enabled ordered fallback advances only after timeout or transport failure. A separate Android bootstrap resolver is used only for endpoint hostnames that must be resolved before their selected tunnel exists.
 
 ## Release source requirements
 

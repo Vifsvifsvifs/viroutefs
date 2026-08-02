@@ -58,6 +58,8 @@ class RoutingConfigRepositoryTest {
                 DnsServerConfig("first", "tls://1.1.1.1", priority = 0),
                 DnsServerConfig("second", "https://dns.google/dns-query", priority = 1),
             ),
+            fallbackEnabled = true,
+            queryTimeoutSeconds = 7,
         )
         val encoded = RoutingConfigJson.encode(
             defaults.copy(
@@ -74,6 +76,8 @@ class RoutingConfigRepositoryTest {
         assertEquals(RouteTransport.Udp, decodedRule.transport)
         assertEquals(constrainedRule.destinationPorts, decodedRule.destinationPorts)
         assertEquals(dns.servers, decodedDns.servers)
+        assertTrue(decodedDns.fallbackEnabled)
+        assertEquals(7, decodedDns.queryTimeoutSeconds)
     }
 
     @Test

@@ -39,6 +39,12 @@ internal data class ProfileGroupRuntimeEvent(
     val message: String,
 )
 
+internal data class DnsFallbackRuntimeEvent(
+    val timestamp: Long,
+    val policyNames: List<String>,
+    val message: String,
+)
+
 internal data class VpnServiceUiState(
     val status: VpnServiceStatus,
     val detail: String? = null,
@@ -55,6 +61,7 @@ internal data class VpnServiceUiState(
     val packetSummaries: List<PacketSummary> = emptyList(),
     val connectionFlows: List<VpnConnectionFlow> = emptyList(),
     val profileGroupEvents: List<ProfileGroupRuntimeEvent> = emptyList(),
+    val dnsFallbackEvents: List<DnsFallbackRuntimeEvent> = emptyList(),
     val activeTcpSessions: Int = 0,
     val tcpSessionStateStats: Map<TcpSessionState, Int> = emptyMap(),
 )
@@ -163,6 +170,9 @@ internal class VpnServiceController(context: Context) {
                         profileGroupEvents = decodeProfileGroupEvents(
                             intent.getStringArrayListExtra(EXTRA_PROFILE_GROUP_EVENTS),
                         ),
+                        dnsFallbackEvents = decodeDnsFallbackEvents(
+                            intent.getStringArrayListExtra(EXTRA_DNS_FALLBACK_EVENTS),
+                        ),
                         activeTcpSessions = intent.getIntExtra(EXTRA_ACTIVE_TCP_SESSIONS, 0),
                         tcpSessionStateStats = decodeTcpSessionStateStats(
                             intent.getStringArrayListExtra(EXTRA_TCP_SESSION_STATE_STATS),
@@ -200,6 +210,7 @@ internal class VpnServiceController(context: Context) {
         packetSummaries: List<PacketSummary> = emptyList(),
         connectionFlows: List<VpnConnectionFlow> = emptyList(),
         profileGroupEvents: List<ProfileGroupRuntimeEvent> = emptyList(),
+        dnsFallbackEvents: List<DnsFallbackRuntimeEvent> = emptyList(),
         activeTcpSessions: Int = 0,
         tcpSessionStateStats: Map<TcpSessionState, Int> = emptyMap(),
     ) {
@@ -219,6 +230,7 @@ internal class VpnServiceController(context: Context) {
             packetSummaries = packetSummaries,
             connectionFlows = connectionFlows,
             profileGroupEvents = profileGroupEvents,
+            dnsFallbackEvents = dnsFallbackEvents,
             activeTcpSessions = activeTcpSessions,
             tcpSessionStateStats = tcpSessionStateStats,
         )
@@ -243,6 +255,10 @@ internal class VpnServiceController(context: Context) {
                 EXTRA_PROFILE_GROUP_EVENTS,
                 ArrayList(profileGroupEvents.map(::encodeProfileGroupEvent)),
             )
+            .putStringArrayListExtra(
+                EXTRA_DNS_FALLBACK_EVENTS,
+                ArrayList(dnsFallbackEvents.map(::encodeDnsFallbackEvent)),
+            )
             .putExtra(EXTRA_ACTIVE_TCP_SESSIONS, activeTcpSessions)
             .putStringArrayListExtra(EXTRA_TCP_SESSION_STATE_STATS, ArrayList(encodeTcpSessionStateStats(tcpSessionStateStats)))
         appContext.sendBroadcast(intent)
@@ -265,6 +281,7 @@ internal class VpnServiceController(context: Context) {
             packetSummaries = state.packetSummaries,
             connectionFlows = state.connectionFlows,
             profileGroupEvents = state.profileGroupEvents,
+            dnsFallbackEvents = state.dnsFallbackEvents,
             activeTcpSessions = state.activeTcpSessions,
             tcpSessionStateStats = state.tcpSessionStateStats,
         )
@@ -293,6 +310,7 @@ internal class VpnServiceController(context: Context) {
         internal const val EXTRA_PACKET_SUMMARIES = "packet_summaries"
         internal const val EXTRA_CONNECTION_FLOWS = "connection_flows"
         internal const val EXTRA_PROFILE_GROUP_EVENTS = "profile_group_events"
+        internal const val EXTRA_DNS_FALLBACK_EVENTS = "dns_fallback_events"
         internal const val EXTRA_ACTIVE_TCP_SESSIONS = "active_tcp_sessions"
         internal const val EXTRA_TCP_SESSION_STATE_STATS = "tcp_session_state_stats"
         internal const val NO_PACKET_TIME = -1L
@@ -349,6 +367,18 @@ internal class VpnServiceController(context: Context) {
             .orEmpty()
             .mapNotNull(::decodeProfileGroupEvent)
 
+        internal fun encodeDnsFallbackEvent(event: DnsFallbackRuntimeEvent): String = listOf(
+            event.timestamp.toString(),
+            event.policyNames.joinToString(FLOW_PACKAGE_SEPARATOR),
+            event.message,
+        ).joinToString(DNS_FALLBACK_EVENT_SEPARATOR, transform = ::encodeFlowField)
+
+        internal fun decodeDnsFallbackEvents(
+            encoded: ArrayList<String>?,
+        ): List<DnsFallbackRuntimeEvent> = encoded
+            .orEmpty()
+            .mapNotNull(::decodeDnsFallbackEvent)
+
         private fun decodeConnectionFlow(encoded: String): VpnConnectionFlow? {
             val parts = encoded.split(CONNECTION_FLOW_SEPARATOR).map(::decodeFlowField)
             if (parts.size != CONNECTION_FLOW_FIELD_COUNT) return null
@@ -385,6 +415,18 @@ internal class VpnServiceController(context: Context) {
                     selectedProfileName = parts[4].takeIf(String::isNotBlank),
                     reason = ProfileGroupRuntimeReason.valueOf(parts[5]),
                     message = parts[6],
+                )
+            }.getOrNull()
+        }
+
+        private fun decodeDnsFallbackEvent(encoded: String): DnsFallbackRuntimeEvent? {
+            val parts = encoded.split(DNS_FALLBACK_EVENT_SEPARATOR).map(::decodeFlowField)
+            if (parts.size != DNS_FALLBACK_EVENT_FIELD_COUNT) return null
+            return runCatching {
+                DnsFallbackRuntimeEvent(
+                    timestamp = parts[0].toLong(),
+                    policyNames = parts[1].split(FLOW_PACKAGE_SEPARATOR).filter(String::isNotBlank),
+                    message = parts[2],
                 )
             }.getOrNull()
         }
@@ -427,6 +469,8 @@ internal class VpnServiceController(context: Context) {
         private const val CONNECTION_FLOW_FIELD_COUNT = 15
         private const val PROFILE_GROUP_EVENT_SEPARATOR = "|"
         private const val PROFILE_GROUP_EVENT_FIELD_COUNT = 7
+        private const val DNS_FALLBACK_EVENT_SEPARATOR = "|"
+        private const val DNS_FALLBACK_EVENT_FIELD_COUNT = 3
         private const val TCP_SESSION_STATE_SEPARATOR = ":"
         private const val TCP_SESSION_STATE_FIELD_COUNT = 2
 

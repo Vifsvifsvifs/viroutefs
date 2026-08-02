@@ -10,6 +10,7 @@ A DNS policy contains:
 - enabled state;
 - an ordered list of upstream servers;
 - optional `resolveThroughProfileId`;
+- optional sequential fallback and a per-server timeout from 1 to 30 seconds;
 - local description.
 
 Accepted server forms are a plain IP address or `udp://`, `tcp://`, `tls://`, `quic://`, `https://` and `h3://` URLs.
@@ -27,10 +28,25 @@ Domain and Android package rules are compiled into sing-box DNS rules. Package m
 - ViRouteFS does not silently substitute `1.1.1.1`, `8.8.8.8` or Android system DNS.
 - A disabled or invalid policy is not presented as an active custom DNS path.
 
-The first valid server in a policy is the current primary. Additional servers
-are stored and compiled in the chosen order, but automatic failover is not yet
-claimed as complete because the current runtime configuration has no verified
-health-based server switch.
+When fallback is enabled, ViRouteFS evaluates servers in the configured order.
+A valid DNS response, including `NXDOMAIN`, is returned immediately. A transport
+error or timeout advances the same query to the next server. The last server is
+the final attempt. Existing configurations keep primary-only behavior until the
+user enables fallback explicitly.
+
+The pinned sing-box runtime does not provide parallel or fastest-response DNS
+selection, so ViRouteFS does not expose fake parallel/fastest switches. Runtime
+fallback reasons are detected from the local engine error stream, stripped of
+the queried hostname and kept only in the bounded in-memory scanner journal.
+
+## Endpoint bootstrap
+
+DNS and tunnel servers may use hostnames. Those names must be resolved before
+the selected tunnel or encrypted DNS transport exists. A dedicated local
+bootstrap resolver therefore uses Android's current underlying network only for
+endpoint hostnames. Normal application DNS still follows the selected policy
+and detour. Users who require no endpoint-hostname lookup can configure an IP
+literal for the server.
 
 ## System DNS
 
@@ -38,4 +54,4 @@ The built-in system policy asks Android’s current physical network resolver th
 
 ## Privacy
 
-DNS settings remain local. ViRouteFS does not run background DNS checks, upload DNS configuration or persist query contents. Manual diagnostics run only after an explicit user action.
+DNS settings remain local. ViRouteFS does not run background DNS checks, upload DNS configuration or persist query contents. Fallback events intentionally discard the queried hostname and response. Manual diagnostics run only after an explicit user action.

@@ -435,6 +435,8 @@ object RoutingConfigJson {
         put("description", description)
         put("enabled", enabled)
         put("servers", JSONArray(servers.map { it.toJson() }))
+        put("fallbackEnabled", fallbackEnabled)
+        put("queryTimeoutSeconds", queryTimeoutSeconds)
     }
 
     private fun JSONObject.toDnsPolicy(): DnsPolicy = DnsPolicy(
@@ -446,6 +448,8 @@ object RoutingConfigJson {
         description = optString("description"),
         enabled = optBoolean("enabled", true),
         servers = optJSONArray("servers")?.mapObjects { it.toDnsServerConfig() }.orEmpty(),
+        fallbackEnabled = optBoolean("fallbackEnabled", false),
+        queryTimeoutSeconds = optInt("queryTimeoutSeconds", 5),
     )
 
     private fun DnsServerConfig.toJson(): JSONObject = JSONObject().apply {

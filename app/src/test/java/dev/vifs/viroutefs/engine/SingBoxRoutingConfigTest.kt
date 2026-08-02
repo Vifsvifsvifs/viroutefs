@@ -4,6 +4,7 @@ package dev.vifs.viroutefs.engine
 
 import dev.vifs.viroutefs.routing.AppMatcher
 import dev.vifs.viroutefs.routing.AppMatcherPlatform
+import dev.vifs.viroutefs.routing.DnsHostOverride
 import dev.vifs.viroutefs.routing.DnsPolicy
 import dev.vifs.viroutefs.routing.DnsServerConfig
 import dev.vifs.viroutefs.routing.DnsPolicyType
@@ -235,7 +236,7 @@ class SingBoxRoutingConfigTest {
     )
 
     @Test
-    fun customDnsServersCompileInPriorityOrderWithoutDeprecatedCacheFlag() {
+    fun customDnsServersCompileAsOrderedFailoverWithoutDeprecatedCacheFlag() {
         val base = RoutingConfigDefaults.defaultConfig()
         val policy = DnsPolicy(
             id = "multi-dns",
@@ -246,9 +247,24 @@ class SingBoxRoutingConfigTest {
                 DnsServerConfig("second", "https://dns.google/dns-query", priority = 20),
                 DnsServerConfig("first", "tls://1.1.1.1", priority = 10),
             ),
+            fallbackEnabled = true,
+            queryTimeoutSeconds = 7,
         )
+        val defaultRule = base.rules.single { it.type == RouteRuleType.DEFAULT }
         val compiled = SingBoxRoutingConfigCompiler().compile(
-            base.copy(dnsPolicies = base.dnsPolicies + policy),
+            base.copy(
+                dnsPolicies = base.dnsPolicies + policy,
+                rules = base.rules.map {
+                    if (it.id == defaultRule.id) it.copy(dnsPolicyId = policy.id) else it
+                },
+                hostOverrides = listOf(
+                    DnsHostOverride(
+                        id = "router",
+                        hostname = "router.test",
+                        ipAddress = "192.0.2.1",
+                    ),
+                ),
+            ),
         )
         val dns = JSONObject(compiled.json).getJSONObject("dns")
         val servers = dns.getJSONArray("servers")
@@ -257,10 +273,47 @@ class SingBoxRoutingConfigTest {
             .filter { it.optString("type") in setOf("tls", "https") }
 
         assertEquals(listOf("tls", "https"), custom.map { it.getString("type") })
+        assertEquals("dns_bootstrap", custom[1].getString("domain_resolver"))
         assertEquals(4096, dns.getInt("cache_capacity"))
         assertEquals("10s", dns.getString("timeout"))
         assertFalse(dns.has("independent_cache"))
-        assertTrue(compiled.warnings.any { it.contains("priority order") })
+        val dnsRules = dns.getJSONArray("rules")
+        val actions = (0 until dnsRules.length())
+            .map(dnsRules::getJSONObject)
+        assertEquals("route", actions[0].getString("action"))
+        assertEquals(listOf("evaluate", "respond", "route"), actions.drop(1).map { it.getString("action") })
+        assertEquals("7s", actions[1].getString("timeout"))
+        assertTrue(actions[2].getBoolean("match_response"))
+        assertEquals("7s", actions[3].getString("timeout"))
+        assertTrue(compiled.warnings.any { it.contains("tries 2 servers sequentially") })
+    }
+
+    @Test
+    fun legacyMultiDnsKeepsPrimaryOnlyUntilFallbackIsEnabled() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val policy = DnsPolicy(
+            id = "legacy-multi",
+            name = "Legacy multi",
+            type = DnsPolicyType.Custom,
+            description = "test",
+            servers = listOf(
+                DnsServerConfig("first", "1.1.1.1", priority = 0),
+                DnsServerConfig("second", "8.8.8.8", priority = 1),
+            ),
+        )
+        val compiled = SingBoxRoutingConfigCompiler().compile(
+            base.copy(
+                dnsPolicies = base.dnsPolicies + policy,
+                rules = base.rules.map { it.copy(dnsPolicyId = policy.id) },
+            ),
+        )
+        val dnsRules = JSONObject(compiled.json)
+            .getJSONObject("dns")
+            .getJSONArray("rules")
+
+        assertEquals(1, dnsRules.length())
+        assertEquals("route", dnsRules.getJSONObject(0).getString("action"))
+        assertTrue(compiled.warnings.any { it.contains("fallback is disabled") })
     }
 
     @Test
@@ -340,12 +393,16 @@ class SingBoxRoutingConfigTest {
         val root = JSONObject(compiled.json)
         val routeRule = root.getJSONObject("route").getJSONArray("rules").getJSONObject(2)
         val dnsRule = root.getJSONObject("dns").getJSONArray("rules").getJSONObject(0)
-        val dnsServer = root.getJSONObject("dns").getJSONArray("servers").getJSONObject(1)
+        val dnsServers = root.getJSONObject("dns").getJSONArray("servers")
+        val dnsServer = (0 until dnsServers.length())
+            .map(dnsServers::getJSONObject)
+            .first { it.getString("type") == "tls" }
 
         assertEquals("com.example.work", routeRule.getJSONArray("package_name").getString(0))
         assertEquals("com.example.work", dnsRule.getJSONArray("package_name").getString(0))
         assertEquals("tls", dnsServer.getString("type"))
         assertEquals(compiled.profileTags.getValue(profile.id), dnsServer.getString("detour"))
+        assertEquals("dns_bootstrap", root.getJSONObject("route").getString("default_domain_resolver"))
         assertTrue(root.getJSONObject("route").getBoolean("find_process"))
     }
 

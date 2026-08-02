@@ -65,7 +65,7 @@ The emergency switch inserts an all-traffic Block rule before normal routing and
 
 ## DNS
 
-DNS is intercepted by the TUN runtime. A rule’s explicit policy wins; otherwise the target profile policy is used. An unavailable DNS detour rejects the matching query.
+DNS is intercepted by the TUN runtime. A rule’s explicit policy wins; otherwise the target profile policy is used. An unavailable DNS detour rejects the matching query. Custom policies may explicitly enable ordered fallback: a valid answer is final, while timeout or transport failure advances to the next configured server. Endpoint hostnames use the Android bootstrap resolver before the selected tunnel exists; normal application queries never use that bootstrap path.
 
 ## Configuration changes
 

@@ -60,7 +60,9 @@ class ViRouteVpnService : VpnService() {
     private val packetHistory = PacketSummaryHistory()
     @Volatile private var connectionFlows: List<VpnConnectionFlow> = emptyList()
     @Volatile private var profileGroupEvents: List<ProfileGroupRuntimeEvent> = emptyList()
+    @Volatile private var dnsFallbackEvents: List<DnsFallbackRuntimeEvent> = emptyList()
     private val profileGroupEventLock = Any()
+    private val dnsFallbackEventLock = Any()
     private var lastUiPublishAt: Long = 0L
 
     override fun onCreate() {
@@ -88,6 +90,7 @@ class ViRouteVpnService : VpnService() {
                 packetHistory.clear()
                 connectionFlows = emptyList()
                 profileGroupEvents = emptyList()
+                dnsFallbackEvents = emptyList()
                 singBoxEngineAdapter?.clearConnectionHistory()
                 publishActiveState(force = true)
                 return START_STICKY
@@ -259,6 +262,27 @@ class ViRouteVpnService : VpnService() {
                             ),
                         ) + profileGroupEvents
                         ).take(MAX_PROFILE_GROUP_EVENTS)
+                }
+                publishActiveStateThrottled()
+            },
+            onDnsFallback = { policyNames ->
+                val displayNames = policyNames.distinct().sorted()
+                val subject = when (displayNames.size) {
+                    0 -> "Один из DNS-серверов"
+                    1 -> "Основной сервер политики «${displayNames.single()}»"
+                    else -> "Основной сервер одной из политик: ${displayNames.joinToString()}"
+                }
+                dnsFallbackEvents = synchronized(dnsFallbackEventLock) {
+                    (
+                        listOf(
+                            DnsFallbackRuntimeEvent(
+                                timestamp = System.currentTimeMillis(),
+                                policyNames = displayNames,
+                                message = "$subject не ответил или вернул сетевую ошибку. " +
+                                    "Движок продолжил этот DNS-запрос на следующем сервере; имя запрошенного домена не сохранено.",
+                            ),
+                        ) + dnsFallbackEvents
+                        ).take(MAX_DNS_FALLBACK_EVENTS)
                 }
                 publishActiveStateThrottled()
             },
@@ -539,6 +563,7 @@ class ViRouteVpnService : VpnService() {
             packetSummaries = packetHistory.newestFirst(),
             connectionFlows = connectionFlows,
             profileGroupEvents = profileGroupEvents,
+            dnsFallbackEvents = dnsFallbackEvents,
         )
     }
 
@@ -563,6 +588,7 @@ class ViRouteVpnService : VpnService() {
             packetSummaries = packetHistory.newestFirst(),
             connectionFlows = connectionFlows,
             profileGroupEvents = profileGroupEvents,
+            dnsFallbackEvents = dnsFallbackEvents,
         )
     }
 
@@ -634,6 +660,7 @@ class ViRouteVpnService : VpnService() {
         packetSummaries: List<PacketSummary> = emptyList(),
         connectionFlows: List<VpnConnectionFlow> = emptyList(),
         profileGroupEvents: List<ProfileGroupRuntimeEvent> = emptyList(),
+        dnsFallbackEvents: List<DnsFallbackRuntimeEvent> = emptyList(),
         activeTcpSessions: Int = 0,
         tcpSessionStateStats: Map<TcpSessionState, Int> = emptyMap(),
     ) {
@@ -653,6 +680,7 @@ class ViRouteVpnService : VpnService() {
             packetSummaries = packetSummaries,
             connectionFlows = connectionFlows,
             profileGroupEvents = profileGroupEvents,
+            dnsFallbackEvents = dnsFallbackEvents,
             activeTcpSessions = activeTcpSessions,
             tcpSessionStateStats = tcpSessionStateStats,
         )
@@ -682,6 +710,10 @@ class ViRouteVpnService : VpnService() {
             .putStringArrayListExtra(
                 VpnServiceController.EXTRA_PROFILE_GROUP_EVENTS,
                 ArrayList(profileGroupEvents.map(VpnServiceController::encodeProfileGroupEvent)),
+            )
+            .putStringArrayListExtra(
+                VpnServiceController.EXTRA_DNS_FALLBACK_EVENTS,
+                ArrayList(dnsFallbackEvents.map(VpnServiceController::encodeDnsFallbackEvent)),
             )
             .putExtra(VpnServiceController.EXTRA_ACTIVE_TCP_SESSIONS, activeTcpSessions)
             .putStringArrayListExtra(
@@ -720,6 +752,7 @@ class ViRouteVpnService : VpnService() {
         private const val MAX_RUNTIME_DETAIL_LENGTH = 500
         private const val UI_PUBLISH_INTERVAL_MS = 250L
         private const val MAX_PROFILE_GROUP_EVENTS = 80
+        private const val MAX_DNS_FALLBACK_EVENTS = 80
     }
 }
 
