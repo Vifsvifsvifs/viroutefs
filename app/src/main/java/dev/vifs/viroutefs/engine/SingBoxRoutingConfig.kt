@@ -260,7 +260,13 @@ internal class SingBoxRoutingConfigCompiler(
                             .put("mtu", 1500)
                             .put("auto_route", true)
                             .put("strict_route", true)
-                            .put("stack", "mixed"),
+                            // Android 16 physical-device testing showed that the
+                            // system TCP half of the mixed stack can accept TUN
+                            // flows without completing their outbound TCP
+                            // connection. Keep both TCP and UDP in the userspace
+                            // stack so application traffic cannot stall while the
+                            // loopback profile probe still succeeds.
+                            .put("stack", "gvisor"),
                     )
                     .apply { connectionTestInbounds.forEach { inbound -> put(inbound) } },
             )

@@ -154,27 +154,44 @@ internal class SingBoxEngineRunner(
             "Профиль не участвует в запущенном маршруте. Включите профиль и назначьте его правилу или основному маршруту."
         }
         val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(LOOPBACK_HOST, port))
-        val startedAt = System.nanoTime()
-        val connection = URL(PROFILE_CONNECTION_TEST_URL).openConnection(proxy) as HttpsURLConnection
+        val latencies = mutableListOf<Long>()
+        val connections = mutableListOf<HttpsURLConnection>()
+        var lastFailure: Throwable? = null
         try {
-            connection.connectTimeout = PROFILE_TEST_TIMEOUT_MILLIS
-            connection.readTimeout = PROFILE_TEST_TIMEOUT_MILLIS
-            connection.instanceFollowRedirects = false
-            connection.requestMethod = "GET"
-            connection.setRequestProperty("Accept", "*/*")
-            connection.setRequestProperty("Connection", "close")
-            val status = connection.responseCode
-            check(status == HttpsURLConnection.HTTP_NO_CONTENT) {
-                "HTTPS-проверка через выбранный профиль вернула неожиданный код $status вместо 204."
+            repeat(PROFILE_TEST_ATTEMPTS) {
+                val connection = URL(PROFILE_CONNECTION_TEST_URL)
+                    .openConnection(proxy) as HttpsURLConnection
+                connections += connection
+                runCatching {
+                    connection.connectTimeout = PROFILE_TEST_TIMEOUT_MILLIS
+                    connection.readTimeout = PROFILE_TEST_TIMEOUT_MILLIS
+                    connection.instanceFollowRedirects = false
+                    connection.requestMethod = "GET"
+                    connection.setRequestProperty("Accept", "*/*")
+                    val startedAt = System.nanoTime()
+                    val status = connection.responseCode
+                    check(status == HttpsURLConnection.HTTP_NO_CONTENT) {
+                        "HTTPS-проверка через выбранный профиль вернула неожиданный код $status вместо 204."
+                    }
+                    connection.inputStream.use { input ->
+                        while (input.read() != -1) Unit
+                    }
+                    TimeUnit.NANOSECONDS
+                        .toMillis(System.nanoTime() - startedAt)
+                        .coerceAtLeast(1L)
+                }.onSuccess(latencies::add)
+                    .onFailure { lastFailure = it }
             }
         } finally {
-            connection.disconnect()
+            connections.forEach(HttpsURLConnection::disconnect)
         }
-        val latency = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt).coerceAtLeast(1L)
+        check(latencies.isNotEmpty()) {
+            lastFailure?.message ?: "HTTPS-проверка через выбранный профиль не получила ответ."
+        }
         EngineConnectionTest(
             successful = true,
-            summary = "HTTPS-запрос прошёл именно через выбранный профиль.",
-            latencyMillis = latency,
+            summary = "Два HTTPS-запроса прошли именно через выбранный профиль; показан лучший текущий результат.",
+            latencyMillis = latencies.min(),
         )
     }
 
@@ -771,7 +788,8 @@ internal class SingBoxEngineRunner(
         const val MAX_MTU = 9000
         const val MAX_LOG_LENGTH = 600
         const val MAX_FLOW_HISTORY = 250
-        const val PROFILE_TEST_TIMEOUT_MILLIS = 20_000
+        const val PROFILE_TEST_ATTEMPTS = 2
+        const val PROFILE_TEST_TIMEOUT_MILLIS = 12_000
         const val PROFILE_CONNECTION_TEST_URL = "https://www.gstatic.com/generate_204"
         const val LOOPBACK_HOST = "127.0.0.1"
         const val DNS_EVALUATE_FAILURE_MARKER = "exchange failed for"

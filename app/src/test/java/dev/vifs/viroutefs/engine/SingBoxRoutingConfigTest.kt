@@ -46,6 +46,9 @@ class SingBoxRoutingConfigTest {
         )
         val root = JSONObject(compiled.json)
         val inbounds = root.getJSONArray("inbounds")
+        val tunInbound = (0 until inbounds.length())
+            .map(inbounds::getJSONObject)
+            .first { it.optString("tag") == SING_BOX_TUN_TAG }
         val testInbound = (0 until inbounds.length())
             .map(inbounds::getJSONObject)
             .first { it.optString("tag") == runtimeProfileConnectionTestInboundTag(profile.id) }
@@ -57,6 +60,7 @@ class SingBoxRoutingConfigTest {
                     runtimeProfileConnectionTestInboundTag(profile.id)
             }
 
+        assertEquals("gvisor", tunInbound.getString("stack"))
         assertEquals("mixed", testInbound.getString("type"))
         assertEquals("127.0.0.1", testInbound.getString("listen"))
         assertEquals(28123, testInbound.getInt("listen_port"))
