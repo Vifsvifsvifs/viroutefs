@@ -360,6 +360,8 @@ object RoutingConfigJson {
         put("alpn", alpn)
         put("serviceName", serviceName)
         put("xhttpMode", xhttpMode)
+        put("pinnedPeerCertSha256", pinnedPeerCertSha256)
+        put("verifyPeerCertByName", verifyPeerCertByName)
         if (includeSecrets && !xhttpExtra.isNullOrBlank()) {
             put("xhttpExtra", xhttpExtra)
         }
@@ -386,6 +388,12 @@ object RoutingConfigJson {
         serviceName = optNullableString("serviceName"),
         xhttpMode = optNullableString("xhttpMode"),
         xhttpExtra = optNullableString("xhttpExtra"),
+        pinnedPeerCertSha256 = optNullableString("pinnedPeerCertSha256"),
+        verifyPeerCertByName = when (val verifyByName = opt("verifyPeerCertByName")) {
+            is String -> verifyByName.trim().takeIf(String::isNotBlank)
+            is Boolean -> if (verifyByName) optNullableString("sni") else null
+            else -> null
+        },
         enabled = optBoolean("enabled", true),
         status = optJSONObject("status")?.toVlessProfileStatus() ?: VlessProfileStatus.NotTested,
     )

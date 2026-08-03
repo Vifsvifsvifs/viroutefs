@@ -17,6 +17,9 @@ import java.net.Socket
  */
 internal class XrayProcessManager(context: Context) {
     private val applicationContext = context.applicationContext
+    private val certificatePinStore = XrayCertificatePinStore(
+        File(applicationContext.noBackupFilesDir, CERTIFICATE_PIN_STORE_NAME),
+    )
 
     @Volatile
     private var process: Process? = null
@@ -56,8 +59,11 @@ internal class XrayProcessManager(context: Context) {
         runtimeDirectory.listFiles()
             ?.filter { it.isFile && it.name.startsWith(CONFIG_PREFIX) && it.name.endsWith(CONFIG_SUFFIX) }
             ?.forEach(File::delete)
+        val compatibleConfig = normalizeLegacyXrayTlsConfig(configJson) { target ->
+            certificatePinStore.getOrResolve(target, ::fetchPeerCertificateSha256)
+        }
         val configFile = File.createTempFile(CONFIG_PREFIX, CONFIG_SUFFIX, runtimeDirectory)
-        configFile.writeText(configJson, Charsets.UTF_8)
+        configFile.writeText(compatibleConfig.json, Charsets.UTF_8)
         configFile.setReadable(false, false)
         configFile.setWritable(false, false)
         check(configFile.setReadable(true, true) && configFile.setWritable(true, true)) {
@@ -68,9 +74,7 @@ internal class XrayProcessManager(context: Context) {
         val child = ProcessBuilder(
             executable.absolutePath,
             "run",
-            "-format",
-            "json",
-            "-config",
+            "-c",
             configFile.absolutePath,
         )
             .directory(runtimeDirectory)
@@ -100,7 +104,12 @@ internal class XrayProcessManager(context: Context) {
         }
 
         waitUntilListening(child, ports)
-        lastMessage = "Xray-core is listening on ${ports.size} app-private route endpoint(s)."
+        lastMessage = buildString {
+            append("Xray-core is listening on ${ports.size} app-private route endpoint(s).")
+            if (compatibleConfig.migratedPins > 0) {
+                append(" Migrated ${compatibleConfig.migratedPins} legacy TLS setting(s) to persistent certificate pins.")
+            }
+        }
     }.onFailure { error ->
         lastMessage = maskLog(error.localizedMessage ?: "Xray-core could not be started.")
         stop()
@@ -178,6 +187,7 @@ internal class XrayProcessManager(context: Context) {
         private const val RUNTIME_DIRECTORY_NAME = "xray-runtime"
         private const val CONFIG_PREFIX = "runtime-"
         private const val CONFIG_SUFFIX = ".json"
+        private const val CERTIFICATE_PIN_STORE_NAME = "xray-certificate-pins.json"
         private const val XUDP_BASE_KEY_ENV = "xray.xudp.basekey"
         private const val ASSET_DIRECTORY_ENV = "xray.location.asset"
         private const val CONNECT_TIMEOUT_MS = 150

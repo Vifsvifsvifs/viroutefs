@@ -16,7 +16,10 @@ import kotlin.test.assertTrue
 class XrayRoutingConfigTest {
     @Test
     fun xhttpProfileCompilesToAnIsolatedLoopbackSocksRoute() {
-        val profile = xhttpProfile()
+        val profile = xhttpProfile().copy(
+            pinnedPeerCertSha256 = "AA:BB:CC",
+            verifyPeerCertByName = "front.example",
+        )
         val compiled = compileXrayRuntime(
             listOf(
                 XrayLocalProfile(
@@ -45,6 +48,9 @@ class XrayRoutingConfigTest {
         assertEquals(8, xhttp.getJSONObject("extra").getInt("scMaxBufferedPosts"))
         assertEquals("tls", stream.getString("security"))
         assertEquals("front.example", tls.getString("serverName"))
+        assertEquals("AA:BB:CC", tls.getString("pinnedPeerCertSha256"))
+        assertEquals("front.example", tls.getString("verifyPeerCertByName"))
+        assertFalse(tls.has("allowInsecure"))
         assertEquals(mapOf("xhttp-office" to 22080), compiled.profilePorts)
         assertFalse(compiled.json.contains("vless://"))
     }

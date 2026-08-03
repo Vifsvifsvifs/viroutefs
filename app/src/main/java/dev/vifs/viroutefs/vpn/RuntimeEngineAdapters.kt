@@ -34,7 +34,8 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
-import java.util.UUID
+import java.security.SecureRandom
+import java.util.Base64
 
 internal class ByeDpiEngineAdapter(
     context: Context,
@@ -299,9 +300,20 @@ internal class XrayEngineAdapter(
         state = EngineState.Stopped
     }
 
-    override fun isHealthy(): Boolean =
-        state == EngineState.Connected &&
+    override fun isHealthy(): Boolean {
+        val healthy = state == EngineState.Connected &&
             (activePorts.isEmpty() || processManager.isRunning())
+        if (!healthy && state == EngineState.Connected) {
+            state = EngineState.Error
+            lastError = error(
+                EngineErrorStage.HealthCheck,
+                "Локальное ядро Xray остановилось сразу после запуска.",
+                processManager.lastMessage ?: "Xray-core stopped before confirming stable local route endpoints.",
+                "Проверьте профиль и версию Xray; связанный трафик оставлен заблокированным.",
+            )
+        }
+        return healthy
+    }
 
     override fun statistics(): EngineStatistics =
         EngineStatistics(activeProfiles = activePorts.size)
@@ -342,10 +354,12 @@ internal class XrayEngineAdapter(
 
     private fun xudpBaseKey(): String {
         val preferences = applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-        return preferences.getString(XUDP_BASE_KEY, null)
-            ?: UUID.randomUUID().toString().also { generated ->
-                preferences.edit { putString(XUDP_BASE_KEY, generated) }
-            }
+        preferences.getString(XUDP_BASE_KEY, null)
+            ?.takeIf(::isValidXudpBaseKey)
+            ?.let { return it }
+        return generateXudpBaseKey().also { generated ->
+            preferences.edit { putString(XUDP_BASE_KEY, generated) }
+        }
     }
 
     private fun reserveLoopbackPorts(count: Int): List<Int> {
@@ -375,6 +389,20 @@ internal class XrayEngineAdapter(
         private const val PORT_CHECK_TIMEOUT_MS = 250
     }
 }
+
+internal fun generateXudpBaseKey(random: SecureRandom = SecureRandom()): String {
+    val bytes = ByteArray(XUDP_BASE_KEY_BYTES)
+    random.nextBytes(bytes)
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+}
+
+internal fun isValidXudpBaseKey(value: String): Boolean = runCatching {
+    val decoded = Base64.getUrlDecoder().decode(value)
+    decoded.size == XUDP_BASE_KEY_BYTES &&
+        Base64.getUrlEncoder().withoutPadding().encodeToString(decoded) == value
+}.getOrDefault(false)
+
+private const val XUDP_BASE_KEY_BYTES = 32
 
 internal class SingBoxEngineAdapter(
     private val service: ViRouteVpnService,
@@ -411,6 +439,7 @@ internal class SingBoxEngineAdapter(
     private var runner: SingBoxEngineRunner? = null
     private var activeProfiles: Int = 0
     private var compiledWarnings: List<String> = emptyList()
+    private var lastRuntimeMessage: String? = null
     override var state: EngineState = EngineState.Stopped
         private set
     override var lastError: EngineError? = null
@@ -477,6 +506,7 @@ internal class SingBoxEngineAdapter(
         runtimeContext: EngineRuntimeContext,
     ): Result<Unit> {
         lastError = null
+        lastRuntimeMessage = null
         state = EngineState.Starting
         return runCatching {
             val config = compiled.payload as? RoutingConfig
@@ -489,9 +519,24 @@ internal class SingBoxEngineAdapter(
                         ?.let { profile.id to it }
                 }
                 .toMap()
+            val connectionTestProfileIds = config.profiles
+                .filter { profile ->
+                    profile.enabled &&
+                        profile.id in config.routedProfileIds() &&
+                        profile.type !in setOf(
+                            TunnelType.Direct,
+                            TunnelType.Block,
+                            TunnelType.ByeDpi,
+                        )
+                }
+                .map(TunnelProfile::id)
+            val connectionTestPorts = connectionTestProfileIds
+                .zip(reserveLoopbackPorts(connectionTestProfileIds.size))
+                .toMap()
             val nativeConfig = SingBoxRoutingConfigCompiler(
                 byeDpiPort = compatibilityPort,
                 xrayEndpoints = xrayEndpoints,
+                connectionTestPorts = connectionTestPorts,
             )
                 .compile(config)
             if (!config.emergencyBlockEnabled &&
@@ -538,7 +583,10 @@ internal class SingBoxEngineAdapter(
             val nextRunner = SingBoxEngineRunner(
                 service = service,
                 onTunEstablished = onTunEstablished,
-                onLog = onLog,
+                onLog = { message ->
+                    lastRuntimeMessage = maskSecrets(message)
+                    onLog(message)
+                },
                 onConnections = onConnections,
                 managedProfileGroups = managedGroups,
                 onProfileGroupAction = onProfileGroupAction,
@@ -550,6 +598,7 @@ internal class SingBoxEngineAdapter(
                     }
                     .map { it.name },
                 onDnsFallback = onDnsFallback,
+                profileConnectionTestPorts = nativeConfig.profileConnectionTestPorts,
             )
             runner = nextRunner
             state = EngineState.Connecting
@@ -578,21 +627,42 @@ internal class SingBoxEngineAdapter(
         runner = null
         activeProfiles = 0
         compiledWarnings = emptyList()
+        lastRuntimeMessage = null
         state = EngineState.Stopped
     }
 
-    override fun isHealthy(): Boolean =
-        state == EngineState.Connected && runner?.isRunning() == true
+    override fun isHealthy(): Boolean {
+        val healthy = state == EngineState.Connected && runner?.isRunning() == true
+        if (!healthy && state == EngineState.Connected) {
+            state = EngineState.Error
+            lastError = error(
+                EngineErrorStage.HealthCheck,
+                "Локальный VPN-маршрутизатор остановился сразу после запуска.",
+                lastRuntimeMessage ?: "sing-box stopped before confirming a stable Android TUN runtime.",
+                "Проверьте профиль и нативную конфигурацию; связанный трафик оставлен заблокированным.",
+            )
+        }
+        return healthy
+    }
 
     override fun statistics(): EngineStatistics =
         EngineStatistics(activeProfiles = activeProfiles)
 
     override fun testConnection(profileId: String): Result<EngineConnectionTest> =
-        Result.failure(
-            UnsupportedOperationException(
-                "Проверка через конкретный outbound будет добавлена в модуле routed diagnostics.",
-            ),
-        )
+        runner?.testProfileConnection(profileId)
+            ?: Result.failure(IllegalStateException("Сетевой контроль сейчас не запущен."))
+
+    private fun reserveLoopbackPorts(count: Int): List<Int> {
+        val reservations = mutableListOf<ServerSocket>()
+        return try {
+            repeat(count) {
+                reservations += ServerSocket(0, 1, InetAddress.getLoopbackAddress())
+            }
+            reservations.map(ServerSocket::getLocalPort)
+        } finally {
+            reservations.forEach { runCatching { it.close() } }
+        }
+    }
 
     override fun maskSecrets(message: String): String = message
         .replace(Regex("(?i)(password|passphrase|private_key|psk|uuid|auth_key|cookie)\\s*[=:]\\s*[^\\s,;]+"), "$1=<redacted>")

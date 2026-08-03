@@ -13,6 +13,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.Bundle
+import android.os.ResultReceiver
 import androidx.core.app.NotificationCompat
 import dev.vifs.viroutefs.MainActivity
 import dev.vifs.viroutefs.engine.EngineOrchestrator
@@ -42,6 +44,7 @@ class ViRouteVpnService : VpnService() {
     private var packetLoopThread: Thread? = null
     private var runtimeThread: Thread? = null
     private var reloadValidationThread: Thread? = null
+    private var profileConnectionTestThread: Thread? = null
     private var reloadGeneration: Long = 0L
     private var engineOrchestrator: EngineOrchestrator? = null
     private var singBoxEngineAdapter: SingBoxEngineAdapter? = null
@@ -98,6 +101,10 @@ class ViRouteVpnService : VpnService() {
             VpnServiceController.ACTION_SET_PACKET_INSPECTOR_PAUSED -> {
                 packetHistory.setPaused(intent.getBooleanExtra(VpnServiceController.EXTRA_PACKET_INSPECTOR_PAUSED, false))
                 publishActiveState(force = true)
+                return START_STICKY
+            }
+            VpnServiceController.ACTION_TEST_PROFILE_CONNECTION -> {
+                startProfileConnectionTest(intent)
                 return START_STICKY
             }
         }
@@ -297,10 +304,24 @@ class ViRouteVpnService : VpnService() {
             return
         }
         val startResult = orchestrator.start(plan)
-        if (startResult.isFailure || !orchestrator.isHealthy()) {
+        if (startResult.isFailure) {
             failRuntime(
                 startResult.exceptionOrNull()
                     .userSafeEngineMessage("Сетевые движки не подтвердили готовность."),
+            )
+            return
+        }
+        if (!orchestrator.isHealthy()) {
+            val healthError = orchestrator.snapshot().errors.values.firstOrNull()
+            failRuntime(
+                healthError
+                    ?.let(::EngineOrchestratorException)
+                    .userSafeEngineMessage(
+                        runtimeDetail
+                            ?.maskUserSafeEngineDetails()
+                            ?.take(500)
+                            ?: "Сетевые движки не подтвердили готовность.",
+                    ),
             )
             return
         }
@@ -376,6 +397,63 @@ class ViRouteVpnService : VpnService() {
                 }
             },
             "ViRouteFS-ReloadPreflight",
+        ).apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun startProfileConnectionTest(intent: Intent) {
+        val receiver = intent.getParcelableExtra<ResultReceiver>(
+            VpnServiceController.EXTRA_PROFILE_TEST_RECEIVER,
+        ) ?: return
+        val profileId = intent.getStringExtra(VpnServiceController.EXTRA_PROFILE_ID).orEmpty()
+        if (profileId.isBlank()) {
+            receiver.sendProfileTestFailure("Не выбран VPN-профиль для проверки.")
+            return
+        }
+        val orchestrator = engineOrchestrator
+        if (!runtimeActive || orchestrator == null) {
+            receiver.sendProfileTestFailure(
+                "Сетевой контроль не запущен. Включите его, чтобы проверить соединение именно через профиль.",
+            )
+            return
+        }
+
+        if (profileConnectionTestThread?.isAlive == true) {
+            receiver.sendProfileTestFailure("Другая проверка VPN-профиля уже выполняется.")
+            return
+        }
+        profileConnectionTestThread = Thread(
+            {
+                val result = orchestrator.testConnection(profileId)
+                result.onSuccess { test ->
+                    receiver.send(
+                        if (test.successful) {
+                            VpnServiceController.PROFILE_TEST_SUCCESS
+                        } else {
+                            VpnServiceController.PROFILE_TEST_FAILURE
+                        },
+                        Bundle().apply {
+                            putString(VpnServiceController.EXTRA_PROFILE_TEST_SUMMARY, test.summary.take(500))
+                            putLong(
+                                VpnServiceController.EXTRA_PROFILE_TEST_LATENCY,
+                                test.latencyMillis ?: VpnServiceController.NO_PROFILE_TEST_LATENCY,
+                            )
+                        },
+                    )
+                }.onFailure { error ->
+                    receiver.sendProfileTestFailure(
+                        (error.localizedMessage ?: "Проверка соединения через профиль завершилась ошибкой.")
+                            .take(500),
+                    )
+                }
+                if (profileConnectionTestThread === Thread.currentThread()) {
+                    profileConnectionTestThread = null
+                }
+            },
+            "ViRouteFS-ProfileConnectionTest",
         ).apply {
             isDaemon = true
             start()
@@ -471,6 +549,8 @@ class ViRouteVpnService : VpnService() {
     }
 
     private fun closeTunDescriptor() {
+        profileConnectionTestThread?.interrupt()
+        profileConnectionTestThread = null
         packetLoopStopping = true
         runtimeStopping = true
         runCatching { engineOrchestrator?.stop() }
@@ -756,14 +836,40 @@ class ViRouteVpnService : VpnService() {
     }
 }
 
-private fun Throwable?.userSafeEngineMessage(fallback: String): String = when (this) {
-    is EngineOrchestratorException ->
-        "${engineError.summary} ${engineError.recommendedAction}".take(500)
-    null -> fallback
-    else -> (localizedMessage ?: fallback)
-        .replace(
-            Regex("(?i)(password|passphrase|private_key|psk|uuid|auth_key|cookie)\\s*[=:]\\s*[^\\s,;]+"),
-            "$1=<redacted>",
-        )
-        .take(500)
+private fun ResultReceiver.sendProfileTestFailure(summary: String) {
+    send(
+        VpnServiceController.PROFILE_TEST_FAILURE,
+        Bundle().apply {
+            putString(VpnServiceController.EXTRA_PROFILE_TEST_SUMMARY, summary.take(500))
+            putLong(
+                VpnServiceController.EXTRA_PROFILE_TEST_LATENCY,
+                VpnServiceController.NO_PROFILE_TEST_LATENCY,
+            )
+        },
+    )
 }
+
+private fun Throwable?.userSafeEngineMessage(fallback: String): String = when (this) {
+    is EngineOrchestratorException -> buildString {
+        append(engineError.summary)
+        engineError.technicalDetails.takeIf(String::isNotBlank)?.let { details ->
+            append(" Причина: ")
+            append(details)
+        }
+        append(' ')
+        append(engineError.recommendedAction)
+    }.maskUserSafeEngineDetails().take(500)
+    null -> fallback
+    else -> (localizedMessage ?: fallback).maskUserSafeEngineDetails().take(500)
+}
+
+private fun String.maskUserSafeEngineDetails(): String = this
+    .replace(Regex("(?i)vless://[^\\s]+"), "vless://<redacted>")
+    .replace(
+        Regex("(?i)(password|passphrase|private_key|psk|uuid|auth_key|cookie)\\s*[=:]\\s*[^\\s,;]+"),
+        "$1=<redacted>",
+    )
+    .replace(
+        Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"),
+        "<redacted-uuid>",
+    )

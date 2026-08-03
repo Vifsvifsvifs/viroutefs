@@ -4,7 +4,6 @@ package dev.vifs.viroutefs.vpn
 
 import dev.vifs.viroutefs.routing.ProfileGroupMode
 import io.nekohasekai.libbox.CommandClient
-import io.nekohasekai.libbox.OutboundGroupItemIterator
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -243,13 +242,7 @@ internal class ProfileGroupRuntimeController(
         scheduler.shutdownNow()
     }
 
-    fun updateOutbounds(iterator: OutboundGroupItemIterator?) {
-        if (iterator == null) return
-        val delays = linkedMapOf<String, Int>()
-        while (iterator.hasNext()) {
-            val item = iterator.next()
-            delays[item.tag] = item.urlTestDelay
-        }
+    fun updateOutbounds(delays: Map<String, Int>) {
         managedGroups.forEach { group ->
             val groupDelays = group.members.associate { member ->
                 member.outboundTag to (delays[member.outboundTag] ?: 0)

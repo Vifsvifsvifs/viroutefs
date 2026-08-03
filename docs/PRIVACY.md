@@ -16,6 +16,11 @@ Android Keystore, а зашифрованный файл исключён из A
 конфигурация Xray-core доступна только приложению, создаётся при запуске и
 удаляется при остановке процесса.
 
+Если старый XHTTP-профиль явно содержит `allowInsecure: true`, приложение один
+раз получает SHA-256 предъявленного сертификата и сохраняет его как локальную
+TOFU-привязку. Файл привязок находится в закрытом `no-backup` каталоге, не
+содержит UUID или паролей и не отправляется наружу.
+
 Экспорт или диагностический отчёт создаётся только по явному действию
 пользователя. ViRouteFS не предоставляет собственные VPN-серверы и не передаёт
 данные владельцу проекта.
@@ -59,6 +64,11 @@ configurations containing credentials, including XHTTP `extra`, are encrypted
 with AES-256-GCM. The key is held by Android Keystore and the encrypted file is
 excluded from Android Backup. The temporary Xray-core configuration is
 app-private, created on process start, and removed on process stop.
+
+When a legacy XHTTP profile explicitly contains `allowInsecure: true`, the app
+obtains the presented certificate SHA-256 once and stores it as a local TOFU
+pin. The pin file stays in app-private no-backup storage, contains no UUID or
+password, and is never uploaded.
 
 An export or diagnostic report is created only after an explicit user action.
 ViRouteFS provides no VPN servers of its own and sends no data to the project

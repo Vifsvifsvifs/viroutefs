@@ -163,6 +163,12 @@ internal class EngineOrchestrator(
     fun isHealthy(): Boolean =
         startedAdapters.isNotEmpty() && startedAdapters.all(EngineAdapter::isHealthy)
 
+    fun testConnection(profileId: String): Result<EngineConnectionTest> {
+        val router = startedAdapters.firstOrNull { it.backend == EngineBackend.SingBox }
+            ?: return Result.failure(IllegalStateException("Сетевой контроль сейчас не запущен."))
+        return router.testConnection(profileId)
+    }
+
     fun snapshot(): EngineOrchestratorSnapshot = EngineOrchestratorSnapshot(
         states = adapterById.mapValues { (_, adapter) -> adapter.state },
         errors = adapterById.mapNotNull { (id, adapter) ->
