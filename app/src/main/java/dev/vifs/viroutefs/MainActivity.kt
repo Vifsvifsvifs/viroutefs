@@ -121,6 +121,7 @@ import dev.vifs.viroutefs.ui.DnsScreen
 import dev.vifs.viroutefs.ui.FlowScannerScreen
 import dev.vifs.viroutefs.ui.InstalledApplicationIcon
 import dev.vifs.viroutefs.ui.SupportQrCode
+import dev.vifs.viroutefs.ui.RootToolsScreen
 import dev.vifs.viroutefs.ui.VpnScreen
 import dev.vifs.viroutefs.ui.theme.ViRouteFsTheme
 import dev.vifs.viroutefs.update.GITHUB_RELEASES_WEB_URL
@@ -1837,12 +1838,20 @@ private fun SettingsScreen(
     var beginnerExpanded by rememberSaveable { mutableStateOf(false) }
     var adminExpanded by rememberSaveable { mutableStateOf(false) }
     var developerExpanded by rememberSaveable { mutableStateOf(false) }
+    var showRootTools by rememberSaveable { mutableStateOf(false) }
     val donationUrl = remember {
         BuildConfig.DONATION_URL.trim().takeIf { url ->
             url.startsWith("https://", ignoreCase = true)
         }
     }
     val clipboardManager = LocalClipboardManager.current
+    if (showRootTools) {
+        RootToolsScreen(
+            padding = padding,
+            onBack = { showRootTools = false },
+        )
+        return
+    }
     ScreenList(padding) {
         item {
             CardBlock {
@@ -1895,6 +1904,21 @@ private fun SettingsScreen(
             }
         }
         item { CompactCard(text, text.version, "ViRouteFS ${BuildConfig.VERSION_NAME}", "versionCode ${BuildConfig.VERSION_CODE}") }
+        item {
+            CardBlock {
+                Text("Расширенные возможности устройства", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Необязательные функции для KernelSU/Magisk/APatch. Без root весь базовый функционал ViRouteFS остаётся доступным.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(
+                    onClick = { showRootTools = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Открыть root-центр")
+                }
+            }
+        }
         item {
             UpdateSettingsCard(
                 text = text,
@@ -2580,7 +2604,7 @@ Packets are dropped after counting""",
     val projectPurposeDetails = t("Приложение не предназначено и не продвигается как средство обхода блокировок. Используйте его только законно, с разрешёнными сетями и VPN-провайдерами. Дополнительный режим совместимости с DPI не является VPN, не шифрует трафик и не скрывает IP-адрес.", "The app is not intended or marketed as an access-restriction circumvention tool. Use it lawfully and only with authorized networks and VPN providers. The optional DPI compatibility mode is not a VPN, does not encrypt traffic, and does not hide the IP address.", "本应用不用于或宣传为规避访问限制的工具。请仅在合法且获授权的网络和 VPN 服务中使用。可选 DPI 兼容模式不是 VPN，不加密流量，也不隐藏 IP 地址。")
     val licenseSummaryTitle = t("Лицензия GPL-3.0-or-later", "GPL-3.0-or-later license", "GPL-3.0-or-later 许可证")
     val licenseSummaryShort = t("Проект остаётся свободным ПО под GPL-3.0-or-later.", "The project remains free software under GPL-3.0-or-later.", "项目仍是 GPL-3.0-or-later 下的自由软件。")
-    val licenseSummaryDetails = t("Вы можете изучать, изменять и распространять код при соблюдении GPL. В APK включены тексты GPL-3.0, лицензии sing-box, MPL-2.0 для Xray-core, MIT-лицензии ByeDPI и Apache-2.0 для AndroidX/CameraX/ZXing/SnakeYAML Engine; точные версии, хэши и скрипты воспроизводимой сборки находятся в репозитории.", "You may study, modify, and redistribute the code under the GPL. The APK includes GPL-3.0, the sing-box license, MPL-2.0 for Xray-core, the ByeDPI MIT license, and Apache-2.0 for AndroidX/CameraX/ZXing/SnakeYAML Engine; exact versions, hashes, and reproducible build scripts are in the repository.", "可按 GPL 条款研究、修改和再分发代码。APK 内含 GPL-3.0、sing-box 许可证、Xray-core 的 MPL-2.0、ByeDPI MIT 许可证以及 AndroidX/CameraX/ZXing/SnakeYAML Engine 的 Apache-2.0；精确版本、哈希和可复现构建脚本位于代码仓库中。")
+    val licenseSummaryDetails = t("Вы можете изучать, изменять и распространять код при соблюдении GPL. В APK включены тексты GPL-3.0, лицензии sing-box, MPL-2.0 для Xray-core, MIT-лицензии ByeDPI и zapret2, а также Apache-2.0 для AndroidX/CameraX/ZXing/SnakeYAML Engine; точные версии, хэши и скрипты воспроизводимой сборки находятся в репозитории.", "You may study, modify, and redistribute the code under the GPL. The APK includes GPL-3.0, the sing-box license, MPL-2.0 for Xray-core, the MIT licenses for ByeDPI and zapret2, and Apache-2.0 for AndroidX/CameraX/ZXing/SnakeYAML Engine; exact versions, hashes, and reproducible build scripts are in the repository.", "可按 GPL 条款研究、修改和再分发代码。APK 内含 GPL-3.0、sing-box 许可证、Xray-core 的 MPL-2.0、ByeDPI 与 zapret2 的 MIT 许可证以及 AndroidX/CameraX/ZXing/SnakeYAML Engine 的 Apache-2.0；精确版本、哈希和可复现构建脚本位于代码仓库中。")
     val currentBetaLimitations = t("Границы beta", "Beta boundaries", "Beta 限制")
     val betaLimitationsShort = t("Нужна проверка на реальном arm64-телефоне. OpenVPN/OpenConnect и живые события Flow Scanner подключены, но IKEv2/IPsec и устаревшие L2TP/PPTP/SSTP ещё требуют отдельных Android-движков.", "Real arm64 device testing is still required. OpenVPN/OpenConnect and live Flow Scanner events are connected, while IKEv2/IPsec and legacy L2TP/PPTP/SSTP still need separate Android engines.", "仍需在真实 arm64 设备上测试。OpenVPN/OpenConnect 和实时 Flow Scanner 事件已接入，而 IKEv2/IPsec 与旧版 L2TP/PPTP/SSTP 仍需要单独的 Android 引擎。")
     val betaLimitationsDetails = t("Beta можно включать без VPN: System использует обычный мобильный интернет или Wi‑Fi, а отдельные правила направляют выбранный трафик в VPN, Block или режим совместимости TCP/TLS. APK содержит sing-box 1.14 alpha для большинства протоколов и отдельный локальный Xray-core для VLESS/XHTTP. Flow Scanner показывает метаданные без содержимого пакетов и расшифровки HTTPS. Все внешние туннели ещё требуют физической проверки.", "The beta can start without a VPN: System uses normal mobile data or Wi-Fi, while explicit rules send selected traffic to a VPN, Block, or TCP/TLS Compatibility. The APK contains sing-box 1.14 alpha for most protocols and an app-private Xray-core process for VLESS/XHTTP. Flow Scanner shows metadata without packet payloads or HTTPS decryption. Every external tunnel still requires physical verification.", "Beta 无需 VPN 即可启动：System 使用普通移动数据或 Wi-Fi，明确规则可将选定流量发送到 VPN、Block 或 TCP/TLS 兼容模式。APK 对多数协议使用 sing-box 1.14 alpha，并为 VLESS/XHTTP 内置独立的本地 Xray-core 进程。Flow Scanner 仅显示元数据，不记录数据包内容，也不解密 HTTPS。所有外部隧道仍需真机验证。")

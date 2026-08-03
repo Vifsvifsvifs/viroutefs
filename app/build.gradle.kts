@@ -24,9 +24,9 @@ val donationUrl = providers.environmentVariable("VIROUTEFS_DONATION_URL")
     ?.trim()
     ?.takeIf(String::isNotBlank)
     ?: "https://messenger.online.sberbank.ru/sl/PV0SJRfgsEARtx5Ka"
-val baseVersionName = "0.14.0-beta.5"
+val baseVersionName = "0.14.0-beta.6"
 val appVersionName = if (buildNumber > 0) "$baseVersionName.$buildNumber" else baseVersionName
-val appVersionCode = 14005 + buildNumber
+val appVersionCode = 14006 + buildNumber
 
 android {
     namespace = "dev.vifs.viroutefs"
@@ -97,11 +97,12 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
         jniLibs {
-            // ByeDPI and Xray are app-private executables in nativeLibraryDir.
+            // ByeDPI, Xray and optional root-only zapret2 are app-private
+            // executables in nativeLibraryDir.
             useLegacyPackaging = true
             // Xray-core is a PIE command stored under jniLibs so Android extracts
             // it as an executable. Keep the verified byte-for-byte artifact.
-            keepDebugSymbols += "**/libxray.so"
+            keepDebugSymbols += setOf("**/libxray.so", "**/libzapret2.so")
         }
     }
 }
@@ -115,6 +116,9 @@ val xrayFile = file("src/main/jniLibs/arm64-v8a/libxray.so")
 val byeDpiVersion = "ba532298de7b28cfe854aea83d061369d13ca290-arm64-16k"
 val byeDpiSha256 = "abae93da6e426da5bbe5611f53a550eccb021d7be88b2c13865461024c4862d1"
 val byeDpiFile = file("src/main/jniLibs/arm64-v8a/libbyedpi.so")
+val zapret2Version = "v1.0.4-2c21faa80e1acb71ddceb8b49176f266b7d33f05-android-arm64-16k"
+val zapret2Sha256 = "2e1a0e950e0bc7189b5662e54fdd66d749d51215b167a647f15659554e7b4090"
+val zapret2File = file("src/main/jniLibs/arm64-v8a/libzapret2.so")
 
 fun File.sha256(): String {
     val digest = MessageDigest.getInstance("SHA-256")
@@ -163,6 +167,19 @@ tasks.register("verifyByeDpi") {
     }
 }
 
+tasks.register("verifyZapret2") {
+    inputs.file(zapret2File)
+    doLast {
+        check(zapret2File.exists() && zapret2File.length() > 0L) {
+            "Missing ${zapret2File.relativeTo(projectDir)} ($zapret2Version)."
+        }
+        check(zapret2File.sha256() == zapret2Sha256) {
+            "${zapret2File.relativeTo(projectDir)} does not match pinned zapret2 $zapret2Version SHA-256."
+        }
+        println("Verified ${zapret2File.relativeTo(projectDir)} as zapret2 $zapret2Version.")
+    }
+}
+
 tasks.register("verifyLibXray") {
     inputs.file(xrayFile)
     doLast {
@@ -177,7 +194,7 @@ tasks.register("verifyLibXray") {
 }
 
 tasks.named("preBuild") {
-    dependsOn("verifyLibbox", "verifyLibXray", "verifyByeDpi")
+    dependsOn("verifyLibbox", "verifyLibXray", "verifyByeDpi", "verifyZapret2")
 }
 
 tasks.register("printVersionName") {

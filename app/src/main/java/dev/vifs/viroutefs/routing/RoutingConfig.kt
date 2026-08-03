@@ -231,7 +231,7 @@ enum class TunnelType(val label: String, val isMockOnly: Boolean) {
     Direct("System", false),
     Block("Block", false),
     ByeDpi("Совместимость TCP/TLS", true),
-    Zapret2("Обработчик пакетов zapret2", true),
+    Zapret2("Адаптация соединений (root)", true),
     WireGuard("WireGuard", true),
     OpenVpn("OpenVPN", true),
     OpenConnectAnyConnect("OpenConnect / AnyConnect", true),

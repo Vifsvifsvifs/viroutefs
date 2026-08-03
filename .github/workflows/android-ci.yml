@@ -152,6 +152,9 @@ jobs:
         env:
           EXPECTED_XRAY_SHA256: 9bb0b815086395164066b5fa27b1797bf9a0fcc493d1491f02166560604dcaff
           XRAY_COMMIT: 94ffd50060f1cfd5d7482ec90a23a92bdefdff68
+          EXPECTED_ZAPRET2_SHA256: 2e1a0e950e0bc7189b5662e54fdd66d749d51215b167a647f15659554e7b4090
+          ZAPRET2_RELEASE: v1.0.4
+          ZAPRET2_COMMIT: 2c21faa80e1acb71ddceb8b49176f266b7d33f05
         run: |
           set -euo pipefail
 
@@ -164,15 +167,30 @@ jobs:
           "$ZIPALIGN" -c -P 16 4 "$RELEASE_APK"
           unzip -l "$RELEASE_APK" | grep -q 'lib/arm64-v8a/'
           unzip -l "$RELEASE_APK" | grep -q 'assets/licenses/Xray-core-MPL-2.0.txt'
+          unzip -l "$RELEASE_APK" | grep -q 'assets/licenses/zapret2-MIT.txt'
+          unzip -l "$RELEASE_APK" | grep -q 'assets/zapret2/zapret-lib.lua'
+          unzip -l "$RELEASE_APK" | grep -q 'assets/zapret2/zapret-antidpi.lua'
+          unzip -l "$RELEASE_APK" | grep -q 'assets/zapret2/zapret-auto.lua'
           SOURCE_XRAY_SHA256="$(sha256sum app/src/main/jniLibs/arm64-v8a/libxray.so | awk '{print $1}')"
           unzip -p "$RELEASE_APK" 'lib/arm64-v8a/libxray.so' > "$RUNNER_TEMP/libxray-packaged.so"
           PACKAGED_XRAY_SHA256="$(sha256sum "$RUNNER_TEMP/libxray-packaged.so" | awk '{print $1}')"
+          SOURCE_ZAPRET2_SHA256="$(sha256sum app/src/main/jniLibs/arm64-v8a/libzapret2.so | awk '{print $1}')"
+          unzip -p "$RELEASE_APK" 'lib/arm64-v8a/libzapret2.so' > "$RUNNER_TEMP/libzapret2-packaged.so"
+          PACKAGED_ZAPRET2_SHA256="$(sha256sum "$RUNNER_TEMP/libzapret2-packaged.so" | awk '{print $1}')"
           if [ "$SOURCE_XRAY_SHA256" != "$EXPECTED_XRAY_SHA256" ]; then
             echo "Pinned Xray source hash mismatch: $SOURCE_XRAY_SHA256" >&2
             exit 1
           fi
           if [ "$PACKAGED_XRAY_SHA256" != "$EXPECTED_XRAY_SHA256" ]; then
             echo "Packaged Xray hash mismatch: $PACKAGED_XRAY_SHA256" >&2
+            exit 1
+          fi
+          if [ "$SOURCE_ZAPRET2_SHA256" != "$EXPECTED_ZAPRET2_SHA256" ]; then
+            echo "Pinned zapret2 source hash mismatch: $SOURCE_ZAPRET2_SHA256" >&2
+            exit 1
+          fi
+          if [ "$PACKAGED_ZAPRET2_SHA256" != "$EXPECTED_ZAPRET2_SHA256" ]; then
+            echo "Packaged zapret2 hash mismatch: $PACKAGED_ZAPRET2_SHA256" >&2
             exit 1
           fi
           printf '%s  %s\n' "$SHA256" "$RELEASE_APK" > "$RELEASE_APK.sha256"
@@ -199,6 +217,14 @@ jobs:
                 "commit": "${XRAY_COMMIT}",
                 "sha256": "${PACKAGED_XRAY_SHA256}",
                 "license": "MPL-2.0"
+              },
+              "zapret2": {
+                "release": "${ZAPRET2_RELEASE}",
+                "commit": "${ZAPRET2_COMMIT}",
+                "sha256": "${PACKAGED_ZAPRET2_SHA256}",
+                "license": "MIT",
+                "rootOptional": true,
+                "deviceVerified": false
               }
             }
           }

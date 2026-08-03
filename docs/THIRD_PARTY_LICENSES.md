@@ -46,6 +46,23 @@ The copyright and MIT permission notice are included in `app/src/main/assets/lic
 
 The exact MPL-2.0 text from the pinned Xray-core revision is included in `app/src/main/assets/licenses/Xray-core-MPL-2.0.txt`. The runtime configuration is removed when the child process stops.
 
+### zapret2
+
+- Upstream: https://github.com/bol-van/zapret2
+- Release: `v1.0.4`
+- Commit/tag target: `2c21faa80e1acb71ddceb8b49176f266b7d33f05`
+- Upstream release archive SHA-256: `5760b6d41c09459fff00b4a6fec5437a471a00aac15f734723ede149cd26c709`
+- Artifact: `app/src/main/jniLibs/arm64-v8a/libzapret2.so`
+- Artifact SHA-256: `2e1a0e950e0bc7189b5662e54fdd66d749d51215b167a647f15659554e7b4090`
+- License: MIT
+- Re-fetch and verification: `tools/fetch-zapret2.ps1`
+
+The Android arm64 `nfqws2` executable and the standard Lua runtime files are
+bundled only for the optional, disabled-by-default root module named
+**Адаптация соединений**. They are not used by the ordinary `VpnService` path.
+The upstream MIT notice is included in
+`app/src/main/assets/licenses/zapret2-MIT.txt`.
+
 ### Android libraries
 
 AndroidX, Jetpack Compose, Kotlin coroutines and their exact Maven coordinates are declared in `app/build.gradle.kts`. They are primarily Apache-2.0 components. Their upstream notices and dependency metadata must remain available with any public distribution.
@@ -76,7 +93,6 @@ user-specified Java class is constructed.
 - strongSwan;
 - WireGuard Android tunnel library;
 - Tor executable;
-- zapret2 (`v1.0.3` was audited under MIT, but its NFQUEUE/root execution model is not bundled);
 - separate OpenConnect, ZeroTier and SoftEther adapters (OpenConnect client support is supplied by bundled sing-box);
 - Naive/Cronet.
 

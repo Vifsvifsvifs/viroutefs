@@ -1,56 +1,68 @@
-# zapret2 integration decision
+# zapret2 root integration
 
-This record describes an engineering and license audit. It is not legal advice and does not claim that zapret2 is currently bundled or runtime-ready in ViRouteFS.
+This is an engineering and license record, not legal advice. The user-facing
+feature is named **Connection adaptation (root)**. The upstream name remains
+visible in technical details, source records, hashes and licenses.
 
-## Audited snapshot
+## Pinned snapshot
 
 - Upstream: https://github.com/bol-van/zapret2
 - Release: `v1.0.4`
-- Commit: `2c21faa80e1acb71ddceb8b49176f266b7d33f05`
-- Published: 2026-07-31
-- License file: `docs/LICENSE.txt`
+- Commit/tag target: `2c21faa80e1acb71ddceb8b49176f266b7d33f05`
+- Upstream release archive SHA-256: `5760b6d41c09459fff00b4a6fec5437a471a00aac15f734723ede149cd26c709`
+- Android arm64 `nfqws2` SHA-256: `2e1a0e950e0bc7189b5662e54fdd66d749d51215b167a647f15659554e7b4090`
 - License: MIT, copyright 2016-2026 bol-van
 
-The earlier https://github.com/bol-van/zapret repository declares zapret1 end-of-life and directs new development to zapret2.
+`tools/fetch-zapret2.ps1` downloads the exact upstream release, verifies the
+archive and every selected file, and installs the binary, standard Lua files
+and MIT notice into the Android source tree. Gradle verifies the native binary
+again before every build; the app verifies the binary and Lua hashes before a
+root start.
 
-## What zapret2 is
+## Product boundary
 
-zapret2 is a packet-analysis and packet-transformation engine. Its `nfqws2` program receives selected packets from Linux NFQUEUE, classifies protocols and payloads, and runs Lua strategies that can pass, modify, drop, split or supplement packets.
+zapret2 is a packet-analysis and packet-transformation engine. Its `nfqws2`
+program receives selected Linux NFQUEUE packets and runs Lua strategies. It is
+not a VPN, does not provide a remote tunnel or encryption, and does not hide the
+device IP address.
 
-It is not a VPN and does not provide a remote tunnel or encryption by itself.
+The ordinary ViRouteFS router remains a rootless Android `VpnService`. ByeDPI
+remains available as the separate **TCP/TLS compatibility** route. The new
+zapret2 path is not a tunnel profile and is never required for base VPN, route,
+DNS or Flow Scanner operation.
 
-## Android boundary
+## Root activation model
 
-The upstream project can build an Android executable, but the normal traffic path still expects:
+The root module is off by default and does not invoke `su` during application
+startup or when the root centre is merely opened. The user must acknowledge the
+risk and press the start button. ViRouteFS then:
 
-- NFQUEUE rules supplied by iptables or nftables;
-- network administration and raw-packet capabilities;
-- root-level control of the device network stack.
+1. requests root through the installed KernelSU, Magisk or APatch manager;
+2. performs a read-only capability probe;
+3. requires IPv4 and IPv6 iptables plus NFQUEUE `--queue-bypass` support;
+4. verifies all bundled artifacts by SHA-256;
+5. writes recovery state before changing the network stack;
+6. starts only its pinned app-private `nfqws2` process;
+7. creates only the `VIROUTEFS_Z2_OUT` chains and attaches them to `OUTPUT`;
+8. rolls the process and both chains back when any step fails.
 
-A normal Play-style Android application does not have those privileges. ViRouteFS also already owns the device VPN slot through one `VpnService`, so launching another VPN-based interceptor is not an option.
+The queue uses `--queue-bypass`, so packets are accepted if the userspace
+listener disappears. Generated packets are marked to prevent recapture. Manual
+stop removes only this module. The root centre also exposes an emergency cleanup
+that removes all ViRouteFS-owned root chains and processes without flushing the
+device firewall or deleting unrelated rules.
 
-The physical Android 16 phone used for the 0.14.0 beta checks has KernelSU Next installed. The current ViRouteFS build has not requested or received `su` access yet, so a future root-only nfqws2 path must remain a separately enabled module and must not become a dependency of the base VPN router.
+The first strategy set is deliberately bounded to outgoing web traffic on TCP
+80/443 and QUIC UDP 443. Arbitrary user shell text and arbitrary strategy
+arguments are not accepted.
 
-For these reasons, simply copying the upstream Android binary into the APK would create a non-working control and an unjustified security surface.
+## Verification status
 
-## Acceptable ViRouteFS integration path
+The source, artifact hashes, script generation, rollback namespace and Android
+build are covered by local tests. The root runtime is **not device verified**
+until the physical KernelSU Next phone is reconnected and the following matrix
+passes: grant/deny, IPv4, IPv6, QUIC, network changes, process crash, manual stop,
+emergency cleanup, coexistence with Android VpnService and reboot recovery.
 
-A future rootless adapter must:
-
-1. remain inside the existing ViRouteFS `VpnService`;
-2. expose only packet or stream transformations that can be represented safely in the current userspace network stack;
-3. avoid root, iptables, nftables and NFQUEUE requirements;
-4. preserve per-app, domain, IP, CIDR and DNS route selection;
-5. fail closed when the selected strategy cannot run;
-6. include the upstream MIT notice, exact source revision, build script and artifact hash;
-7. undergo physical-device tests for TCP, UDP/QUIC, IPv4, IPv6, battery use and network changes.
-
-Full nfqws2 parity may be impossible without root because several strategies depend on raw packet injection and kernel interception. The adapter must not claim support for such strategies unless they are proven within the userspace runtime.
-
-## Current decision
-
-- `zapret2` is listed as **audited/planned**, not working.
-- No zapret2 binary or Lua strategy is bundled in the current APK.
-- The existing user-facing route is named **Совместимость TCP/TLS**.
-- That route is currently implemented by the pinned MIT-licensed ByeDPI SOCKS engine, whose upstream name remains visible in licenses and technical details.
-- A future root mode will keep ByeDPI available, use a separate neutral product label, identify zapret2 in technical/license details, request `su` only when the user explicitly enables it, and restore its own firewall state on failure or stop.
+No persistent boot module or automatic root start is installed before that
+physical recovery test succeeds.

@@ -42,12 +42,13 @@ class EngineCatalogTest {
     }
 
     @Test
-    fun zapret2IsAuditedButNotClaimedAsRuntimeReady() {
+    fun zapret2RootModuleIsNotClaimedAsAVpnProfile() {
         val descriptor = EngineCatalog.descriptor(TunnelType.Zapret2)
 
         assertEquals(FeatureReadiness.Unavailable, descriptor?.readiness)
         assertEquals(EngineBackend.Zapret2, descriptor?.backend)
         assertTrue(descriptor?.summary.orEmpty().contains("NFQUEUE"))
+        assertTrue(EngineCatalog.selectableProtocols.none { it.type == TunnelType.Zapret2 })
     }
 
     @Test
