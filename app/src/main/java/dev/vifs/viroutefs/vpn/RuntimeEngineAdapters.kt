@@ -411,6 +411,7 @@ internal class SingBoxEngineAdapter(
     private var runner: SingBoxEngineRunner? = null
     private var activeProfiles: Int = 0
     private var compiledWarnings: List<String> = emptyList()
+    private var lastRuntimeMessage: String? = null
     override var state: EngineState = EngineState.Stopped
         private set
     override var lastError: EngineError? = null
@@ -477,6 +478,7 @@ internal class SingBoxEngineAdapter(
         runtimeContext: EngineRuntimeContext,
     ): Result<Unit> {
         lastError = null
+        lastRuntimeMessage = null
         state = EngineState.Starting
         return runCatching {
             val config = compiled.payload as? RoutingConfig
@@ -553,7 +555,10 @@ internal class SingBoxEngineAdapter(
             val nextRunner = SingBoxEngineRunner(
                 service = service,
                 onTunEstablished = onTunEstablished,
-                onLog = onLog,
+                onLog = { message ->
+                    lastRuntimeMessage = maskSecrets(message)
+                    onLog(message)
+                },
                 onConnections = onConnections,
                 managedProfileGroups = managedGroups,
                 onProfileGroupAction = onProfileGroupAction,
@@ -594,11 +599,23 @@ internal class SingBoxEngineAdapter(
         runner = null
         activeProfiles = 0
         compiledWarnings = emptyList()
+        lastRuntimeMessage = null
         state = EngineState.Stopped
     }
 
-    override fun isHealthy(): Boolean =
-        state == EngineState.Connected && runner?.isRunning() == true
+    override fun isHealthy(): Boolean {
+        val healthy = state == EngineState.Connected && runner?.isRunning() == true
+        if (!healthy && state == EngineState.Connected) {
+            state = EngineState.Error
+            lastError = error(
+                EngineErrorStage.HealthCheck,
+                "Локальный VPN-маршрутизатор остановился сразу после запуска.",
+                lastRuntimeMessage ?: "sing-box stopped before confirming a stable Android TUN runtime.",
+                "Проверьте профиль и нативную конфигурацию; связанный трафик оставлен заблокированным.",
+            )
+        }
+        return healthy
+    }
 
     override fun statistics(): EngineStatistics =
         EngineStatistics(activeProfiles = activeProfiles)

@@ -7,11 +7,13 @@
 * Legacy v2rayNG XHTTP profiles containing `allowInsecure: true` are migrated
   before Xray starts. ViRouteFS obtains the presented leaf certificate once,
   stores its SHA-256 as a private no-backup TOFU pin, and supplies
-  `pinnedPeerCertSha256` with name verification disabled only for that exact
-  pinned certificate.
+  `pinnedPeerCertSha256` for that exact pinned certificate.
 * VLESS share links preserve the current `pcs` and `vcn` certificate options.
 * Xray startup errors remain fail-closed and retain the exact bounded,
   secret-masked engine reason for the user.
+* An asynchronous Android VPN-router health failure now retains the last
+  secret-masked sing-box reason instead of falling back to a generic readiness
+  message.
 
 ## Import and connection diagnostics
 

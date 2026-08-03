@@ -304,10 +304,24 @@ class ViRouteVpnService : VpnService() {
             return
         }
         val startResult = orchestrator.start(plan)
-        if (startResult.isFailure || !orchestrator.isHealthy()) {
+        if (startResult.isFailure) {
             failRuntime(
                 startResult.exceptionOrNull()
                     .userSafeEngineMessage("Сетевые движки не подтвердили готовность."),
+            )
+            return
+        }
+        if (!orchestrator.isHealthy()) {
+            val healthError = orchestrator.snapshot().errors.values.firstOrNull()
+            failRuntime(
+                healthError
+                    ?.let(::EngineOrchestratorException)
+                    .userSafeEngineMessage(
+                        runtimeDetail
+                            ?.maskUserSafeEngineDetails()
+                            ?.take(500)
+                            ?: "Сетевые движки не подтвердили готовность.",
+                    ),
             )
             return
         }
