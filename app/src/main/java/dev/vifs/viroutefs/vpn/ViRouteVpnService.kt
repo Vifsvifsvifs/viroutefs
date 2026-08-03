@@ -13,6 +13,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.Bundle
+import android.os.ResultReceiver
 import androidx.core.app.NotificationCompat
 import dev.vifs.viroutefs.MainActivity
 import dev.vifs.viroutefs.engine.EngineOrchestrator
@@ -42,6 +44,7 @@ class ViRouteVpnService : VpnService() {
     private var packetLoopThread: Thread? = null
     private var runtimeThread: Thread? = null
     private var reloadValidationThread: Thread? = null
+    private var profileConnectionTestThread: Thread? = null
     private var reloadGeneration: Long = 0L
     private var engineOrchestrator: EngineOrchestrator? = null
     private var singBoxEngineAdapter: SingBoxEngineAdapter? = null
@@ -98,6 +101,10 @@ class ViRouteVpnService : VpnService() {
             VpnServiceController.ACTION_SET_PACKET_INSPECTOR_PAUSED -> {
                 packetHistory.setPaused(intent.getBooleanExtra(VpnServiceController.EXTRA_PACKET_INSPECTOR_PAUSED, false))
                 publishActiveState(force = true)
+                return START_STICKY
+            }
+            VpnServiceController.ACTION_TEST_PROFILE_CONNECTION -> {
+                startProfileConnectionTest(intent)
                 return START_STICKY
             }
         }
@@ -382,6 +389,63 @@ class ViRouteVpnService : VpnService() {
         }
     }
 
+    @Suppress("DEPRECATION")
+    private fun startProfileConnectionTest(intent: Intent) {
+        val receiver = intent.getParcelableExtra<ResultReceiver>(
+            VpnServiceController.EXTRA_PROFILE_TEST_RECEIVER,
+        ) ?: return
+        val profileId = intent.getStringExtra(VpnServiceController.EXTRA_PROFILE_ID).orEmpty()
+        if (profileId.isBlank()) {
+            receiver.sendProfileTestFailure("Не выбран VPN-профиль для проверки.")
+            return
+        }
+        val orchestrator = engineOrchestrator
+        if (!runtimeActive || orchestrator == null) {
+            receiver.sendProfileTestFailure(
+                "Сетевой контроль не запущен. Включите его, чтобы проверить соединение именно через профиль.",
+            )
+            return
+        }
+
+        if (profileConnectionTestThread?.isAlive == true) {
+            receiver.sendProfileTestFailure("Другая проверка VPN-профиля уже выполняется.")
+            return
+        }
+        profileConnectionTestThread = Thread(
+            {
+                val result = orchestrator.testConnection(profileId)
+                result.onSuccess { test ->
+                    receiver.send(
+                        if (test.successful) {
+                            VpnServiceController.PROFILE_TEST_SUCCESS
+                        } else {
+                            VpnServiceController.PROFILE_TEST_FAILURE
+                        },
+                        Bundle().apply {
+                            putString(VpnServiceController.EXTRA_PROFILE_TEST_SUMMARY, test.summary.take(500))
+                            putLong(
+                                VpnServiceController.EXTRA_PROFILE_TEST_LATENCY,
+                                test.latencyMillis ?: VpnServiceController.NO_PROFILE_TEST_LATENCY,
+                            )
+                        },
+                    )
+                }.onFailure { error ->
+                    receiver.sendProfileTestFailure(
+                        (error.localizedMessage ?: "Проверка соединения через профиль завершилась ошибкой.")
+                            .take(500),
+                    )
+                }
+                if (profileConnectionTestThread === Thread.currentThread()) {
+                    profileConnectionTestThread = null
+                }
+            },
+            "ViRouteFS-ProfileConnectionTest",
+        ).apply {
+            isDaemon = true
+            start()
+        }
+    }
+
     private fun loadRuntimeConfig(): Result<RoutingConfig> = runCatching {
         val loadResult = runBlocking { RoutingConfigRepository(applicationContext).load() }
         loadResult.errorMessage?.let(::error)
@@ -471,6 +535,8 @@ class ViRouteVpnService : VpnService() {
     }
 
     private fun closeTunDescriptor() {
+        profileConnectionTestThread?.interrupt()
+        profileConnectionTestThread = null
         packetLoopStopping = true
         runtimeStopping = true
         runCatching { engineOrchestrator?.stop() }
@@ -754,6 +820,19 @@ class ViRouteVpnService : VpnService() {
         private const val MAX_PROFILE_GROUP_EVENTS = 80
         private const val MAX_DNS_FALLBACK_EVENTS = 80
     }
+}
+
+private fun ResultReceiver.sendProfileTestFailure(summary: String) {
+    send(
+        VpnServiceController.PROFILE_TEST_FAILURE,
+        Bundle().apply {
+            putString(VpnServiceController.EXTRA_PROFILE_TEST_SUMMARY, summary.take(500))
+            putLong(
+                VpnServiceController.EXTRA_PROFILE_TEST_LATENCY,
+                VpnServiceController.NO_PROFILE_TEST_LATENCY,
+            )
+        },
+    )
 }
 
 private fun Throwable?.userSafeEngineMessage(fallback: String): String = when (this) {

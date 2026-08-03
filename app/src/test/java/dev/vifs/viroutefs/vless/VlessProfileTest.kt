@@ -137,6 +137,8 @@ class VlessProfileTest {
             hostHeader = "front.example",
             alpn = "h2,http/1.1",
             serviceName = "my-service",
+            pinnedPeerCertSha256 = "AA:BB:CC",
+            verifyPeerCertByName = false,
         )
 
         val exported = exportVlessUri(original)
@@ -158,6 +160,8 @@ class VlessProfileTest {
         assertEquals(original.hostHeader, reparsed.hostHeader)
         assertEquals(original.alpn, reparsed.alpn)
         assertEquals(original.serviceName, reparsed.serviceName)
+        assertEquals(original.pinnedPeerCertSha256, reparsed.pinnedPeerCertSha256)
+        assertEquals(original.verifyPeerCertByName, reparsed.verifyPeerCertByName)
     }
 
     @Test
@@ -193,6 +197,8 @@ class VlessProfileTest {
         hostHeader: String? = null,
         alpn: String? = null,
         serviceName: String? = null,
+        pinnedPeerCertSha256: String? = null,
+        verifyPeerCertByName: Boolean? = null,
     ): VlessProfileConfig = VlessProfileConfig(
         name = "Lab VLESS",
         host = "example.com",
@@ -210,5 +216,7 @@ class VlessProfileTest {
         hostHeader = hostHeader,
         alpn = alpn,
         serviceName = serviceName,
+        pinnedPeerCertSha256 = pinnedPeerCertSha256,
+        verifyPeerCertByName = verifyPeerCertByName,
     )
 }

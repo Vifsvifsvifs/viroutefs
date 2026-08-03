@@ -139,6 +139,8 @@ fun profileFingerprint(profile: TunnelProfile): String {
                     profile.vless.serviceName.orEmpty(),
                     profile.vless.xhttpMode.orEmpty(),
                     profile.vless.xhttpExtra.orEmpty(),
+                    profile.vless.pinnedPeerCertSha256.orEmpty(),
+                    profile.vless.verifyPeerCertByName?.toString().orEmpty(),
                 ).joinToString("|"),
             )
             profile.socks5 != null -> append(

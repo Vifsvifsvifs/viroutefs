@@ -227,9 +227,12 @@ private fun VlessProfileConfig.toXrayVlessOutbound(tag: String): JSONObject {
 }
 
 private fun VlessProfileConfig.xrayTlsSettings(): JSONObject = JSONObject()
-    .put("allowInsecure", false)
     .put("serverName", sni?.takeIf(String::isNotBlank) ?: host.trim())
     .apply {
+        pinnedPeerCertSha256?.takeIf(String::isNotBlank)?.let {
+            put("pinnedPeerCertSha256", it)
+        }
+        verifyPeerCertByName?.let { put("verifyPeerCertByName", it) }
         fingerprint?.takeIf(String::isNotBlank)?.let { put("fingerprint", it) }
         alpn?.split(',')
             ?.map(String::trim)

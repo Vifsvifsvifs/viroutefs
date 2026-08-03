@@ -10,6 +10,10 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.ResultReceiver
 import androidx.core.content.ContextCompat
 import dev.vifs.viroutefs.runtime.tcp.TcpSessionState
 import java.net.URLDecoder
@@ -43,6 +47,12 @@ internal data class DnsFallbackRuntimeEvent(
     val timestamp: Long,
     val policyNames: List<String>,
     val message: String,
+)
+
+internal data class ProfileConnectionTestUiResult(
+    val successful: Boolean,
+    val summary: String,
+    val latencyMillis: Long? = null,
 )
 
 internal data class VpnServiceUiState(
@@ -128,6 +138,41 @@ internal class VpnServiceController(context: Context) {
             Intent(appContext, ViRouteVpnService::class.java)
                 .setAction(ACTION_SET_PACKET_INSPECTOR_PAUSED)
                 .putExtra(EXTRA_PACKET_INSPECTOR_PAUSED, paused),
+        )
+    }
+
+    fun testProfileConnection(
+        profileId: String,
+        onResult: (ProfileConnectionTestUiResult) -> Unit,
+    ) {
+        if (!ViRouteVpnService.isRunning || ViRouteVpnService.lastState.status != VpnServiceStatus.RuntimeActive) {
+            onResult(
+                ProfileConnectionTestUiResult(
+                    successful = false,
+                    summary = "Сетевой контроль не запущен. Включите его, чтобы проверить соединение именно через профиль.",
+                ),
+            )
+            return
+        }
+        val receiver = object : ResultReceiver(Handler(Looper.getMainLooper())) {
+            override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
+                onResult(
+                    ProfileConnectionTestUiResult(
+                        successful = resultCode == PROFILE_TEST_SUCCESS,
+                        summary = resultData?.getString(EXTRA_PROFILE_TEST_SUMMARY)
+                            ?: "Проверка профиля не вернула описание результата.",
+                        latencyMillis = resultData
+                            ?.getLong(EXTRA_PROFILE_TEST_LATENCY, NO_PROFILE_TEST_LATENCY)
+                            ?.takeUnless { it == NO_PROFILE_TEST_LATENCY },
+                    ),
+                )
+            }
+        }
+        appContext.startService(
+            Intent(appContext, ViRouteVpnService::class.java)
+                .setAction(ACTION_TEST_PROFILE_CONNECTION)
+                .putExtra(EXTRA_PROFILE_ID, profileId)
+                .putExtra(EXTRA_PROFILE_TEST_RECEIVER, receiver),
         )
     }
 
@@ -293,6 +338,7 @@ internal class VpnServiceController(context: Context) {
         internal const val ACTION_STOP = "dev.vifs.viroutefs.vpn.STOP"
         internal const val ACTION_CLEAR_PACKET_SUMMARIES = "dev.vifs.viroutefs.vpn.CLEAR_PACKET_SUMMARIES"
         internal const val ACTION_SET_PACKET_INSPECTOR_PAUSED = "dev.vifs.viroutefs.vpn.SET_PACKET_INSPECTOR_PAUSED"
+        internal const val ACTION_TEST_PROFILE_CONNECTION = "dev.vifs.viroutefs.vpn.TEST_PROFILE_CONNECTION"
         internal const val ACTION_STATE_CHANGED = "dev.vifs.viroutefs.vpn.STATE_CHANGED"
         internal const val EXTRA_STATUS = "status"
         internal const val EXTRA_DETAIL = "detail"
@@ -313,7 +359,14 @@ internal class VpnServiceController(context: Context) {
         internal const val EXTRA_DNS_FALLBACK_EVENTS = "dns_fallback_events"
         internal const val EXTRA_ACTIVE_TCP_SESSIONS = "active_tcp_sessions"
         internal const val EXTRA_TCP_SESSION_STATE_STATS = "tcp_session_state_stats"
+        internal const val EXTRA_PROFILE_ID = "profile_id"
+        internal const val EXTRA_PROFILE_TEST_RECEIVER = "profile_test_receiver"
+        internal const val EXTRA_PROFILE_TEST_SUMMARY = "profile_test_summary"
+        internal const val EXTRA_PROFILE_TEST_LATENCY = "profile_test_latency"
         internal const val NO_PACKET_TIME = -1L
+        internal const val NO_PROFILE_TEST_LATENCY = -1L
+        internal const val PROFILE_TEST_SUCCESS = 1
+        internal const val PROFILE_TEST_FAILURE = 0
 
         internal fun encodePacketSummary(summary: PacketSummary): String = listOf(
             summary.timestamp.toString(),

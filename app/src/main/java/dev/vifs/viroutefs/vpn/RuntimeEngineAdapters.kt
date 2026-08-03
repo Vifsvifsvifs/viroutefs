@@ -489,9 +489,24 @@ internal class SingBoxEngineAdapter(
                         ?.let { profile.id to it }
                 }
                 .toMap()
+            val connectionTestProfileIds = config.profiles
+                .filter { profile ->
+                    profile.enabled &&
+                        profile.id in config.routedProfileIds() &&
+                        profile.type !in setOf(
+                            TunnelType.Direct,
+                            TunnelType.Block,
+                            TunnelType.ByeDpi,
+                        )
+                }
+                .map(TunnelProfile::id)
+            val connectionTestPorts = connectionTestProfileIds
+                .zip(reserveLoopbackPorts(connectionTestProfileIds.size))
+                .toMap()
             val nativeConfig = SingBoxRoutingConfigCompiler(
                 byeDpiPort = compatibilityPort,
                 xrayEndpoints = xrayEndpoints,
+                connectionTestPorts = connectionTestPorts,
             )
                 .compile(config)
             if (!config.emergencyBlockEnabled &&
@@ -550,6 +565,7 @@ internal class SingBoxEngineAdapter(
                     }
                     .map { it.name },
                 onDnsFallback = onDnsFallback,
+                profileConnectionTestPorts = nativeConfig.profileConnectionTestPorts,
             )
             runner = nextRunner
             state = EngineState.Connecting
@@ -588,11 +604,20 @@ internal class SingBoxEngineAdapter(
         EngineStatistics(activeProfiles = activeProfiles)
 
     override fun testConnection(profileId: String): Result<EngineConnectionTest> =
-        Result.failure(
-            UnsupportedOperationException(
-                "Проверка через конкретный outbound будет добавлена в модуле routed diagnostics.",
-            ),
-        )
+        runner?.testProfileConnection(profileId)
+            ?: Result.failure(IllegalStateException("Сетевой контроль сейчас не запущен."))
+
+    private fun reserveLoopbackPorts(count: Int): List<Int> {
+        val reservations = mutableListOf<ServerSocket>()
+        return try {
+            repeat(count) {
+                reservations += ServerSocket(0, 1, InetAddress.getLoopbackAddress())
+            }
+            reservations.map(ServerSocket::getLocalPort)
+        } finally {
+            reservations.forEach { runCatching { it.close() } }
+        }
+    }
 
     override fun maskSecrets(message: String): String = message
         .replace(Regex("(?i)(password|passphrase|private_key|psk|uuid|auth_key|cookie)\\s*[=:]\\s*[^\\s,;]+"), "$1=<redacted>")

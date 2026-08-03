@@ -36,6 +36,8 @@ data class VlessProfileConfig(
     val serviceName: String? = null,
     val xhttpMode: String? = null,
     val xhttpExtra: String? = null,
+    val pinnedPeerCertSha256: String? = null,
+    val verifyPeerCertByName: Boolean? = null,
     val enabled: Boolean = true,
     val status: VlessProfileStatus = VlessProfileStatus.NotTested,
 ) {
@@ -83,6 +85,7 @@ data class VlessProfileConfig(
         if (!serviceName.isNullOrBlank()) appendLine("gRPC service name: ${serviceName}")
         if (!xhttpMode.isNullOrBlank()) appendLine("XHTTP mode: ${xhttpMode}")
         if (!xhttpExtra.isNullOrBlank()) appendLine("XHTTP extra options: provided")
+        if (!pinnedPeerCertSha256.isNullOrBlank()) appendLine("TLS certificate pin: provided")
         append(VLESS_ROUTE_PREVIEW_ONLY)
     }
 }
@@ -177,6 +180,8 @@ fun parseVlessUri(rawUri: String): VlessUriParseResult {
         serviceName = params["servicename"]?.trimToNull(),
         xhttpMode = params["mode"]?.trimToNull(),
         xhttpExtra = params["extra"]?.trimToNull(),
+        pinnedPeerCertSha256 = params["pcs"]?.trimToNull(),
+        verifyPeerCertByName = params["vcn"]?.trimToNull()?.toOptionalBoolean(),
         status = VlessProfileStatus.ConfigReady,
     )
     val validationErrors = validateVlessProfile(profile)
@@ -203,6 +208,8 @@ fun exportVlessUri(profile: VlessProfileConfig): String {
             profile.xhttpMode?.trimToNull()?.let { add("mode" to it) }
             profile.xhttpExtra?.trimToNull()?.let { add("extra" to it) }
         }
+        profile.pinnedPeerCertSha256?.trimToNull()?.let { add("pcs" to it) }
+        profile.verifyPeerCertByName?.let { add("vcn" to it.toString()) }
     }.joinToString("&") { (key, value) -> "${key.percentEncode()}=${value.percentEncode()}" }
     val fragment = profile.name.trimToNull()?.percentEncode()?.let { "#$it" }.orEmpty()
     return buildString {
@@ -249,6 +256,12 @@ private fun String.toVlessSecurityMode(): VlessSecurityMode = VlessSecurityMode.
 } ?: VlessSecurityMode.NONE
 
 private fun String.trimToNull(): String? = trim().takeIf { it.isNotBlank() }
+
+private fun String.toOptionalBoolean(): Boolean? = when (trim().lowercase()) {
+    "1", "true", "yes" -> true
+    "0", "false", "no" -> false
+    else -> null
+}
 
 private fun String.maskUuid(): String {
     val canonical = runCatching { UUID.fromString(trim()).toString() }.getOrElse { return "invalid UUID" }

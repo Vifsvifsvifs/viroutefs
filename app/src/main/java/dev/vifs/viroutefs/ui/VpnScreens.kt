@@ -85,6 +85,7 @@ import dev.vifs.viroutefs.engine.ReadinessItem
 import dev.vifs.viroutefs.engine.ReadinessState
 import dev.vifs.viroutefs.engine.ReleaseReadinessReport
 import dev.vifs.viroutefs.engine.evaluateReleaseReadiness
+import dev.vifs.viroutefs.engine.validateXrayProfile
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigBackup
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
@@ -150,13 +151,17 @@ import dev.vifs.viroutefs.vless.validateVlessProfile
 import dev.vifs.viroutefs.vpn.SingBoxRuntimeValidator
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
+import dev.vifs.viroutefs.vpn.VpnServiceController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.text.DateFormat
 import java.util.Date
 import java.util.UUID
+import org.json.JSONArray
 import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -219,6 +224,60 @@ internal fun VpnScreen(
     }
     var devBridgeSnapshot by remember { mutableStateOf(devTcpBridge.snapshot()) }
     var devBridgeMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    val profileTestController = remember(context) { VpnServiceController(context.applicationContext) }
+    var profileTests by remember { mutableStateOf<Map<String, ProfileTunnelTestReport>>(emptyMap()) }
+
+    fun testProfile(profile: TunnelProfile) {
+        if (profileTests[profile.id]?.running == true) return
+        profileTests = profileTests + (
+            profile.id to ProfileTunnelTestReport(
+                running = true,
+                configuration = "Конфигурация: проверяем…",
+                server = "Сервер: ожидает проверки.",
+                tunnel = "Тоннель: ожидает проверки.",
+            )
+            )
+        scope.launch {
+            val preflight = withContext(Dispatchers.IO) { runProfileConnectionPreflight(profile) }
+            if (!preflight.configurationValid) {
+                profileTests = profileTests + (
+                    profile.id to ProfileTunnelTestReport(
+                        running = false,
+                        configuration = preflight.configuration,
+                        server = "Сервер: не проверялся из-за ошибки конфигурации.",
+                        tunnel = "Тоннель: не запускался.",
+                        configurationSuccessful = false,
+                        tunnelSuccessful = false,
+                    )
+                    )
+                return@launch
+            }
+            profileTests = profileTests + (
+                profile.id to ProfileTunnelTestReport(
+                    running = true,
+                    configuration = preflight.configuration,
+                    server = preflight.server,
+                    tunnel = "Тоннель: выполняется HTTPS-запрос через выбранный профиль…",
+                    configurationSuccessful = true,
+                    serverSuccessful = preflight.serverReachable,
+                )
+                )
+            profileTestController.testProfileConnection(profile.id) { tunnelResult ->
+                val latency = tunnelResult.latencyMillis?.let { " (${it} мс)" }.orEmpty()
+                profileTests = profileTests + (
+                    profile.id to ProfileTunnelTestReport(
+                        running = false,
+                        configuration = preflight.configuration,
+                        server = preflight.server,
+                        tunnel = "Тоннель: ${tunnelResult.summary}$latency",
+                        configurationSuccessful = true,
+                        serverSuccessful = preflight.serverReachable,
+                        tunnelSuccessful = tunnelResult.successful,
+                    )
+                    )
+            }
+        }
+    }
 
     if (showProfileImport) {
         ProfileImportScreen(
@@ -315,9 +374,9 @@ internal fun VpnScreen(
         ) {
             AddVpnTypeSheet(
                 onClose = { showAddVpnSheet = false },
-                onImport = {
+                onImport = { source ->
                     showAddVpnSheet = false
-                    profileImportSource = ""
+                    profileImportSource = source
                     showProfileImport = true
                 },
                 onAddSocks5 = {
@@ -506,6 +565,8 @@ internal fun VpnScreen(
                 text = text,
                 profile = profile,
                 config = config,
+                testReport = profileTests[profile.id],
+                onTest = { testProfile(profile) },
                 onOpen = { selectedProfileId = profile.id },
             )
         }
@@ -1584,12 +1645,14 @@ private fun ProfilesHeader(profileCount: Int, onAdd: () -> Unit) {
 @Composable
 private fun AddVpnTypeSheet(
     onClose: () -> Unit,
-    onImport: () -> Unit,
+    onImport: (String) -> Unit,
     onAddSocks5: () -> Unit,
     onAddVless: () -> Unit,
     onAddSingBox: (TunnelType) -> Unit,
 ) {
+    val clipboard = LocalClipboardManager.current
     var search by rememberSaveable { mutableStateOf("") }
+    var importError by rememberSaveable { mutableStateOf<String?>(null) }
     val protocols = remember(search) {
         val query = search.trim()
         EngineCatalog.selectableProtocols.filter { descriptor ->
@@ -1638,11 +1701,26 @@ private fun AddVpnTypeSheet(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         FilledTonalButton(
-            onClick = onImport,
+            onClick = {
+                val source = clipboard.getText()?.text.orEmpty().trim()
+                if (source.isBlank()) {
+                    importError = "Буфер обмена пуст."
+                } else {
+                    importError = null
+                    onImport(source)
+                }
+            },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text("Импортировать ссылку, JSON или файл")
+            Text("Вставить из буфера и распознать")
         }
+        OutlinedButton(
+            onClick = { onImport("") },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Другой способ импорта")
+        }
+        importError?.let { WarningText(it) }
         protocols.forEach { protocol ->
             ProtocolCatalogRow(
                 protocol = protocol,
@@ -1809,8 +1887,143 @@ private fun CounterLine(label: String, value: Long) = Row(
     Text(value.toString(), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
 }
 
+private data class ProfileTunnelTestReport(
+    val running: Boolean,
+    val configuration: String,
+    val server: String,
+    val tunnel: String,
+    val configurationSuccessful: Boolean? = null,
+    val serverSuccessful: Boolean? = null,
+    val tunnelSuccessful: Boolean? = null,
+)
+
+private data class ProfileConnectionPreflight(
+    val configurationValid: Boolean,
+    val configuration: String,
+    val server: String,
+    val serverReachable: Boolean?,
+)
+
+private data class ProfileServerEndpoint(
+    val host: String,
+    val port: Int,
+)
+
+private fun runProfileConnectionPreflight(profile: TunnelProfile): ProfileConnectionPreflight {
+    val validationErrors = when (profile.type) {
+        TunnelType.Socks5 -> profile.socks5?.let(::validateSocks5Profile)
+            ?: listOf("Отсутствуют параметры SOCKS5.")
+        TunnelType.VLESS -> profile.vless?.let(::validateVlessProfile)
+            ?: listOf("Отсутствуют параметры VLESS.")
+        TunnelType.XrayVlessReality -> validateXrayProfile(profile)
+        else -> profile.singBox?.let { validateSingBoxProfile(profile.type, it) }
+            ?: listOf("Профиль не содержит конфигурацию рабочего движка.")
+    }
+    if (validationErrors.isNotEmpty()) {
+        return ProfileConnectionPreflight(
+            configurationValid = false,
+            configuration = "Конфигурация: ${validationErrors.joinToString(" ").take(500)}",
+            server = "Сервер: не проверялся.",
+            serverReachable = null,
+        )
+    }
+
+    val configurationLine = if (profile.enabled) {
+        "Конфигурация: корректна, профиль включён."
+    } else {
+        "Конфигурация: корректна, но профиль выключен."
+    }
+    val endpoint = profile.serverEndpoint()
+        ?: return ProfileConnectionPreflight(
+            configurationValid = true,
+            configuration = configurationLine,
+            server = "Сервер: отдельный адрес скрыт внутри формата профиля; его проверит движок.",
+            serverReachable = null,
+        )
+    if (profile.usesUdpTransport()) {
+        return ProfileConnectionPreflight(
+            configurationValid = true,
+            configuration = configurationLine,
+            server = "Сервер: ${endpoint.host}:${endpoint.port}; для UDP отдельная TCP-проверка неприменима.",
+            serverReachable = null,
+        )
+    }
+
+    val startedAt = System.nanoTime()
+    return runCatching {
+        Socket().use { socket ->
+            socket.connect(
+                InetSocketAddress(endpoint.host, endpoint.port),
+                PROFILE_SERVER_CONNECT_TIMEOUT_MS,
+            )
+        }
+        val latency = (System.nanoTime() - startedAt) / 1_000_000L
+        ProfileConnectionPreflight(
+            configurationValid = true,
+            configuration = configurationLine,
+            server = "Сервер: ${endpoint.host}:${endpoint.port} доступен по TCP (${latency} мс).",
+            serverReachable = true,
+        )
+    }.getOrElse { error ->
+        ProfileConnectionPreflight(
+            configurationValid = true,
+            configuration = configurationLine,
+            server = "Сервер: ${endpoint.host}:${endpoint.port} не ответил по TCP: " +
+                (error.localizedMessage ?: error::class.java.simpleName).take(240),
+            serverReachable = false,
+        )
+    }
+}
+
+private fun TunnelProfile.serverEndpoint(): ProfileServerEndpoint? {
+    socks5?.let { return ProfileServerEndpoint(it.host.trim(), it.port) }
+    vless?.let { return ProfileServerEndpoint(it.host.trim(), it.port) }
+    val root = singBox?.optionsJson?.let { runCatching { JSONObject(it) }.getOrNull() } ?: return null
+    return root.findServerEndpoint()
+}
+
+private fun Any?.findServerEndpoint(): ProfileServerEndpoint? = when (this) {
+    is JSONObject -> {
+        val host = optString("server").takeIf(String::isNotBlank)
+            ?: optString("address").takeIf(String::isNotBlank)
+        val port = when {
+            optInt("server_port") in 1..65535 -> optInt("server_port")
+            optInt("port") in 1..65535 -> optInt("port")
+            else -> 0
+        }
+        if (host != null && port > 0) {
+            ProfileServerEndpoint(host, port)
+        } else {
+            keys().asSequence().mapNotNull { key -> opt(key).findServerEndpoint() }.firstOrNull()
+        }
+    }
+    is JSONArray -> (0 until length()).asSequence()
+        .mapNotNull { index -> opt(index).findServerEndpoint() }
+        .firstOrNull()
+    else -> null
+}
+
+private fun TunnelProfile.usesUdpTransport(): Boolean = type in setOf(
+    TunnelType.WireGuard,
+    TunnelType.Hysteria,
+    TunnelType.Hysteria2,
+    TunnelType.Tuic,
+    TunnelType.Ikev2IpSec,
+    TunnelType.IpSecXAuth,
+    TunnelType.IpSecPsk,
+)
+
+private const val PROFILE_SERVER_CONNECT_TIMEOUT_MS = 4_000
+
 @Composable
-private fun CompactNetworkProfileCard(text: UiText, profile: TunnelProfile, config: RoutingConfig, onOpen: () -> Unit) {
+private fun CompactNetworkProfileCard(
+    text: UiText,
+    profile: TunnelProfile,
+    config: RoutingConfig,
+    testReport: ProfileTunnelTestReport?,
+    onTest: () -> Unit,
+    onOpen: () -> Unit,
+) {
     val routeCount = config.rules.count { it.targetProfileId == profile.id && it.type != RouteRuleType.DEFAULT }
     val context = LocalContext.current
     val historyStore = remember(context) { Socks5TestHistoryStore(context) }
@@ -1843,6 +2056,36 @@ private fun CompactNetworkProfileCard(text: UiText, profile: TunnelProfile, conf
                 } ?: profile.socks5?.let { Text(it.status.safeLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
             StatusChip(if (profile.enabled) text.on else text.off)
+        }
+        OutlinedButton(
+            onClick = onTest,
+            enabled = testReport?.running != true,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (testReport?.running == true) "Проверяем…" else "Проверить тоннель")
+        }
+        testReport?.let { report ->
+            @Composable
+            fun resultColor(successful: Boolean?): Color = when (successful) {
+                true -> Color(0xFF1B7F46)
+                false -> MaterialTheme.colorScheme.error
+                null -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            Text(
+                report.configuration,
+                style = MaterialTheme.typography.labelSmall,
+                color = resultColor(report.configurationSuccessful),
+            )
+            Text(
+                report.server,
+                style = MaterialTheme.typography.labelSmall,
+                color = resultColor(report.serverSuccessful),
+            )
+            Text(
+                report.tunnel,
+                style = MaterialTheme.typography.labelSmall,
+                color = resultColor(report.tunnelSuccessful),
+            )
         }
     }
 }
@@ -2495,6 +2738,12 @@ private fun VlessProfileEditorScreen(
     var serviceName by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.serviceName.orEmpty()) }
     var xhttpMode by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.xhttpMode.orEmpty()) }
     var xhttpExtra by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.xhttpExtra.orEmpty()) }
+    var pinnedPeerCertSha256 by rememberSaveable(profile?.id ?: "new-vless") {
+        mutableStateOf(vless?.pinnedPeerCertSha256.orEmpty())
+    }
+    var verifyPeerCertByName by rememberSaveable(profile?.id ?: "new-vless") {
+        mutableStateOf(vless?.verifyPeerCertByName)
+    }
     var enabled by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.enabled ?: profile?.enabled ?: true) }
     var dnsPolicyId by rememberSaveable(profile?.id ?: "new-vless-dns") {
         mutableStateOf(profile?.dnsPolicyId ?: RoutingConfigDefaults.SYSTEM_DNS_ID)
@@ -2530,6 +2779,8 @@ private fun VlessProfileEditorScreen(
         serviceName = serviceName.trim().takeIf { it.isNotBlank() },
         xhttpMode = xhttpMode.trim().takeIf { it.isNotBlank() },
         xhttpExtra = xhttpExtra.trim().takeIf { it.isNotBlank() },
+        pinnedPeerCertSha256 = pinnedPeerCertSha256.trim().takeIf { it.isNotBlank() },
+        verifyPeerCertByName = verifyPeerCertByName,
         enabled = enabled,
         status = nextStatus,
     )
@@ -2560,6 +2811,8 @@ private fun VlessProfileEditorScreen(
         serviceName = parsed.serviceName.orEmpty()
         xhttpMode = parsed.xhttpMode.orEmpty()
         xhttpExtra = parsed.xhttpExtra.orEmpty()
+        pinnedPeerCertSha256 = parsed.pinnedPeerCertSha256.orEmpty()
+        verifyPeerCertByName = parsed.verifyPeerCertByName
         pendingImport = null
         importPreview = parsed.maskedPreview()
         exportUri = null

@@ -33,6 +33,64 @@ import kotlin.test.assertTrue
 
 class SingBoxRoutingConfigTest {
     @Test
+    fun activeProfileGetsAnIsolatedLocalConnectionTestInbound() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val profile = socksProfile("connection-test", 1080)
+        val compiled = SingBoxRoutingConfigCompiler(
+            connectionTestPorts = mapOf(profile.id to 28123),
+        ).compile(
+            base.copy(
+                profiles = base.profiles + profile,
+                defaultProfileId = profile.id,
+            ),
+        )
+        val root = JSONObject(compiled.json)
+        val inbounds = root.getJSONArray("inbounds")
+        val testInbound = (0 until inbounds.length())
+            .map(inbounds::getJSONObject)
+            .first { it.optString("tag") == runtimeProfileConnectionTestInboundTag(profile.id) }
+        val rules = root.getJSONObject("route").getJSONArray("rules")
+        val testRule = (0 until rules.length())
+            .map(rules::getJSONObject)
+            .first {
+                it.optJSONArray("inbound")?.optString(0) ==
+                    runtimeProfileConnectionTestInboundTag(profile.id)
+            }
+
+        assertEquals("mixed", testInbound.getString("type"))
+        assertEquals("127.0.0.1", testInbound.getString("listen"))
+        assertEquals(28123, testInbound.getInt("listen_port"))
+        assertEquals(runtimeProfileTag(profile.id), testRule.getString("outbound"))
+        assertEquals(28123, compiled.profileConnectionTestPorts.getValue(profile.id))
+        assertFalse(
+            compiled.profileConnectionTestPorts.containsKey(RoutingConfigDefaults.SYSTEM_PROFILE_ID),
+        )
+    }
+
+    @Test
+    fun emergencyBlockDoesNotExposeAConnectionTestBypass() {
+        val base = RoutingConfigDefaults.defaultConfig()
+        val profile = socksProfile("blocked-connection-test", 1080)
+        val compiled = SingBoxRoutingConfigCompiler(
+            connectionTestPorts = mapOf(profile.id to 28124),
+        ).compile(
+            base.copy(
+                profiles = base.profiles + profile,
+                defaultProfileId = profile.id,
+                emergencyBlockEnabled = true,
+            ),
+        )
+        val inbounds = JSONObject(compiled.json).getJSONArray("inbounds")
+
+        assertTrue(compiled.profileConnectionTestPorts.isEmpty())
+        assertTrue(
+            (0 until inbounds.length())
+                .map(inbounds::getJSONObject)
+                .none { it.optString("tag") == runtimeProfileConnectionTestInboundTag(profile.id) },
+        )
+    }
+
+    @Test
     fun manualGroupCompilesToExplicitSelectorAndRoutesThroughGroupTag() {
         val base = RoutingConfigDefaults.defaultConfig()
         val first = socksProfile("group-first", 1081)

@@ -36,6 +36,7 @@ internal data class SingBoxCompiledRuntime(
     val warnings: List<String>,
     val runtimeProfileIds: Set<String>,
     val profileTags: Map<String, String>,
+    val profileConnectionTestPorts: Map<String, Int>,
 )
 
 /**
@@ -48,6 +49,7 @@ internal data class SingBoxCompiledRuntime(
 internal class SingBoxRoutingConfigCompiler(
     private val byeDpiPort: Int? = null,
     private val xrayEndpoints: Map<String, LocalEngineEndpoint> = emptyMap(),
+    private val connectionTestPorts: Map<String, Int> = emptyMap(),
 ) {
     fun compile(config: RoutingConfig): SingBoxCompiledRuntime {
         val warnings = mutableListOf<String>()
@@ -163,7 +165,35 @@ internal class SingBoxRoutingConfigCompiler(
             }
         }
 
+        val connectionTestInbounds = mutableListOf<JSONObject>()
+        val activeConnectionTestPorts = linkedMapOf<String, Int>()
+        if (!config.emergencyBlockEnabled) {
+            config.profiles
+                .filter { profile ->
+                    profile.id in profileTags &&
+                        profile.type !in setOf(TunnelType.Direct, TunnelType.Block, TunnelType.ByeDpi)
+                }
+                .forEach { profile ->
+                    val port = connectionTestPorts[profile.id] ?: return@forEach
+                    require(port in 1..65535) { "Connection-test port for '${profile.name}' is invalid." }
+                    connectionTestInbounds += JSONObject()
+                        .put("type", "mixed")
+                        .put("tag", runtimeProfileConnectionTestInboundTag(profile.id))
+                        .put("listen", "127.0.0.1")
+                        .put("listen_port", port)
+                    activeConnectionTestPorts[profile.id] = port
+                }
+        }
+
         val routeRules = JSONArray()
+        activeConnectionTestPorts.forEach { (profileId, _) ->
+            routeRules.put(
+                JSONObject()
+                    .put("inbound", JSONArray().put(runtimeProfileConnectionTestInboundTag(profileId)))
+                    .put("action", "route")
+                    .put("outbound", profileTags.getValue(profileId)),
+            )
+        }
         if (config.emergencyBlockEnabled) {
             warnings += "Emergency network block is enabled; all supported device flows are routed to Block."
             routeRules.put(
@@ -216,21 +246,23 @@ internal class SingBoxRoutingConfigCompiler(
             .put("dns", dnsResult.options)
             .put(
                 "inbounds",
-                JSONArray().put(
-                    JSONObject()
-                        .put("type", "tun")
-                        .put("tag", SING_BOX_TUN_TAG)
-                        .put(
-                            "address",
-                            JSONArray()
-                                .put("172.19.0.1/30")
-                                .put("fdfe:dcba:9876::1/126"),
-                        )
-                        .put("mtu", 1500)
-                        .put("auto_route", true)
-                        .put("strict_route", true)
-                        .put("stack", "mixed"),
-                ),
+                JSONArray()
+                    .put(
+                        JSONObject()
+                            .put("type", "tun")
+                            .put("tag", SING_BOX_TUN_TAG)
+                            .put(
+                                "address",
+                                JSONArray()
+                                    .put("172.19.0.1/30")
+                                    .put("fdfe:dcba:9876::1/126"),
+                            )
+                            .put("mtu", 1500)
+                            .put("auto_route", true)
+                            .put("strict_route", true)
+                            .put("stack", "mixed"),
+                    )
+                    .apply { connectionTestInbounds.forEach { inbound -> put(inbound) } },
             )
             .put("endpoints", JSONArray(endpoints))
             .put("outbounds", JSONArray(outbounds))
@@ -249,6 +281,7 @@ internal class SingBoxRoutingConfigCompiler(
             warnings = warnings.distinct(),
             runtimeProfileIds = runtimeProfileIds,
             profileTags = profileTags,
+            profileConnectionTestPorts = activeConnectionTestPorts,
         )
     }
 
@@ -820,6 +853,9 @@ internal fun runtimeProfileTag(id: String): String = when (id) {
 
 internal fun runtimeProfileGroupHealthTag(id: String): String =
     "${runtimeProfileTag(id)}_health"
+
+internal fun runtimeProfileConnectionTestInboundTag(id: String): String =
+    "${runtimeProfileTag(id)}_connection_test_in"
 
 private fun safeRuntimeTagPart(value: String): String = value
     .lowercase(Locale.ROOT)

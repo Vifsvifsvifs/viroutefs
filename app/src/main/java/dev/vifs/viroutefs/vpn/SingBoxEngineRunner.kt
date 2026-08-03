@@ -53,15 +53,19 @@ import io.nekohasekai.libbox.SystemProxyStatus
 import io.nekohasekai.libbox.TunOptions
 import io.nekohasekai.libbox.WIFIState
 import dev.vifs.viroutefs.engine.SingBoxRoutingConfigCompiler
+import dev.vifs.viroutefs.engine.EngineConnectionTest
 import dev.vifs.viroutefs.routing.RoutingConfig
 import java.net.Inet6Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
+import java.net.Proxy
+import java.net.URL
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.net.ssl.HttpsURLConnection
 import io.nekohasekai.libbox.NetworkInterface as BoxNetworkInterface
 
 /**
@@ -80,6 +84,7 @@ internal class SingBoxEngineRunner(
     private val onProfileGroupAction: (ProfileGroupRuntimeAction) -> Unit = {},
     private val dnsFallbackPolicyNames: List<String> = emptyList(),
     private val onDnsFallback: (List<String>) -> Unit = {},
+    private val profileConnectionTestPorts: Map<String, Int> = emptyMap(),
 ) : PlatformInterface, CommandServerHandler {
     private val appContext = service.applicationContext
     private val connectivity =
@@ -143,6 +148,36 @@ internal class SingBoxEngineRunner(
         onConnections(emptyList())
     }
 
+    fun testProfileConnection(profileId: String): Result<EngineConnectionTest> = runCatching {
+        check(isRunning()) { "Сетевой контроль сейчас не запущен." }
+        val port = requireNotNull(profileConnectionTestPorts[profileId]) {
+            "Профиль не участвует в запущенном маршруте. Включите профиль и назначьте его правилу или основному маршруту."
+        }
+        val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(LOOPBACK_HOST, port))
+        val startedAt = System.nanoTime()
+        val connection = URL(PROFILE_CONNECTION_TEST_URL).openConnection(proxy) as HttpsURLConnection
+        try {
+            connection.connectTimeout = PROFILE_TEST_TIMEOUT_MILLIS
+            connection.readTimeout = PROFILE_TEST_TIMEOUT_MILLIS
+            connection.instanceFollowRedirects = false
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("Accept", "*/*")
+            connection.setRequestProperty("Connection", "close")
+            val status = connection.responseCode
+            check(status == HttpsURLConnection.HTTP_NO_CONTENT) {
+                "HTTPS-проверка через выбранный профиль вернула неожиданный код $status вместо 204."
+            }
+        } finally {
+            connection.disconnect()
+        }
+        val latency = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt).coerceAtLeast(1L)
+        EngineConnectionTest(
+            successful = true,
+            summary = "HTTPS-запрос прошёл именно через выбранный профиль.",
+            latencyMillis = latency,
+        )
+    }
+
     override fun serviceStop() {
         running.set(false)
         closeTun()
@@ -175,7 +210,9 @@ internal class SingBoxEngineRunner(
     private fun startConnectionMonitor() {
         val options = CommandClientOptions().apply {
             addCommand(Libbox.CommandConnections)
-            if (managedProfileGroups.isNotEmpty()) addCommand(Libbox.CommandOutbounds)
+            if (managedProfileGroups.isNotEmpty()) {
+                addCommand(Libbox.CommandOutbounds)
+            }
             if (dnsFallbackPolicyNames.isNotEmpty()) addCommand(Libbox.CommandLog)
         }
         val client = CommandClient(ConnectionClientHandler(), options)
@@ -244,7 +281,13 @@ internal class SingBoxEngineRunner(
         override fun writeGroups(message: OutboundGroupIterator?) = Unit
 
         override fun writeOutbounds(message: OutboundGroupItemIterator?) {
-            synchronized(lock) { profileGroupController }?.updateOutbounds(message)
+            if (message == null) return
+            val delays = linkedMapOf<String, Int>()
+            while (message.hasNext()) {
+                val item = message.next()
+                delays[item.tag] = item.urlTestDelay
+            }
+            synchronized(lock) { profileGroupController }?.updateOutbounds(delays)
         }
 
         override fun writeLogs(messageList: LogIterator?) {
@@ -728,6 +771,9 @@ internal class SingBoxEngineRunner(
         const val MAX_MTU = 9000
         const val MAX_LOG_LENGTH = 600
         const val MAX_FLOW_HISTORY = 250
+        const val PROFILE_TEST_TIMEOUT_MILLIS = 20_000
+        const val PROFILE_CONNECTION_TEST_URL = "https://www.gstatic.com/generate_204"
+        const val LOOPBACK_HOST = "127.0.0.1"
         const val DNS_EVALUATE_FAILURE_MARKER = "exchange failed for"
         const val DNS_TIMEOUT_SECONDS = 30L
         const val DNS_RCODE_SERVER_FAILURE = 2
