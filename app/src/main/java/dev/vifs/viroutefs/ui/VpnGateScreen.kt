@@ -2,6 +2,8 @@
 
 package dev.vifs.viroutefs.ui
 
+import android.content.Context
+import android.telephony.TelephonyManager
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -39,9 +41,11 @@ import dev.vifs.viroutefs.routing.VpnGateCatalogClient
 import dev.vifs.viroutefs.routing.VpnGateCatalogSnapshot
 import dev.vifs.viroutefs.routing.VpnGateServer
 import dev.vifs.viroutefs.routing.applyProfileImport
+import dev.vifs.viroutefs.routing.createAutomaticVpnGateRoute
 import dev.vifs.viroutefs.routing.previewVpnGateProfile
 import java.text.DateFormat
 import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -63,6 +67,10 @@ internal fun VpnGateScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var country by rememberSaveable { mutableStateOf("") }
     var sort by rememberSaveable { mutableStateOf(VPN_GATE_SORT_PING) }
+    var selectionMode by rememberSaveable { mutableStateOf(VPN_GATE_MODE_MANUAL) }
+    var homeCountryCode by rememberSaveable {
+        mutableStateOf(detectDeviceCountryCode(context))
+    }
 
     LaunchedEffect(client) {
         snapshot = withContext(Dispatchers.IO) { client.loadCached() }
@@ -126,6 +134,16 @@ internal fun VpnGateScreen(
             .take(MAX_VISIBLE_VPN_GATE_SERVERS)
             .toList()
     }
+    val automaticCandidates = remember(snapshot, homeCountryCode) {
+        val excluded = homeCountryCode.trim().uppercase()
+        snapshot?.servers.orEmpty()
+            .asSequence()
+            .filter { it.countryCode.length == 2 && it.countryCode != excluded }
+            .filter { (it.pingMillis ?: 0) > 0 }
+            .sortedWith(compareBy<VpnGateServer> { it.pingMillis ?: Int.MAX_VALUE }.thenByDescending { it.score })
+            .take(4)
+            .toList()
+    }
 
     ScreenList(padding) {
         item {
@@ -173,7 +191,103 @@ internal fun VpnGateScreen(
                 message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
         }
-        if (snapshot != null) {
+        item {
+            CardBlock {
+                Text("Как выбирать VPNGate", fontWeight = FontWeight.SemiBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = selectionMode == VPN_GATE_MODE_MANUAL,
+                        onClick = { selectionMode = VPN_GATE_MODE_MANUAL },
+                        label = { Text("Выбрать самому") },
+                    )
+                    FilterChip(
+                        selected = selectionMode == VPN_GATE_MODE_AUTOMATIC,
+                        onClick = { selectionMode = VPN_GATE_MODE_AUTOMATIC },
+                        label = { Text("Автоматически") },
+                    )
+                }
+                Text(
+                    if (selectionMode == VPN_GATE_MODE_MANUAL) {
+                        "Вы видите полный список и добавляете один выключенный профиль вручную."
+                    } else {
+                        "ViRouteFS исключит вашу страну, подготовит четыре сервера с наименьшим пингом и будет проверять их через реальное HTTPS-соединение каждые 60 секунд."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+        if (selectionMode == VPN_GATE_MODE_AUTOMATIC) {
+            item {
+                CardBlock {
+                    Text("Автоматический маршрут", fontWeight = FontWeight.SemiBold)
+                    OutlinedTextField(
+                        value = homeCountryCode,
+                        onValueChange = { value ->
+                            homeCountryCode = value.filter(Char::isLetter).take(2).uppercase()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Не выбирать серверы в моей стране") },
+                        supportingText = { Text("Двухбуквенный код, например RU, KZ или DE") },
+                        singleLine = true,
+                    )
+                    if (automaticCandidates.isNotEmpty()) {
+                        Text(
+                            "Предварительный выбор: " + automaticCandidates.joinToString { server ->
+                                "${server.countryCode} ${server.pingMillis} мс"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    } else {
+                        Text(
+                            if (snapshot == null) {
+                                "Сначала загрузите каталог VPNGate кнопкой выше."
+                            } else {
+                                "Для этого кода страны пока не найдено достаточно серверов с указанным пингом."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Text(
+                        "После подтверждения профили будут включены, группа станет основным маршрутом, а System не будет добавлен как скрытый резерв. При падении сервера новые соединения пойдут через другой доступный сервер с малой задержкой.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Button(
+                        enabled = snapshot != null && homeCountryCode.matches(Regex("[A-Z]{2}")) && importKey == null,
+                        onClick = {
+                            val loaded = snapshot ?: return@Button
+                            importKey = VPN_GATE_AUTOMATIC_IMPORT_KEY
+                            message = null
+                            scope.launch {
+                                runCatching {
+                                    withContext(Dispatchers.Default) {
+                                        createAutomaticVpnGateRoute(
+                                            config = config,
+                                            servers = loaded.servers,
+                                            excludedCountryCode = homeCountryCode,
+                                        )
+                                    }
+                                }.onSuccess { result ->
+                                    onConfig(
+                                        result.config,
+                                        "Автоматический VPNGate включён: ${result.selectedServers.size} сервера из других стран. Основным маршрутом стала группа минимальной задержки.",
+                                    )
+                                    message = "Автоматический маршрут создан: " + result.selectedServers.joinToString { server ->
+                                        "${server.countryCode} ${server.pingMillis} мс"
+                                    }
+                                }.onFailure { error ->
+                                    message = "Автоматический маршрут не создан: ${error.localizedMessage ?: "неподходящий каталог"}."
+                                }
+                                importKey = null
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(if (importKey == VPN_GATE_AUTOMATIC_IMPORT_KEY) "Подготавливаем…" else "Создать и использовать автоматически")
+                    }
+                }
+            }
+        }
+        if (snapshot != null && selectionMode == VPN_GATE_MODE_MANUAL) {
             item {
                 CardBlock {
                     OutlinedTextField(
@@ -262,6 +376,17 @@ internal fun VpnGateScreen(
     }
 }
 
+private fun detectDeviceCountryCode(context: Context): String {
+    val telephony = context.getSystemService(TelephonyManager::class.java)
+    return listOf(
+        runCatching { telephony?.networkCountryIso }.getOrNull(),
+        runCatching { telephony?.simCountryIso }.getOrNull(),
+        Locale.getDefault().country,
+    ).firstOrNull { value -> value?.matches(Regex("[A-Za-z]{2}")) == true }
+        ?.uppercase()
+        .orEmpty()
+}
+
 @Composable
 private fun VpnGateServerCard(
     server: VpnGateServer,
@@ -306,4 +431,7 @@ private fun formatVpnGateSpeed(bitsPerSecond: Long): String = when {
 
 private const val VPN_GATE_SORT_PING = "ping"
 private const val VPN_GATE_SORT_SPEED = "speed"
+private const val VPN_GATE_MODE_MANUAL = "manual"
+private const val VPN_GATE_MODE_AUTOMATIC = "automatic"
+private const val VPN_GATE_AUTOMATIC_IMPORT_KEY = "vpngate:auto"
 private const val MAX_VISIBLE_VPN_GATE_SERVERS = 100

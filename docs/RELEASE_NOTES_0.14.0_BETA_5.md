@@ -8,6 +8,13 @@
   uptime, operator and the server's advertised log-retention type.
 * Search, country filters, ping/speed sorting and a bounded local cache keep the
   catalog usable without adding background activity or telemetry.
+* Added two explicit selection modes. Manual mode imports one disabled server.
+  Automatic mode excludes the locally detected/editable home-country code,
+  prepares four low-ping foreign servers, enables them, and makes their
+  existing sing-box URL-test group the default route.
+* The automatic group performs real HTTPS health and delay checks every 60
+  seconds. New connections use the available member with the lowest current
+  delay; `System` is never added as an implicit fallback.
 * A selected server is converted by the existing conservative `.ovpn` importer.
   Unknown directives and external commands are never executed, and every new
   VPNGate profile stays disabled until the user reviews and enables it.

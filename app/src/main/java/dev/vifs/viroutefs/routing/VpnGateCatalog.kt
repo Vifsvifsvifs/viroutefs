@@ -30,6 +30,12 @@ data class VpnGateServer(
         get() = "$hostName|$ipAddress"
 }
 
+data class VpnGateAutomaticRouteResult(
+    val config: RoutingConfig,
+    val selectedServers: List<VpnGateServer>,
+    val rejectedProfiles: Int,
+)
+
 fun parseVpnGateCatalog(source: String, maxServers: Int = MAX_VPN_GATE_SERVERS): List<VpnGateServer> {
     require(source.toByteArray(StandardCharsets.UTF_8).size <= MAX_VPN_GATE_CATALOG_BYTES) {
         "Каталог VPNGate превышает безопасный размер."
@@ -142,6 +148,103 @@ fun previewVpnGateProfile(server: VpnGateServer): ProfileImportPreview {
     )
 }
 
+fun createAutomaticVpnGateRoute(
+    config: RoutingConfig,
+    servers: List<VpnGateServer>,
+    excludedCountryCode: String,
+    memberLimit: Int = VPN_GATE_AUTOMATIC_MEMBER_LIMIT,
+): VpnGateAutomaticRouteResult {
+    val countryCode = excludedCountryCode.trim().uppercase()
+    require(countryCode.matches(Regex("[A-Z]{2}"))) {
+        "Укажите двухбуквенный код своей страны, чтобы она не попала в автоматический выбор."
+    }
+    require(memberLimit in 2..VPN_GATE_AUTOMATIC_MEMBER_LIMIT) {
+        "Для автоматического VPNGate нужно от 2 до $VPN_GATE_AUTOMATIC_MEMBER_LIMIT серверов."
+    }
+
+    val candidates = servers
+        .asSequence()
+        .filter { it.countryCode.length == 2 && it.countryCode != countryCode }
+        .filter { (it.pingMillis ?: 0) > 0 }
+        .sortedWith(
+            compareBy<VpnGateServer> { it.pingMillis ?: Int.MAX_VALUE }
+                .thenByDescending { it.score }
+                .thenBy { it.stableKey },
+        )
+        .take(VPN_GATE_AUTOMATIC_IMPORT_ATTEMPTS)
+        .toList()
+
+    var rejected = 0
+    val selected = mutableListOf<Pair<VpnGateServer, TunnelProfile>>()
+    candidates.forEach { server ->
+        if (selected.size >= memberLimit) return@forEach
+        runCatching { previewVpnGateProfile(server).candidates.single().profile }
+            .onSuccess { imported ->
+                val profileId = automaticVpnGateProfileId(server)
+                val existing = config.profiles.firstOrNull { it.id == profileId }
+                selected += server to imported.copy(
+                    id = profileId,
+                    enabled = true,
+                    sourceSubscriptionId = VPN_GATE_AUTOMATIC_SOURCE_ID,
+                    sourceEntryKey = server.stableKey,
+                    dnsPolicyId = existing?.dnsPolicyId,
+                    appRoutingMode = existing?.appRoutingMode ?: ProfileAppRoutingMode.SelectedApps,
+                    appRoutingPackages = existing?.appRoutingPackages.orEmpty(),
+                    appRoutingNetworks = existing?.appRoutingNetworks.orEmpty(),
+                )
+            }
+            .onFailure { rejected += 1 }
+    }
+    require(selected.size >= 2) {
+        "Не удалось подготовить хотя бы два исправных VPNGate-профиля из других стран. Обновите каталог или выберите сервер вручную."
+    }
+
+    val oldAutomaticIds = config.profiles
+        .filter { it.sourceSubscriptionId == VPN_GATE_AUTOMATIC_SOURCE_ID }
+        .mapTo(linkedSetOf(), TunnelProfile::id)
+    val protectedOldIds = buildSet {
+        config.rules
+            .filter { it.type != RouteRuleType.DEFAULT && it.targetProfileId in oldAutomaticIds }
+            .mapTo(this) { it.targetProfileId }
+        config.dnsPolicies.mapNotNullTo(this) { it.resolveThroughProfileId?.takeIf(oldAutomaticIds::contains) }
+        config.profileGroups
+            .filterNot { it.id == VPN_GATE_AUTOMATIC_GROUP_ID }
+            .flatMapTo(this) { it.memberProfileIds.filter(oldAutomaticIds::contains) }
+    }
+    val selectedIds = selected.mapTo(linkedSetOf()) { it.second.id }
+    val retainedProfiles = config.profiles.filterNot { profile ->
+        profile.id in selectedIds ||
+            (profile.id in oldAutomaticIds && profile.id !in protectedOldIds)
+    }
+    val group = ProfileGroup(
+        id = VPN_GATE_AUTOMATIC_GROUP_ID,
+        name = "VPNGate • автоматический выбор",
+        mode = ProfileGroupMode.Latency,
+        memberProfileIds = selected.map { it.second.id },
+        selectedProfileId = selected.first().second.id,
+        testUrl = VPN_GATE_AUTOMATIC_TEST_URL,
+        testIntervalSeconds = 60,
+        toleranceMs = 35,
+        enabled = true,
+    )
+    val next = config.copy(
+        profiles = retainedProfiles + selected.map { it.second },
+        profileGroups = config.profileGroups.filterNot { it.id == VPN_GATE_AUTOMATIC_GROUP_ID } + group,
+    ).withDefaultRoute(group.id)
+    return VpnGateAutomaticRouteResult(
+        config = next,
+        selectedServers = selected.map { it.first },
+        rejectedProfiles = rejected,
+    )
+}
+
+private fun automaticVpnGateProfileId(server: VpnGateServer): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(server.stableKey.toByteArray(StandardCharsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+    return "profile_vpngate_auto_${digest.take(20)}"
+}
+
 private fun parseCsvRow(line: String): List<String> {
     val values = mutableListOf<String>()
     val current = StringBuilder()
@@ -177,3 +280,8 @@ private const val MAX_VPN_GATE_CONFIG_BYTES = 256 * 1024
 private const val MAX_VPN_GATE_CONFIG_BASE64_CHARS = 512 * 1024
 private const val MAX_VPN_GATE_TEXT_LENGTH = 160
 private const val MAX_VPN_GATE_LONG_TEXT_LENGTH = 512
+private const val VPN_GATE_AUTOMATIC_MEMBER_LIMIT = 4
+private const val VPN_GATE_AUTOMATIC_IMPORT_ATTEMPTS = 32
+private const val VPN_GATE_AUTOMATIC_SOURCE_ID = "vpngate:auto"
+const val VPN_GATE_AUTOMATIC_GROUP_ID = "group_vpngate_auto"
+private const val VPN_GATE_AUTOMATIC_TEST_URL = "https://www.gstatic.com/generate_204"

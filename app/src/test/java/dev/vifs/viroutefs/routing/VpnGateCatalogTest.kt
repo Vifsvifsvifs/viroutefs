@@ -81,4 +81,61 @@ class VpnGateCatalogTest {
             ),
         )
     }
+
+    @Test
+    fun automaticRouteExcludesHomeCountryAndBuildsLatencyFailoverGroup() {
+        val servers = listOf(
+            server("ru-fast", "RU", 4),
+            server("jp-fast", "JP", 12),
+            server("de-fast", "DE", 18),
+            server("us-fast", "US", 25),
+            server("nl-fast", "NL", 30),
+            server("fr-slow", "FR", 90),
+        )
+
+        val result = createAutomaticVpnGateRoute(
+            config = RoutingConfigDefaults.defaultConfig(),
+            servers = servers,
+            excludedCountryCode = "ru",
+        )
+        val group = result.config.profileGroups.single { it.id == VPN_GATE_AUTOMATIC_GROUP_ID }
+        val selectedProfiles = result.config.profiles.filter { it.id in group.memberProfileIds }
+
+        assertEquals(listOf("JP", "DE", "US", "NL"), result.selectedServers.map { it.countryCode })
+        assertEquals(ProfileGroupMode.Latency, group.mode)
+        assertEquals(group.id, result.config.defaultProfileId)
+        assertEquals(4, selectedProfiles.size)
+        assertTrue(selectedProfiles.all(TunnelProfile::enabled))
+        assertTrue(selectedProfiles.none { it.name.contains("RU") })
+    }
+
+    private fun server(host: String, country: String, ping: Int): VpnGateServer {
+        val config = """
+            client
+            dev tun
+            proto tcp
+            remote $host.example 443
+            <ca>
+            -----BEGIN CERTIFICATE-----
+            test-$host
+            -----END CERTIFICATE-----
+            </ca>
+        """.trimIndent()
+        return VpnGateServer(
+            hostName = host,
+            ipAddress = "203.0.113.$ping",
+            score = 1_000L - ping,
+            pingMillis = ping,
+            speedBitsPerSecond = 100_000_000L,
+            countryName = country,
+            countryCode = country,
+            activeSessions = 1,
+            uptimeMillis = 86_400_000L,
+            totalUsers = 10,
+            logType = "2weeks",
+            operator = "test",
+            message = "",
+            openVpnConfigBase64 = Base64.getEncoder().encodeToString(config.toByteArray()),
+        )
+    }
 }
