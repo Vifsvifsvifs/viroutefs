@@ -18,7 +18,7 @@ class XrayRoutingConfigTest {
     fun xhttpProfileCompilesToAnIsolatedLoopbackSocksRoute() {
         val profile = xhttpProfile().copy(
             pinnedPeerCertSha256 = "AA:BB:CC",
-            verifyPeerCertByName = false,
+            verifyPeerCertByName = "front.example",
         )
         val compiled = compileXrayRuntime(
             listOf(
@@ -49,7 +49,7 @@ class XrayRoutingConfigTest {
         assertEquals("tls", stream.getString("security"))
         assertEquals("front.example", tls.getString("serverName"))
         assertEquals("AA:BB:CC", tls.getString("pinnedPeerCertSha256"))
-        assertFalse(tls.getBoolean("verifyPeerCertByName"))
+        assertEquals("front.example", tls.getString("verifyPeerCertByName"))
         assertFalse(tls.has("allowInsecure"))
         assertEquals(mapOf("xhttp-office" to 22080), compiled.profilePorts)
         assertFalse(compiled.json.contains("vless://"))

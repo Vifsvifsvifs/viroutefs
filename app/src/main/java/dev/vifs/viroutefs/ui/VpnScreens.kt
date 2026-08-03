@@ -261,18 +261,18 @@ internal fun VpnScreen(
                     configurationSuccessful = true,
                     serverSuccessful = preflight.serverReachable,
                 )
-                )
+            )
             profileTestController.testProfileConnection(profile.id) { tunnelResult ->
-                val latency = tunnelResult.latencyMillis?.let { " (${it} мс)" }.orEmpty()
                 profileTests = profileTests + (
                     profile.id to ProfileTunnelTestReport(
                         running = false,
                         configuration = preflight.configuration,
                         server = preflight.server,
-                        tunnel = "Тоннель: ${tunnelResult.summary}$latency",
+                        tunnel = "Тоннель: ${tunnelResult.summary}",
                         configurationSuccessful = true,
                         serverSuccessful = preflight.serverReachable,
                         tunnelSuccessful = tunnelResult.successful,
+                        latencyMillis = tunnelResult.latencyMillis,
                     )
                     )
             }
@@ -1895,6 +1895,7 @@ private data class ProfileTunnelTestReport(
     val configurationSuccessful: Boolean? = null,
     val serverSuccessful: Boolean? = null,
     val tunnelSuccessful: Boolean? = null,
+    val latencyMillis: Long? = null,
 )
 
 private data class ProfileConnectionPreflight(
@@ -2062,7 +2063,7 @@ private fun CompactNetworkProfileCard(
             enabled = testReport?.running != true,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(if (testReport?.running == true) "Проверяем…" else "Проверить тоннель")
+            Text(if (testReport?.running == true) "Измеряем задержку…" else "Проверить задержку")
         }
         testReport?.let { report ->
             @Composable
@@ -2070,6 +2071,14 @@ private fun CompactNetworkProfileCard(
                 true -> Color(0xFF1B7F46)
                 false -> MaterialTheme.colorScheme.error
                 null -> MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            report.latencyMillis?.let { latency ->
+                Text(
+                    "Текущая задержка: $latency мс",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1B7F46),
+                )
             }
             Text(
                 report.configuration,
@@ -2742,7 +2751,7 @@ private fun VlessProfileEditorScreen(
         mutableStateOf(vless?.pinnedPeerCertSha256.orEmpty())
     }
     var verifyPeerCertByName by rememberSaveable(profile?.id ?: "new-vless") {
-        mutableStateOf(vless?.verifyPeerCertByName)
+        mutableStateOf(vless?.verifyPeerCertByName.orEmpty())
     }
     var enabled by rememberSaveable(profile?.id ?: "new-vless") { mutableStateOf(vless?.enabled ?: profile?.enabled ?: true) }
     var dnsPolicyId by rememberSaveable(profile?.id ?: "new-vless-dns") {
@@ -2780,7 +2789,7 @@ private fun VlessProfileEditorScreen(
         xhttpMode = xhttpMode.trim().takeIf { it.isNotBlank() },
         xhttpExtra = xhttpExtra.trim().takeIf { it.isNotBlank() },
         pinnedPeerCertSha256 = pinnedPeerCertSha256.trim().takeIf { it.isNotBlank() },
-        verifyPeerCertByName = verifyPeerCertByName,
+        verifyPeerCertByName = verifyPeerCertByName.trim().takeIf(String::isNotBlank),
         enabled = enabled,
         status = nextStatus,
     )
@@ -2812,7 +2821,7 @@ private fun VlessProfileEditorScreen(
         xhttpMode = parsed.xhttpMode.orEmpty()
         xhttpExtra = parsed.xhttpExtra.orEmpty()
         pinnedPeerCertSha256 = parsed.pinnedPeerCertSha256.orEmpty()
-        verifyPeerCertByName = parsed.verifyPeerCertByName
+        verifyPeerCertByName = parsed.verifyPeerCertByName.orEmpty()
         pendingImport = null
         importPreview = parsed.maskedPreview()
         exportUri = null

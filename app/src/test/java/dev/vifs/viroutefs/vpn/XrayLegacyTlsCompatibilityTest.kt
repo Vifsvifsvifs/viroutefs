@@ -27,7 +27,7 @@ class XrayLegacyTlsCompatibilityTest {
         )
         assertFalse(tls.has("allowInsecure"))
         assertEquals("AA:BB:CC", tls.getString("pinnedPeerCertSha256"))
-        assertFalse(tls.getBoolean("verifyPeerCertByName"))
+        assertFalse(tls.has("verifyPeerCertByName"))
     }
 
     @Test
@@ -61,6 +61,19 @@ class XrayLegacyTlsCompatibilityTest {
         assertFalse(resolverCalled)
         assertFalse(nestedTls(result.json).has("allowInsecure"))
         assertTrue(result.migratedPins == 0)
+    }
+
+    @Test
+    fun obsoleteBooleanVerifyByNameIsConvertedToCurrentStringSchema() {
+        val root = JSONObject(legacyConfig())
+        val tls = nestedTls(root)
+        tls.remove("allowInsecure")
+        tls.put("verifyPeerCertByName", true)
+
+        val result = normalizeLegacyXrayTlsConfig(root.toString()) { "unexpected" }
+
+        assertEquals("front.example", nestedTls(result.json).getString("verifyPeerCertByName"))
+        assertTrue(tls.getBoolean("verifyPeerCertByName"))
     }
 
     @Test

@@ -138,7 +138,7 @@ class VlessProfileTest {
             alpn = "h2,http/1.1",
             serviceName = "my-service",
             pinnedPeerCertSha256 = "AA:BB:CC",
-            verifyPeerCertByName = false,
+            verifyPeerCertByName = "front.example",
         )
 
         val exported = exportVlessUri(original)
@@ -198,7 +198,7 @@ class VlessProfileTest {
         alpn: String? = null,
         serviceName: String? = null,
         pinnedPeerCertSha256: String? = null,
-        verifyPeerCertByName: Boolean? = null,
+        verifyPeerCertByName: String? = null,
     ): VlessProfileConfig = VlessProfileConfig(
         name = "Lab VLESS",
         host = "example.com",

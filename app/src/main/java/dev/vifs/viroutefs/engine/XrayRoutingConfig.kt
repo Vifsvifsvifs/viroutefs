@@ -232,7 +232,9 @@ private fun VlessProfileConfig.xrayTlsSettings(): JSONObject = JSONObject()
         pinnedPeerCertSha256?.takeIf(String::isNotBlank)?.let {
             put("pinnedPeerCertSha256", it)
         }
-        verifyPeerCertByName?.let { put("verifyPeerCertByName", it) }
+        verifyPeerCertByName?.takeIf(String::isNotBlank)?.let {
+            put("verifyPeerCertByName", it)
+        }
         fingerprint?.takeIf(String::isNotBlank)?.let { put("fingerprint", it) }
         alpn?.split(',')
             ?.map(String::trim)

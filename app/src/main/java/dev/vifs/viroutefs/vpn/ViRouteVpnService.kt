@@ -836,13 +836,26 @@ private fun ResultReceiver.sendProfileTestFailure(summary: String) {
 }
 
 private fun Throwable?.userSafeEngineMessage(fallback: String): String = when (this) {
-    is EngineOrchestratorException ->
-        "${engineError.summary} ${engineError.recommendedAction}".take(500)
+    is EngineOrchestratorException -> buildString {
+        append(engineError.summary)
+        engineError.technicalDetails.takeIf(String::isNotBlank)?.let { details ->
+            append(" Причина: ")
+            append(details)
+        }
+        append(' ')
+        append(engineError.recommendedAction)
+    }.maskUserSafeEngineDetails().take(500)
     null -> fallback
-    else -> (localizedMessage ?: fallback)
-        .replace(
-            Regex("(?i)(password|passphrase|private_key|psk|uuid|auth_key|cookie)\\s*[=:]\\s*[^\\s,;]+"),
-            "$1=<redacted>",
-        )
-        .take(500)
+    else -> (localizedMessage ?: fallback).maskUserSafeEngineDetails().take(500)
 }
+
+private fun String.maskUserSafeEngineDetails(): String = this
+    .replace(Regex("(?i)vless://[^\\s]+"), "vless://<redacted>")
+    .replace(
+        Regex("(?i)(password|passphrase|private_key|psk|uuid|auth_key|cookie)\\s*[=:]\\s*[^\\s,;]+"),
+        "$1=<redacted>",
+    )
+    .replace(
+        Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"),
+        "<redacted-uuid>",
+    )

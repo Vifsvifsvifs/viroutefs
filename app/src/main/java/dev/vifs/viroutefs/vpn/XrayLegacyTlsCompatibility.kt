@@ -98,6 +98,16 @@ private fun normalizeTlsSettings(
     inheritedTarget: XrayTlsPinTarget?,
     resolvePin: (XrayTlsPinTarget) -> String,
 ): Int {
+    when (val verifyByName = tls.opt("verifyPeerCertByName")) {
+        is Boolean -> {
+            val serverName = tls.optString("serverName").trim()
+            if (verifyByName && serverName.isNotBlank()) {
+                tls.put("verifyPeerCertByName", serverName)
+            } else {
+                tls.remove("verifyPeerCertByName")
+            }
+        }
+    }
     if (!tls.has("allowInsecure")) return 0
     val allowedInsecure = tls.optBoolean("allowInsecure", false)
     tls.remove("allowInsecure")
@@ -117,7 +127,6 @@ private fun normalizeTlsSettings(
     require(pin.isNotBlank()) { "The Xray TLS certificate pin is empty." }
     require(pin.length <= MAX_PIN_LENGTH) { "The Xray TLS certificate pin is invalid." }
     tls.put("pinnedPeerCertSha256", pin)
-    if (!tls.has("verifyPeerCertByName")) tls.put("verifyPeerCertByName", false)
     return 1
 }
 

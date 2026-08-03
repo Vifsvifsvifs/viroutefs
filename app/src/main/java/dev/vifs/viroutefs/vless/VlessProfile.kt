@@ -37,7 +37,7 @@ data class VlessProfileConfig(
     val xhttpMode: String? = null,
     val xhttpExtra: String? = null,
     val pinnedPeerCertSha256: String? = null,
-    val verifyPeerCertByName: Boolean? = null,
+    val verifyPeerCertByName: String? = null,
     val enabled: Boolean = true,
     val status: VlessProfileStatus = VlessProfileStatus.NotTested,
 ) {
@@ -181,7 +181,7 @@ fun parseVlessUri(rawUri: String): VlessUriParseResult {
         xhttpMode = params["mode"]?.trimToNull(),
         xhttpExtra = params["extra"]?.trimToNull(),
         pinnedPeerCertSha256 = params["pcs"]?.trimToNull(),
-        verifyPeerCertByName = params["vcn"]?.trimToNull()?.toOptionalBoolean(),
+        verifyPeerCertByName = params["vcn"]?.trimToNull(),
         status = VlessProfileStatus.ConfigReady,
     )
     val validationErrors = validateVlessProfile(profile)
@@ -209,7 +209,7 @@ fun exportVlessUri(profile: VlessProfileConfig): String {
             profile.xhttpExtra?.trimToNull()?.let { add("extra" to it) }
         }
         profile.pinnedPeerCertSha256?.trimToNull()?.let { add("pcs" to it) }
-        profile.verifyPeerCertByName?.let { add("vcn" to it.toString()) }
+        profile.verifyPeerCertByName?.trimToNull()?.let { add("vcn" to it) }
     }.joinToString("&") { (key, value) -> "${key.percentEncode()}=${value.percentEncode()}" }
     val fragment = profile.name.trimToNull()?.percentEncode()?.let { "#$it" }.orEmpty()
     return buildString {
@@ -256,12 +256,6 @@ private fun String.toVlessSecurityMode(): VlessSecurityMode = VlessSecurityMode.
 } ?: VlessSecurityMode.NONE
 
 private fun String.trimToNull(): String? = trim().takeIf { it.isNotBlank() }
-
-private fun String.toOptionalBoolean(): Boolean? = when (trim().lowercase()) {
-    "1", "true", "yes" -> true
-    "0", "false", "no" -> false
-    else -> null
-}
 
 private fun String.maskUuid(): String {
     val canonical = runCatching { UUID.fromString(trim()).toString() }.getOrElse { return "invalid UUID" }

@@ -18,8 +18,9 @@
 * The add-VPN sheet now has one direct **Paste from clipboard and recognize**
   action. The existing preview still masks secrets and imports profiles
   disabled.
-* Every user VPN card has **Test tunnel** with separate configuration, server,
-  and routed-tunnel results.
+* Every user VPN card has **Test delay** with separate configuration, server,
+  and routed-tunnel results plus a prominent current millisecond value after a
+  successful routed HTTPS measurement.
 * The tunnel stage sends one HTTPS request through a loopback-only HTTP proxy
   routed to the exact active profile outbound, including XHTTP profiles that
   pass through the local Xray SOCKS endpoint. It does not silently test through
