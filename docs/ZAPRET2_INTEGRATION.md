@@ -5,9 +5,9 @@ This record describes an engineering and license audit. It is not legal advice a
 ## Audited snapshot
 
 - Upstream: https://github.com/bol-van/zapret2
-- Release: `v1.0.3`
-- Commit: `b78b52c4cd7f843da3ff0848a3430afbd401bdf2`
-- Published: 2026-07-21
+- Release: `v1.0.4`
+- Commit: `2c21faa80e1acb71ddceb8b49176f266b7d33f05`
+- Published: 2026-07-31
 - License file: `docs/LICENSE.txt`
 - License: MIT, copyright 2016-2026 bol-van
 
@@ -28,6 +28,8 @@ The upstream project can build an Android executable, but the normal traffic pat
 - root-level control of the device network stack.
 
 A normal Play-style Android application does not have those privileges. ViRouteFS also already owns the device VPN slot through one `VpnService`, so launching another VPN-based interceptor is not an option.
+
+The physical Android 16 phone used for the 0.14.0 beta checks has KernelSU Next installed. The current ViRouteFS build has not requested or received `su` access yet, so a future root-only nfqws2 path must remain a separately enabled module and must not become a dependency of the base VPN router.
 
 For these reasons, simply copying the upstream Android binary into the APK would create a non-working control and an unjustified security surface.
 
@@ -51,3 +53,4 @@ Full nfqws2 parity may be impossible without root because several strategies dep
 - No zapret2 binary or Lua strategy is bundled in the current APK.
 - The existing user-facing route is named **Совместимость TCP/TLS**.
 - That route is currently implemented by the pinned MIT-licensed ByeDPI SOCKS engine, whose upstream name remains visible in licenses and technical details.
+- A future root mode will keep ByeDPI available, use a separate neutral product label, identify zapret2 in technical/license details, request `su` only when the user explicitly enables it, and restore its own firewall state on failure or stop.

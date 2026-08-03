@@ -193,6 +193,7 @@ internal fun VpnScreen(
     var selectedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
     var addSocks5 by rememberSaveable { mutableStateOf(false) }
     var addVless by rememberSaveable { mutableStateOf(false) }
+    var showVpnGate by rememberSaveable { mutableStateOf(false) }
     var addSingBoxTypeName by rememberSaveable { mutableStateOf<String?>(null) }
     var showProfileImport by rememberSaveable { mutableStateOf(!initialImportSource.isNullOrBlank()) }
     var showConfigBackup by rememberSaveable { mutableStateOf(false) }
@@ -321,6 +322,16 @@ internal fun VpnScreen(
         return
     }
 
+    if (showVpnGate) {
+        VpnGateScreen(
+            padding = padding,
+            config = config,
+            onBack = { showVpnGate = false },
+            onConfig = onConfig,
+        )
+        return
+    }
+
     if (addSocks5) {
         Socks5ProfileEditorScreen(
             padding = padding,
@@ -395,6 +406,10 @@ internal fun VpnScreen(
                 onAddVless = {
                     showAddVpnSheet = false
                     addVless = true
+                },
+                onOpenVpnGate = {
+                    showAddVpnSheet = false
+                    showVpnGate = true
                 },
                 onAddSingBox = { type ->
                     showAddVpnSheet = false
@@ -1668,6 +1683,7 @@ private fun AddVpnTypeSheet(
     onImport: (String) -> Unit,
     onAddSocks5: () -> Unit,
     onAddVless: () -> Unit,
+    onOpenVpnGate: () -> Unit,
     onAddSingBox: (TunnelType) -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -1720,6 +1736,25 @@ private fun AddVpnTypeSheet(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Text("Бесплатные VPNGate", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Добровольческие OpenVPN-серверы. Каталог загружается только вручную, а выбранный профиль добавляется выключенным.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                FilledTonalButton(onClick = onOpenVpnGate, modifier = Modifier.fillMaxWidth()) {
+                    Text("Открыть VPNGate")
+                }
+            }
+        }
         FilledTonalButton(
             onClick = {
                 val source = clipboard.getText()?.text.orEmpty().trim()
