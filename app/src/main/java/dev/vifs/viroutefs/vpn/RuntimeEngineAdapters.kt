@@ -34,7 +34,8 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
-import java.util.UUID
+import java.security.SecureRandom
+import java.util.Base64
 
 internal class ByeDpiEngineAdapter(
     context: Context,
@@ -299,9 +300,20 @@ internal class XrayEngineAdapter(
         state = EngineState.Stopped
     }
 
-    override fun isHealthy(): Boolean =
-        state == EngineState.Connected &&
+    override fun isHealthy(): Boolean {
+        val healthy = state == EngineState.Connected &&
             (activePorts.isEmpty() || processManager.isRunning())
+        if (!healthy && state == EngineState.Connected) {
+            state = EngineState.Error
+            lastError = error(
+                EngineErrorStage.HealthCheck,
+                "Локальное ядро Xray остановилось сразу после запуска.",
+                processManager.lastMessage ?: "Xray-core stopped before confirming stable local route endpoints.",
+                "Проверьте профиль и версию Xray; связанный трафик оставлен заблокированным.",
+            )
+        }
+        return healthy
+    }
 
     override fun statistics(): EngineStatistics =
         EngineStatistics(activeProfiles = activePorts.size)
@@ -342,10 +354,12 @@ internal class XrayEngineAdapter(
 
     private fun xudpBaseKey(): String {
         val preferences = applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
-        return preferences.getString(XUDP_BASE_KEY, null)
-            ?: UUID.randomUUID().toString().also { generated ->
-                preferences.edit { putString(XUDP_BASE_KEY, generated) }
-            }
+        preferences.getString(XUDP_BASE_KEY, null)
+            ?.takeIf(::isValidXudpBaseKey)
+            ?.let { return it }
+        return generateXudpBaseKey().also { generated ->
+            preferences.edit { putString(XUDP_BASE_KEY, generated) }
+        }
     }
 
     private fun reserveLoopbackPorts(count: Int): List<Int> {
@@ -375,6 +389,20 @@ internal class XrayEngineAdapter(
         private const val PORT_CHECK_TIMEOUT_MS = 250
     }
 }
+
+internal fun generateXudpBaseKey(random: SecureRandom = SecureRandom()): String {
+    val bytes = ByteArray(XUDP_BASE_KEY_BYTES)
+    random.nextBytes(bytes)
+    return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+}
+
+internal fun isValidXudpBaseKey(value: String): Boolean = runCatching {
+    val decoded = Base64.getUrlDecoder().decode(value)
+    decoded.size == XUDP_BASE_KEY_BYTES &&
+        Base64.getUrlEncoder().withoutPadding().encodeToString(decoded) == value
+}.getOrDefault(false)
+
+private const val XUDP_BASE_KEY_BYTES = 32
 
 internal class SingBoxEngineAdapter(
     private val service: ViRouteVpnService,

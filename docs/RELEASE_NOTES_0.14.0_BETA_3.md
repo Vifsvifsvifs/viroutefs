@@ -9,6 +9,8 @@
   stores its SHA-256 as a private no-backup TOFU pin, and supplies
   `pinnedPeerCertSha256` for that exact pinned certificate.
 * VLESS share links preserve the current `pcs` and `vcn` certificate options.
+* Existing UUID-shaped XUDP runtime keys are migrated to the raw URL-safe
+  Base64 encoding of 32 cryptographically random bytes required by Xray 26.6.1.
 * Xray startup errors remain fail-closed and retain the exact bounded,
   secret-masked engine reason for the user.
 * An asynchronous Android VPN-router health failure now retains the last
