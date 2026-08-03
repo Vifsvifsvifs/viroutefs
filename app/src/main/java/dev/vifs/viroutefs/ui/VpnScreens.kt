@@ -119,6 +119,7 @@ import dev.vifs.viroutefs.runtime.tcp.DevTcpBridgeSnapshot
 import dev.vifs.viroutefs.runtime.tcp.TcpSessionId
 import dev.vifs.viroutefs.runtime.tcp.TcpSessionState
 import dev.vifs.viroutefs.runtime.tcp.VlessDevTcpBridge
+import dev.vifs.viroutefs.root.RootKernelWireGuardController
 import dev.vifs.viroutefs.socks5.Socks5DiagnosticResult
 import dev.vifs.viroutefs.socks5.Socks5DiagnosticState
 import dev.vifs.viroutefs.socks5.Socks5DiagnosticTestType
@@ -2526,6 +2527,10 @@ private fun SingBoxProfileEditorScreen(
     val schema = requireNotNull(singBoxProtocolSchema(type))
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val kernelWireGuardActive = profile != null && type == TunnelType.WireGuard &&
+        remember(context, profile.id) {
+            RootKernelWireGuardController(context.applicationContext).activeProfileId() == profile.id
+        }
     var name by rememberSaveable(profile?.id ?: "new-${type.name}") {
         mutableStateOf(profile?.name ?: type.label)
     }
@@ -2909,8 +2914,11 @@ private fun SingBoxProfileEditorScreen(
                     if (usedRules.isNotEmpty()) {
                         WarningText(text.profileUsedMessage(usedRules.joinToString(" • ")))
                     }
+                    if (kernelWireGuardActive) {
+                        WarningText("Сначала остановите этот профиль в разделе «Системный WireGuard (root)».")
+                    }
                     OutlinedButton(
-                        enabled = usedRules.isEmpty(),
+                        enabled = usedRules.isEmpty() && !kernelWireGuardActive,
                         onClick = {
                             onConfig(
                                 config.withoutProfile(profile.id),

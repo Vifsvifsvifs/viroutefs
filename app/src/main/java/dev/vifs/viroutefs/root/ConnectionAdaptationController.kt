@@ -45,7 +45,7 @@ class ConnectionAdaptationController(context: Context) {
         )
         val result = executor.execute(script, CONNECTION_ADAPTATION_START_TIMEOUT_MILLIS)
         if (!result.completed || result.exitCode != 0) {
-            val recovered = recovery.recoverAll()
+            val recovered = recovery.recoverConnectionAdaptation()
             return ConnectionAdaptationResult(
                 successful = false,
                 running = false,

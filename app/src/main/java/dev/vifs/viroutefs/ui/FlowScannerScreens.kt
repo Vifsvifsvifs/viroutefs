@@ -42,6 +42,8 @@ import dev.vifs.viroutefs.StatusChip
 import dev.vifs.viroutefs.UiText
 import dev.vifs.viroutefs.WarningText
 import dev.vifs.viroutefs.loadInstalledAppsForRouting
+import dev.vifs.viroutefs.root.RootSocketSnapshot
+import dev.vifs.viroutefs.root.RootSocketSnapshotScanner
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.routing.RouteDecision
@@ -147,6 +149,42 @@ internal data class FlowEventUi(
     }
 }
 
+private fun RootSocketSnapshot.toFlowEvent(context: Context, observedAt: Long): FlowEventUi {
+    val remoteIsUnspecified = remoteAddress in setOf("0.0.0.0", "::", "0:0:0:0:0:0:0:0")
+    val endpoint = if (remoteIsUnspecified || remotePort == 0) {
+        "локальный сокет"
+    } else {
+        remoteAddress
+    }
+    val packages = packageNames.distinct()
+    val appLabel = packages
+        .map(context::applicationLabel)
+        .distinct()
+        .joinToString()
+        .ifBlank { "UID $uid" }
+    val displayPort = if (remotePort > 0) remotePort else localPort
+    return FlowEventUi(
+        appName = appLabel,
+        domain = endpoint,
+        resolvedIp = remoteAddress.takeUnless { remoteIsUnspecified },
+        portProtocol = "$displayPort / $protocol",
+        dnsPolicy = "Root-снимок не содержит DNS-политику",
+        selectedRoute = "Таблица сокетов ядра",
+        routeReason = "Одноразовый root-снимок; маршрут и содержимое пакета не анализировались",
+        riskWarning = null,
+        recommendation = "Сопоставьте этот прямой сокет с одновременным событием VPN или правилом root-файрвола.",
+        status = state,
+        technicalDetails = "local=$localAddress:$localPort remote=$remoteAddress:$remotePort uid=$uid state=$state",
+        sourceLabel = "Root /proc socket snapshot",
+        routeCheck = "Маршрут не вычислялся",
+        appPackages = packages,
+        lifecycle = FlowLifecycle.Snapshot,
+        isBlocked = false,
+        ipVersion = if (remoteAddress.contains(':')) FlowIpVersion.Ipv6 else FlowIpVersion.Ipv4,
+        observedAt = observedAt,
+    )
+}
+
 @Composable
 internal fun FlowScannerScreen(
     padding: PaddingValues,
@@ -171,12 +209,18 @@ internal fun FlowScannerScreen(
     var runtimeDetailsOpen by rememberSaveable { mutableStateOf(false) }
     var pendingCsvExport by remember { mutableStateOf("") }
     var exportMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var rootSockets by remember { mutableStateOf<List<RootSocketSnapshot>>(emptyList()) }
+    var rootSnapshotAt by remember { mutableLongStateOf(0L) }
+    var rootScanBusy by remember { mutableStateOf(false) }
+    var rootScanMessage by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val rootSocketScanner = remember(context) { RootSocketSnapshotScanner(context.applicationContext) }
     val installedApps = remember(context) { context.loadInstalledAppsForRouting() }
-    val allEvents = remember(vpnState.connectionFlows, vpnState.packetSummaries, config, context) {
+    val allEvents = remember(vpnState.connectionFlows, vpnState.packetSummaries, rootSockets, rootSnapshotAt, config, context) {
         val previewer = LiveRouteDecisionPreviewer(config)
         vpnState.connectionFlows.map { flow -> flow.toFlowEvent(context, config) } +
-            vpnState.packetSummaries.map { packet -> packet.toFlowEvent(previewer.preview(packet)) }
+            vpnState.packetSummaries.map { packet -> packet.toFlowEvent(previewer.preview(packet)) } +
+            rootSockets.map { socket -> socket.toFlowEvent(context, rootSnapshotAt) }
     }
     val protocolFilter = FlowProtocolFilter.entries
         .firstOrNull { it.name == protocolFilterName }
@@ -357,12 +401,31 @@ internal fun FlowScannerScreen(
             },
             onClear = {
                 selectedEventIndex = null
+                rootSockets = emptyList()
+                rootSnapshotAt = 0L
+                rootScanMessage = null
                 onClear()
             },
             onPause = onPause,
             onRuntimeEvent = { runtimeDetailsOpen = true },
             onLiveEvent = { liveDetailsOpen = true },
             onEvent = { selectedEventIndex = it },
+            rootScanBusy = rootScanBusy,
+            rootScanMessage = rootScanMessage,
+            onRootSnapshot = {
+                rootScanBusy = true
+                rootScanMessage = null
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) { rootSocketScanner.scan() }
+                    rootScanMessage = result.message
+                    if (result.successful) {
+                        rootSockets = result.sockets
+                        rootSnapshotAt = System.currentTimeMillis()
+                        selectedEventIndex = null
+                    }
+                    rootScanBusy = false
+                }
+            },
         )
     }
 }
@@ -401,8 +464,29 @@ private fun FlowScannerListScreen(
     onRuntimeEvent: () -> Unit,
     onLiveEvent: () -> Unit,
     onEvent: (Int) -> Unit,
+    rootScanBusy: Boolean,
+    rootScanMessage: String?,
+    onRootSnapshot: () -> Unit,
 ) = ScreenList(padding) {
     item { FlowControlCard(text, vpnState, onClear, onPause) }
+    item {
+        CardBlock {
+            Text("Root-снимок прямых сокетов", fontWeight = FontWeight.SemiBold)
+            Text(
+                "По отдельной кнопке читает ограниченные таблицы /proc/net/tcp*,udp* и сопоставляет UID с локальными пакетами. Это дополняет события VPN прямыми соединениями; содержимое пакетов и TLS не читается.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(
+                onClick = onRootSnapshot,
+                enabled = !rootScanBusy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (rootScanBusy) "Ожидаем root-менеджер…" else "Снять root-снимок сокетов")
+            }
+            rootScanMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
+    }
     item {
         CardBlock {
             Row(

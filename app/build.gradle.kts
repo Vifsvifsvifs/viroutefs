@@ -24,9 +24,9 @@ val donationUrl = providers.environmentVariable("VIROUTEFS_DONATION_URL")
     ?.trim()
     ?.takeIf(String::isNotBlank)
     ?: "https://messenger.online.sberbank.ru/sl/PV0SJRfgsEARtx5Ka"
-val baseVersionName = "0.14.0-beta.6"
+val baseVersionName = "0.14.0-beta.7"
 val appVersionName = if (buildNumber > 0) "$baseVersionName.$buildNumber" else baseVersionName
-val appVersionCode = 14006 + buildNumber
+val appVersionCode = 14007 + buildNumber
 
 android {
     namespace = "dev.vifs.viroutefs"
@@ -79,6 +79,7 @@ android {
     }
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -97,12 +98,19 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
         jniLibs {
-            // ByeDPI, Xray and optional root-only zapret2 are app-private
+            // ByeDPI, Xray and optional root-only engines are app-private
             // executables in nativeLibraryDir.
             useLegacyPackaging = true
             // Xray-core is a PIE command stored under jniLibs so Android extracts
             // it as an executable. Keep the verified byte-for-byte artifact.
-            keepDebugSymbols += setOf("**/libxray.so", "**/libzapret2.so")
+            keepDebugSymbols += setOf(
+                "**/libxray.so",
+                "**/libzapret2.so",
+                "**/libtcpdump.so",
+                "**/libwg.so",
+                "**/libwg-quick.so",
+                "**/libwg-go.so",
+            )
         }
     }
 }
@@ -119,6 +127,16 @@ val byeDpiFile = file("src/main/jniLibs/arm64-v8a/libbyedpi.so")
 val zapret2Version = "v1.0.4-2c21faa80e1acb71ddceb8b49176f266b7d33f05-android-arm64-16k"
 val zapret2Sha256 = "2e1a0e950e0bc7189b5662e54fdd66d749d51215b167a647f15659554e7b4090"
 val zapret2File = file("src/main/jniLibs/arm64-v8a/libzapret2.so")
+val tcpdumpVersion = "tcpdump-4.99.6-libpcap-1.10.6-android-arm64-16k"
+val tcpdumpSha256 = "adb46aa539d42efb6d07c1afc42edc39954fd59a46c09561411bb98bb176c4da"
+val tcpdumpFile = file("src/main/jniLibs/arm64-v8a/libtcpdump.so")
+val wireGuardTunnelVersion = "1.0.20260102"
+val wireGuardTunnelAarSha256 = "2b9c16db026496123e4db695d26d03d1958a201096c7c4c89b21077dc70f3119"
+val wireGuardTunnelVerification = configurations.detachedConfiguration(
+    dependencies.create("com.wireguard.android:tunnel:$wireGuardTunnelVersion"),
+).apply {
+    isTransitive = false
+}
 
 fun File.sha256(): String {
     val digest = MessageDigest.getInstance("SHA-256")
@@ -180,6 +198,32 @@ tasks.register("verifyZapret2") {
     }
 }
 
+tasks.register("verifyTcpdump") {
+    inputs.file(tcpdumpFile)
+    doLast {
+        check(tcpdumpFile.exists() && tcpdumpFile.length() > 0L) {
+            "Missing ${tcpdumpFile.relativeTo(projectDir)} ($tcpdumpVersion)."
+        }
+        check(tcpdumpFile.sha256() == tcpdumpSha256) {
+            "${tcpdumpFile.relativeTo(projectDir)} does not match pinned $tcpdumpVersion SHA-256."
+        }
+        println("Verified ${tcpdumpFile.relativeTo(projectDir)} as $tcpdumpVersion.")
+    }
+}
+
+tasks.register("verifyWireGuardTunnel") {
+    doLast {
+        val artifact = wireGuardTunnelVerification.singleFile
+        check(artifact.exists() && artifact.length() > 0L) {
+            "Missing official WireGuard tunnel AAR $wireGuardTunnelVersion."
+        }
+        check(artifact.sha256() == wireGuardTunnelAarSha256) {
+            "WireGuard tunnel AAR does not match pinned $wireGuardTunnelVersion SHA-256."
+        }
+        println("Verified official WireGuard tunnel AAR $wireGuardTunnelVersion.")
+    }
+}
+
 tasks.register("verifyLibXray") {
     inputs.file(xrayFile)
     doLast {
@@ -194,7 +238,7 @@ tasks.register("verifyLibXray") {
 }
 
 tasks.named("preBuild") {
-    dependsOn("verifyLibbox", "verifyLibXray", "verifyByeDpi", "verifyZapret2")
+    dependsOn("verifyLibbox", "verifyLibXray", "verifyByeDpi", "verifyZapret2", "verifyTcpdump", "verifyWireGuardTunnel")
 }
 
 tasks.register("printVersionName") {
@@ -210,6 +254,7 @@ dependencies {
     val cameraXVersion = "1.6.1"
 
     implementation(files("libs/libbox.aar"))
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation(fileTree(mapOf(
         "dir" to "libs",
         "include" to listOf("*.jar")
@@ -231,6 +276,7 @@ dependencies {
     implementation("com.google.zxing:core:3.5.4")
     implementation("org.snakeyaml:snakeyaml-engine:3.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
+    implementation("com.wireguard.android:tunnel:$wireGuardTunnelVersion")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

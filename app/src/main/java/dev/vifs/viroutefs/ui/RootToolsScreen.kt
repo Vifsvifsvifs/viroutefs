@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
@@ -60,6 +59,73 @@ internal fun RootToolsScreen(
     var adaptationAcknowledged by rememberSaveable { mutableStateOf(false) }
     var adaptationBusy by remember { mutableStateOf(false) }
     var adaptationMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var showAppFirewall by rememberSaveable { mutableStateOf(false) }
+    var showNetworkGuard by rememberSaveable { mutableStateOf(false) }
+    var showPacketCapture by rememberSaveable { mutableStateOf(false) }
+    var showVpnTethering by rememberSaveable { mutableStateOf(false) }
+    var showAutomation by rememberSaveable { mutableStateOf(false) }
+    var showKernelWireGuard by rememberSaveable { mutableStateOf(false) }
+
+    if (showAppFirewall) {
+        RootAppFirewallScreen(
+            padding = padding,
+            onBack = {
+                recoveryState = recoveryController.currentState()
+                showAppFirewall = false
+            },
+        )
+        return
+    }
+    if (showNetworkGuard) {
+        RootNetworkGuardScreen(
+            padding = padding,
+            onBack = {
+                recoveryState = recoveryController.currentState()
+                showNetworkGuard = false
+            },
+        )
+        return
+    }
+    if (showPacketCapture) {
+        RootPacketCaptureScreen(
+            padding = padding,
+            onBack = {
+                recoveryState = recoveryController.currentState()
+                showPacketCapture = false
+            },
+        )
+        return
+    }
+    if (showVpnTethering) {
+        RootVpnTetheringScreen(
+            padding = padding,
+            onBack = {
+                recoveryState = recoveryController.currentState()
+                showVpnTethering = false
+            },
+        )
+        return
+    }
+    if (showAutomation) {
+        RootAutomationScreen(
+            padding = padding,
+            onBack = {
+                recoveryState = recoveryController.currentState()
+                showAutomation = false
+            },
+        )
+        return
+    }
+    if (showKernelWireGuard) {
+        RootKernelWireGuardScreen(
+            padding = padding,
+            onBack = {
+                recoveryState = recoveryController.currentState()
+                showKernelWireGuard = false
+            },
+        )
+        return
+    }
 
     ScreenList(padding) {
         item {
@@ -244,21 +310,138 @@ internal fun RootToolsScreen(
                 )
             }
         }
-        items(ROOT_MODULES, key = RootModuleDescriptor::title) { module ->
+        item {
+            val firewallPresent = RootManagedModule.AppFirewall in recoveryState?.modules.orEmpty()
             CardBlock {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Text(module.title, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-                    StatusChip(module.status)
+                    Text("Файрвол приложений", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    StatusChip(if (firewallPresent) "Есть root-сессия" else "Выключен")
                 }
-                Text(module.description, style = MaterialTheme.typography.bodySmall)
                 Text(
-                    module.requirements,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    "Локальные правила для отдельных UID: все сети, прямой Wi‑Fi, прямая мобильная сеть и VPN/TUN. IPv4 и IPv6 применяются вместе.",
+                    style = MaterialTheme.typography.bodySmall,
                 )
+                OutlinedButton(
+                    onClick = { showAppFirewall = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Настроить файрвол приложений")
+                }
+            }
+        }
+        item {
+            val guardPresent = recoveryState?.modules.orEmpty().any {
+                it == RootManagedModule.EmergencyNetworkLock || it == RootManagedModule.LeakProtection
+            }
+            CardBlock {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Ядерная защита сети", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    StatusChip(if (guardPresent) "Есть root-сессия" else "Выключена")
+                }
+                Text(
+                    "VPN lock продолжает блокировать прямой выход после падения туннеля; отдельно доступны запрет прямого DNS/DoT/DoQ и IPv6.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(
+                    onClick = { showNetworkGuard = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Настроить защиту от утечек")
+                }
+            }
+        }
+        item {
+            val capturePresent = RootManagedModule.PacketCapture in recoveryState?.modules.orEmpty()
+            CardBlock {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Flow Scanner и локальный PCAP", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    StatusChip(if (capturePresent) "Идёт запись" else "Готов")
+                }
+                Text(
+                    "Flow Scanner умеет делать root-снимок сокетов с привязкой к приложениям. Отдельная PCAP-запись ограничена 60 секундами, 25 000 пакетами и ручным экспортом.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(
+                    onClick = { showPacketCapture = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Открыть локальную запись PCAP")
+                }
+            }
+        }
+        item {
+            val tetheringPresent = RootManagedModule.Tethering in recoveryState?.modules.orEmpty()
+            CardBlock {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Раздача текущего VPN", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    StatusChip(if (tetheringPresent) "Включена" else "Выключена")
+                }
+                Text(
+                    "IPv4-клиенты hotspot, USB или Bluetooth направляются в текущий VPN-интерфейс. При падении VPN прямой выход и IPv6 клиентов блокируются.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(
+                    onClick = { showVpnTethering = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Настроить раздачу VPN")
+                }
+            }
+        }
+        item {
+            val automationPresent = RootManagedModule.Automation in recoveryState?.modules.orEmpty()
+            CardBlock {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Root-автоматизация", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    StatusChip(if (automationPresent) "Фоновый режим" else "Выключена")
+                }
+                Text(
+                    "Один выбранный root-модуль переключается по Wi‑Fi/мобильной сети, экрану и расписанию. Режим всегда показывает уведомление и не стартует после перезагрузки.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(
+                    onClick = { showAutomation = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Настроить автоматизацию")
+                }
+            }
+        }
+        item {
+            val kernelWireGuardPresent = RootManagedModule.KernelWireGuard in recoveryState?.modules.orEmpty()
+            CardBlock {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Системный WireGuard", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    StatusChip(if (kernelWireGuardPresent) "Включён" else "Выключен")
+                }
+                Text(
+                    "Отдельный быстрый режим через модуль ядра и официальные wg/wg-quick. При отсутствии модуля обычный WireGuard через VPN Android продолжает работать без root.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(
+                    onClick = { showKernelWireGuard = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Открыть системный WireGuard")
+                }
             }
         }
     }
@@ -286,43 +469,3 @@ private fun CapabilityLine(name: String, available: Boolean) {
         color = if (available) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
-
-private data class RootModuleDescriptor(
-    val title: String,
-    val description: String,
-    val requirements: String,
-    val status: String = "Следующий этап",
-)
-
-private val ROOT_MODULES = listOf(
-    RootModuleDescriptor(
-        "Файрвол приложений",
-        "Правила Wi‑Fi, мобильной сети, роуминга и фоновой передачи, работающие даже при выключенном Android VpnService.",
-        "Нужно: root и отдельные ViRouteFS-цепочки iptables/nftables.",
-    ),
-    RootModuleDescriptor(
-        "Усиленный запрет и защита утечек",
-        "Ядерная блокировка IPv4, IPv6 и DNS, сохраняющая запрет при аварийной остановке VPN-процесса.",
-        "Нужно: root, watchdog и ручная кнопка полного восстановления сети.",
-    ),
-    RootModuleDescriptor(
-        "Flow Scanner и локальный PCAP",
-        "Root-атрибуция сокетов и ограниченная запись выбранного трафика без расшифровки TLS, только с ручным экспортом.",
-        "Нужно: доступ к conntrack/proc или tcpdump; лимит размера и очистка по умолчанию.",
-    ),
-    RootModuleDescriptor(
-        "Раздача выбранного VPN",
-        "Маршрутизация клиентов точки доступа через выбранный VPN-профиль с NAT, IPv6-контролем и будущим выбором маршрута по клиенту.",
-        "Нужно: root, forwarding/NAT и определение интерфейсов hotspot без жёстко заданных имён.",
-    ),
-    RootModuleDescriptor(
-        "Автоматизации",
-        "Отдельные сетевые политики по Wi‑Fi/мобильной сети, экрану и расписанию.",
-        "Нужно: сначала завершить транзакционный файрвол и восстановление.",
-    ),
-    RootModuleDescriptor(
-        "Ядерный WireGuard",
-        "Опциональный быстрый backend при наличии модуля ядра; userspace WireGuard останется переносимым резервом.",
-        "Нужно: модуль wireguard, утилита wg и физическое сравнение маршрутов/утечек.",
-    ),
-)

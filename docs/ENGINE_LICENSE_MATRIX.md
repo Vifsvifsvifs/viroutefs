@@ -12,16 +12,16 @@ The Android app uses one `VpnService`. App, domain, IP and CIDR rules select a l
 | Xray-core | VLESS/XHTTP client behind localhost SOCKS endpoints; it does not own the Android TUN | MPL-2.0 | commit `94ffd50060f1cfd5d7482ec90a23a92bdefdff68`; Android arm64 PIE `libxray.so` SHA-256 `9bb0b815086395164066b5fa27b1797bf9a0fcc493d1491f02166560604dcaff`; 64 KiB ELF load alignment | Bundled as a separate app-private child process to avoid a second Gomobile runtime in the sing-box process. Upstream source is unmodified and reproducible with `tools/build-xray.ps1`. |
 | ByeDPI | Implements the user-facing **Совместимость TCP/TLS** app-private SOCKS5 route | MIT | commit `ba532298de7b28cfe854aea83d061369d13ca290`; 16 KiB-aligned `libbyedpi.so` SHA-256 `abae93da6e426da5bbe5611f53a550eccb021d7be88b2c13865461024c4862d1` | Bundled for arm64. Keep the upstream name in licenses and technical details. Never describe it as encryption, IP hiding, anonymity or a VPN. |
 | zapret2 | Implements the optional user-facing **Адаптация соединений (root)** system module; it is not a VPN profile | MIT | `v1.0.4`, commit/tag target `2c21faa80e1acb71ddceb8b49176f266b7d33f05`; upstream archive SHA-256 `5760b6d41c09459fff00b4a6fec5437a471a00aac15f734723ede149cd26c709`; Android arm64 `nfqws2` stored as `libzapret2.so`, SHA-256 `2e1a0e950e0bc7189b5662e54fdd66d749d51215b167a647f15659554e7b4090` | Bundled but disabled by default. Requires an explicit root request, IPv4/IPv6 iptables and NFQUEUE queue-bypass. Runtime integration is local-only until physical KernelSU verification. |
+| WireGuard Android tunnel library | Explicit root-only system WireGuard backend; the existing sing-box/VpnService WireGuard path remains the rootless fallback | Apache-2.0 library; separately executed wireguard-tools commands are GPL-2.0; wireguard-go is MIT | Maven Central `com.wireguard.android:tunnel:1.0.20260102`, official signed tag/commit `09b75c2bd37f749e2a8c85876394854113c74be7`; arm64 only | Bundled but disabled by default. Fixed root command allow-list, encrypted rollback configuration, no Magisk policy mutation, no boot persistence, physical device verification pending. |
 | AndroidX, Jetpack Compose, Kotlin coroutines | Android application/runtime libraries | Primarily Apache-2.0 | Maven coordinates are pinned in `app/build.gradle.kts` | Bundled. Preserve dependency notices and metadata with distributed source. |
 
-The APK contains `GPL-3.0.txt`, the exact sing-box license notice, the Xray-core MPL-2.0 text and the ByeDPI and zapret2 MIT notices under `assets/licenses/`.
+The APK contains `GPL-3.0.txt`, the exact sing-box license notice, the Xray-core MPL-2.0 text, the ByeDPI and zapret2 MIT notices, and the WireGuard Apache-2.0/GPL-2.0/MIT license set under `assets/licenses/`.
 
 ## Approved integration paths, not bundled
 
 | Component | Purpose | License path | Current decision |
 | --- | --- | --- | --- |
 | strongSwan Android | IKEv2/IPsec, IPsec XAuth and IPsec PSK | GPL-2.0-or-later | Planned only after adaptation into the single-router architecture. |
-| WireGuard Android tunnel library | Optional fallback WireGuard adapter | Apache-2.0 | Not needed while the bundled sing-box WireGuard endpoint satisfies the architecture. |
 | Tor | Local Tor outbound | Requires a separately audited Android Tor executable and its license set | sing-box configuration support alone is not sufficient; disabled until the executable is bundled and tested. |
 | ZeroTier, SoftEther | Additional enterprise/mesh adapters | No binary selected | Planned or research only. |
 

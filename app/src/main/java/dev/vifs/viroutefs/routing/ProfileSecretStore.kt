@@ -126,15 +126,17 @@ internal object AesGcmSecretCodec {
     }
 }
 
-private class AndroidSecretKeyProvider {
+internal class AndroidSecretKeyProvider(
+    private val keyAlias: String = PROFILE_SECRET_KEY_ALIAS,
+) {
     fun getOrCreate(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
-        (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        (keyStore.getKey(keyAlias, null) as? SecretKey)?.let { return it }
 
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEY_STORE)
         generator.init(
             KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
+                keyAlias,
                 KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
             )
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
@@ -149,7 +151,7 @@ private class AndroidSecretKeyProvider {
 
     companion object {
         private const val ANDROID_KEY_STORE = "AndroidKeyStore"
-        private const val KEY_ALIAS = "dev.vifs.viroutefs.profile-secrets.v1"
+        private const val PROFILE_SECRET_KEY_ALIAS = "dev.vifs.viroutefs.profile-secrets.v1"
     }
 }
 

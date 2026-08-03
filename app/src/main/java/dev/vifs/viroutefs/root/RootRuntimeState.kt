@@ -99,6 +99,26 @@ internal class RootRuntimeStateRepository(context: Context) {
         return File(directory, ROOT_ZAPRET_LOG_FILE)
     }
 
+    fun packetCapturePidFile(): File {
+        directory.mkdirs()
+        return File(directory, ROOT_PACKET_CAPTURE_PID_FILE)
+    }
+
+    fun packetCaptureLogFile(): File {
+        directory.mkdirs()
+        return File(directory, ROOT_PACKET_CAPTURE_LOG_FILE)
+    }
+
+    fun packetCaptureFile(): File {
+        directory.mkdirs()
+        return File(directory, ROOT_PACKET_CAPTURE_FILE)
+    }
+
+    fun tetheringStateFile(): File {
+        directory.mkdirs()
+        return File(directory, ROOT_TETHERING_STATE_FILE)
+    }
+
     private fun save(state: RootRuntimeState) {
         require(directory.exists() || directory.mkdirs()) { "Could not create root state directory." }
         val root = JSONObject()
@@ -126,3 +146,7 @@ private const val ROOT_STATE_DIRECTORY = "root-runtime"
 private const val ROOT_STATE_FILE = "managed-state.json"
 private const val ROOT_ZAPRET_PID_FILE = "connection-adaptation.pid"
 private const val ROOT_ZAPRET_LOG_FILE = "connection-adaptation.log"
+private const val ROOT_PACKET_CAPTURE_PID_FILE = "packet-capture.pid"
+private const val ROOT_PACKET_CAPTURE_LOG_FILE = "packet-capture.log"
+private const val ROOT_PACKET_CAPTURE_FILE = "network-capture.pcap"
+private const val ROOT_TETHERING_STATE_FILE = "tethering-state"
