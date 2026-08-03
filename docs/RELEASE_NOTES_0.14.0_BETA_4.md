@@ -16,8 +16,18 @@
 
 * Added multiline hosts-file input accepting both `IP hostname` and
   `hostname IP`. Local hosts answers remain above every DNS policy.
-* The Routes page now loads and labels installed applications off the main UI
-  thread and reuses a process-local cache.
+* The Routes page no longer scans installed applications while opening. The
+  local app catalog loads off the main UI thread only after an app-rule editor
+  is opened and then reuses a process-local cache.
+
+## Voluntary support
+
+* Added the project owner's Sber HTTPS support link as a locally generated QR
+  code. The same link opens when the QR or support button is tapped and can be
+  copied manually.
+* The screen explicitly labels the payment as voluntary support, not a purchase
+  of features or digital benefits. ViRouteFS does not handle bank credentials
+  or payment data.
 
 ## Physical Android fixes
 

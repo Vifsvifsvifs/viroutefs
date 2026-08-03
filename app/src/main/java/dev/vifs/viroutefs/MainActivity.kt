@@ -71,7 +71,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.vifs.viroutefs.diagnostics.DiagnosticResult
@@ -118,6 +120,7 @@ import dev.vifs.viroutefs.settings.AppThemeMode
 import dev.vifs.viroutefs.ui.DnsScreen
 import dev.vifs.viroutefs.ui.FlowScannerScreen
 import dev.vifs.viroutefs.ui.InstalledApplicationIcon
+import dev.vifs.viroutefs.ui.SupportQrCode
 import dev.vifs.viroutefs.ui.VpnScreen
 import dev.vifs.viroutefs.ui.theme.ViRouteFsTheme
 import dev.vifs.viroutefs.update.GITHUB_RELEASES_WEB_URL
@@ -480,8 +483,13 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
     var selectedGroupId by rememberSaveable { mutableStateOf<String?>(null) }
     var creatingGroup by rememberSaveable { mutableStateOf(false) }
     var installedApps by remember(context) { mutableStateOf<List<InstalledAppUi>>(emptyList()) }
-    LaunchedEffect(context) {
-        installedApps = withContext(Dispatchers.IO) { context.loadInstalledAppsForRouting() }
+    var installedAppsLoading by remember(context) { mutableStateOf(false) }
+    LaunchedEffect(context, selectedRouteId, creatingRoute) {
+        if (selectedRouteId != null || creatingRoute) {
+            installedAppsLoading = true
+            installedApps = withContext(Dispatchers.IO) { context.loadInstalledAppsForRouting() }
+            installedAppsLoading = false
+        }
     }
     val historyStore = remember(context) { Socks5TestHistoryStore(context) }
     var readinessByProfile by remember(config.profiles) { mutableStateOf<Map<String, Socks5ReadinessSummary>>(emptyMap()) }
@@ -505,6 +513,7 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
             rule = selectedRoute ?: draftRoute ?: newRouteDraft(config).also { draftRoute = it },
             config = config,
             installedApps = installedApps,
+            installedAppsLoading = installedAppsLoading,
             isNew = selectedRoute == null,
             onBack = {
                 selectedRouteId = null
@@ -1137,6 +1146,7 @@ private fun RouteDetailsScreen(
     rule: RouteRule,
     config: RoutingConfig,
     installedApps: List<InstalledAppUi>,
+    installedAppsLoading: Boolean,
     isNew: Boolean,
     onBack: () -> Unit,
     onConfig: (RoutingConfig, String?) -> Unit,
@@ -1268,6 +1278,7 @@ private fun RouteDetailsScreen(
                     text = text,
                     kind = matcherKind,
                     installedApps = filteredApps,
+                    installedAppsLoading = installedAppsLoading,
                     selectedAppPackages = selectedAppPackages,
                     appSearch = appSearch,
                     matcherText = matcherText,
@@ -1431,6 +1442,7 @@ private fun RouteMatcherEditor(
     text: UiText,
     kind: RouteMatcherKind,
     installedApps: List<InstalledAppUi>,
+    installedAppsLoading: Boolean,
     selectedAppPackages: List<String>,
     appSearch: String,
     matcherText: String,
@@ -1454,7 +1466,9 @@ private fun RouteMatcherEditor(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (installedApps.isEmpty()) {
+            if (installedAppsLoading) {
+                Text(text.loading, style = MaterialTheme.typography.bodySmall)
+            } else if (installedApps.isEmpty()) {
                 Text(text.noInstalledApps, style = MaterialTheme.typography.bodySmall)
             } else {
                 LazyColumn(
@@ -1818,6 +1832,7 @@ private fun SettingsScreen(
     var updateChecking by remember { mutableStateOf(false) }
     val apkDownloader = remember(context) { UpdateApkDownloader(context.applicationContext) }
     var supportExpanded by rememberSaveable { mutableStateOf(false) }
+    var supportMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var helpExpanded by rememberSaveable { mutableStateOf(false) }
     var beginnerExpanded by rememberSaveable { mutableStateOf(false) }
     var adminExpanded by rememberSaveable { mutableStateOf(false) }
@@ -1827,6 +1842,7 @@ private fun SettingsScreen(
             url.startsWith("https://", ignoreCase = true)
         }
     }
+    val clipboardManager = LocalClipboardManager.current
     ScreenList(padding) {
         item {
             CardBlock {
@@ -1987,14 +2003,65 @@ private fun SettingsScreen(
                 Text(text.supportShort, style = MaterialTheme.typography.bodySmall)
                 if (supportExpanded) {
                     Text(text.supportDonationDisclaimer, style = MaterialTheme.typography.bodySmall)
-                    val links = buildList {
-                        donationUrl?.let { add(text.voluntarySupport to it) }
-                        add("GitHub" to "https://github.com/Vifsvifsvifs/viroutefs")
-                    }
-                    links.forEach { (label, url) -> OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }) { Text(label) } }
-                    if (donationUrl == null) {
+                    if (donationUrl != null) {
+                        Text(
+                            text.supportQrHint,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        SupportQrCode(
+                            url = donationUrl,
+                            contentDescription = text.supportQrContentDescription,
+                            onClick = {
+                                supportMessage = runCatching {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(donationUrl)))
+                                }.fold(
+                                    onSuccess = { null },
+                                    onFailure = { text.supportLinkOpenFailed },
+                                )
+                            },
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                supportMessage = runCatching {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(donationUrl)))
+                                }.fold(
+                                    onSuccess = { null },
+                                    onFailure = { text.supportLinkOpenFailed },
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(text.voluntarySupport) }
+                        TextButton(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(donationUrl))
+                                supportMessage = text.supportLinkCopied
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(text.copySupportLink) }
+                        Text(
+                            donationUrl,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
                         Text(text.supportLinkNotConfigured, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    supportMessage?.let { feedback ->
+                        Text(
+                            feedback,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Vifsvifsvifs/viroutefs")),
+                            )
+                        },
+                    ) { Text("GitHub") }
                 }
             }
         }
@@ -2530,6 +2597,11 @@ Packets are dropped after counting""",
     val supportShort = t("Добровольная поддержка без покупки функций и преимуществ.", "Voluntary support without purchasing features or benefits.", "自愿支持，不购买任何功能或权益。")
     val supportDonationDisclaimer = t("Номер банковской карты в приложение не встраивается и не сохраняется. Кнопка открывает только настроенную владельцем HTTPS-страницу оплаты; приложение не обрабатывает платёжные данные.", "No bank card number is embedded or stored. The button only opens an owner-configured HTTPS payment page; the app does not process payment data.", "应用不会嵌入或保存银行卡号。按钮仅打开所有者配置的 HTTPS 支付页面，应用不处理支付数据。")
     val voluntarySupport = t("Добровольно поддержать", "Voluntary support", "自愿支持")
+    val supportQrHint = t("Это добровольная поддержка, а не покупка. Отсканируйте QR камерой другого телефона или нажмите на него.", "This is voluntary support, not a purchase. Scan the QR code with another phone or tap it.", "这是自愿支持，并非购买。请用另一台手机扫描二维码，或直接点按二维码。")
+    val supportQrContentDescription = t("QR-код добровольной поддержки", "Voluntary support QR code", "自愿支持二维码")
+    val copySupportLink = t("Скопировать ссылку поддержки", "Copy support link", "复制支持链接")
+    val supportLinkCopied = t("Ссылка поддержки скопирована.", "Support link copied.", "支持链接已复制。")
+    val supportLinkOpenFailed = t("Не удалось открыть ссылку. Скопируйте её и откройте вручную.", "The link could not be opened. Copy it and open it manually.", "无法打开链接。请复制后手动打开。")
     val supportLinkNotConfigured = t("Безопасная платёжная ссылка пока не настроена в сборке.", "No secure payment link is configured in this build.", "此版本尚未配置安全支付链接。")
     val updates = t("Обновления", "Updates", "更新")
     val updateChannelBeta = t("Канал обновлений: Beta", "Update channel: Beta", "更新频道：Beta")
