@@ -100,6 +100,9 @@ fun previewProfileSubscriptionUpdate(
             vless = candidate.profile.vless?.copy(enabled = enabled),
             sourceSubscriptionId = subscription.id,
             sourceEntryKey = entryKey,
+            appRoutingMode = previous?.appRoutingMode ?: candidate.profile.appRoutingMode,
+            appRoutingPackages = previous?.appRoutingPackages ?: candidate.profile.appRoutingPackages,
+            appRoutingNetworks = previous?.appRoutingNetworks ?: candidate.profile.appRoutingNetworks,
         )
         val kind = when {
             previous == null -> SubscriptionProfileChangeKind.Added

@@ -12,7 +12,7 @@ data class RouteConflict(
 fun RoutingConfig.moveExplicitRule(ruleId: String, offset: Int): RoutingConfig {
     if (offset == 0) return this
     val ordered = rules
-        .filter { it.type != RouteRuleType.DEFAULT }
+        .filter { it.type != RouteRuleType.DEFAULT && !it.isManagedProfileAppRoutingRule() }
         .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name }.thenBy { it.id })
         .toMutableList()
     val currentIndex = ordered.indexOfFirst { it.id == ruleId }
@@ -32,7 +32,9 @@ fun RoutingConfig.moveExplicitRule(ruleId: String, offset: Int): RoutingConfig {
 }
 
 fun findExactRouteConflicts(rules: List<RouteRule>): List<RouteConflict> {
-    val explicitRules = rules.filter { it.enabled && it.type != RouteRuleType.DEFAULT }
+    val explicitRules = rules.filter {
+        it.enabled && it.type != RouteRuleType.DEFAULT && !it.isManagedProfileAppRoutingRule()
+    }
     return buildList {
         addAll(findDuplicateAppConflicts(explicitRules))
         addAll(findDuplicateTextMatcherConflicts(explicitRules, RouteRuleType.DOMAIN))

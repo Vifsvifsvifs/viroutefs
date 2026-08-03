@@ -98,6 +98,7 @@ import dev.vifs.viroutefs.routing.findConflictsForCandidate
 import dev.vifs.viroutefs.routing.findExactRouteConflicts
 import dev.vifs.viroutefs.routing.hasRuntimeConfiguration
 import dev.vifs.viroutefs.routing.isValidIpOrCidr
+import dev.vifs.viroutefs.routing.isManagedProfileAppRoutingRule
 import dev.vifs.viroutefs.routing.moveExplicitRule
 import dev.vifs.viroutefs.routing.parseDestinationPortRanges
 import dev.vifs.viroutefs.routing.parseDomainMatcher
@@ -106,6 +107,7 @@ import dev.vifs.viroutefs.routing.validateRouteEditorDraft
 import dev.vifs.viroutefs.routing.validateDomainMatcher
 import dev.vifs.viroutefs.routing.validateRoutingConfig
 import dev.vifs.viroutefs.routing.withDefaultRoute
+import dev.vifs.viroutefs.routing.withSyncedProfileAppRoutingRules
 import dev.vifs.viroutefs.socks5.Socks5ReadinessSummary
 import dev.vifs.viroutefs.socks5.Socks5TestHistoryStore
 import dev.vifs.viroutefs.socks5.deriveSocks5ReadinessSummary
@@ -127,11 +129,14 @@ import dev.vifs.viroutefs.update.UpdateCheckResult
 import dev.vifs.viroutefs.update.formatBytes
 import dev.vifs.viroutefs.update.UpdateChecker
 import dev.vifs.viroutefs.vpn.VpnServiceController
+import dev.vifs.viroutefs.vpn.NetworkControlTileService
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vless.VLESS_RUNTIME_LIMITATION
 import dev.vifs.viroutefs.vless.VLESS_ROUTE_PREVIEW_ONLY
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -140,10 +145,12 @@ import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     private var incomingProfileImport by mutableStateOf<String?>(null)
+    private var quickTileStartRequested by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         incomingProfileImport = intent.profileImportSource()
+        quickTileStartRequested = intent.action == NetworkControlTileService.ACTION_START_FROM_TILE
         replaceSensitiveIntent()
         val settingsRepository = AppSettingsRepository(applicationContext)
         setContent {
@@ -154,6 +161,9 @@ class MainActivity : ComponentActivity() {
                         settings = settings,
                         incomingProfileImport = incomingProfileImport,
                         onProfileImportConsumed = { incomingProfileImport = null },
+                        quickTileStartRequested = quickTileStartRequested,
+                        onQuickTileStartConsumed = { quickTileStartRequested = false },
+                        onAddQuickTile = { NetworkControlTileService.requestAdd(this@MainActivity) },
                         onSettings = { next ->
                             settings = next
                             settingsRepository.save(next)
@@ -167,6 +177,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         incomingProfileImport = intent.profileImportSource()
+        quickTileStartRequested = intent.action == NetworkControlTileService.ACTION_START_FROM_TILE
         replaceSensitiveIntent()
     }
 
@@ -222,6 +233,9 @@ private fun ViRouteFsApp(
     settings: AppSettings,
     incomingProfileImport: String?,
     onProfileImportConsumed: () -> Unit,
+    quickTileStartRequested: Boolean,
+    onQuickTileStartConsumed: () -> Unit,
+    onAddQuickTile: () -> Unit,
     onSettings: (AppSettings) -> Unit,
 ) {
     val context = LocalContext.current
@@ -346,7 +360,9 @@ private fun ViRouteFsApp(
     }
 
     fun updateConfig(newConfig: RoutingConfig, note: String? = null) {
-        val normalizedConfig = newConfig.copy(version = CURRENT_ROUTING_CONFIG_VERSION)
+        val normalizedConfig = newConfig
+            .copy(version = CURRENT_ROUTING_CONFIG_VERSION)
+            .withSyncedProfileAppRoutingRules()
         val reloadActiveVpn = vpnState.status == VpnServiceStatus.RuntimeActive ||
             vpnState.status == VpnServiceStatus.TunPreviewActive ||
             vpnState.status == VpnServiceStatus.TunTestRouteActive
@@ -366,6 +382,14 @@ private fun ViRouteFsApp(
                 .onFailure { error ->
                         message = "Не удалось сохранить конфигурацию: ${error.localizedMessage ?: error::class.java.simpleName}"
                 }
+        }
+    }
+
+    LaunchedEffect(quickTileStartRequested, loaded) {
+        if (quickTileStartRequested && loaded) {
+            selectedScreen = AppScreen.Vpn
+            onQuickTileStartConsumed()
+            setVpnEnabled(true)
         }
     }
 
@@ -416,6 +440,7 @@ private fun ViRouteFsApp(
                 initialImportSource = incomingProfileImport,
                 onProfileImportConsumed = onProfileImportConsumed,
                 onVpnSwitch = ::setVpnEnabled,
+                onAddQuickTile = onAddQuickTile,
                 onTunTestRoutePreview = ::setTunTestRoutePreviewEnabled,
                 onClearPacketList = vpnController::clearPacketSummaries,
                 onPausePacketInspector = vpnController::setPacketInspectorPaused,
@@ -454,7 +479,10 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
     var draftRoute by remember { mutableStateOf<RouteRule?>(null) }
     var selectedGroupId by rememberSaveable { mutableStateOf<String?>(null) }
     var creatingGroup by rememberSaveable { mutableStateOf(false) }
-    val installedApps = remember(context) { context.loadInstalledAppsForRouting() }
+    var installedApps by remember(context) { mutableStateOf<List<InstalledAppUi>>(emptyList()) }
+    LaunchedEffect(context) {
+        installedApps = withContext(Dispatchers.IO) { context.loadInstalledAppsForRouting() }
+    }
     val historyStore = remember(context) { Socks5TestHistoryStore(context) }
     var readinessByProfile by remember(config.profiles) { mutableStateOf<Map<String, Socks5ReadinessSummary>>(emptyMap()) }
     LaunchedEffect(config.profiles) {
@@ -463,7 +491,7 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
             .associate { it.id to deriveSocks5ReadinessSummary(historyStore.recentForProfile(it.id)) }
     }
     val userRules = config.rules
-        .filter { it.type != RouteRuleType.DEFAULT }
+        .filter { it.type != RouteRuleType.DEFAULT && !it.isManagedProfileAppRoutingRule() }
         .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name }.thenBy { it.id })
     val selectedRoute = userRules.firstOrNull { it.id == selectedRouteId }
     val selectedGroup = config.profileGroups.firstOrNull { it.id == selectedGroupId }
@@ -1032,6 +1060,7 @@ data class InstalledAppUi(
 
 @Suppress("DEPRECATION")
 internal fun android.content.Context.loadInstalledAppsForRouting(): List<InstalledAppUi> {
+    installedAppsForRoutingCache?.let { return it }
     val applications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         packageManager.getInstalledApplications(
             PackageManager.ApplicationInfoFlags.of(0),
@@ -1039,7 +1068,7 @@ internal fun android.content.Context.loadInstalledAppsForRouting(): List<Install
     } else {
         packageManager.getInstalledApplications(0)
     }
-    return applications
+    val loaded = applications
         .asSequence()
         .filterNot { it.packageName == packageName }
         .map { info ->
@@ -1056,7 +1085,12 @@ internal fun android.content.Context.loadInstalledAppsForRouting(): List<Install
                 .thenBy { it.packageName },
         )
         .toList()
+    installedAppsForRoutingCache = loaded
+    return loaded
 }
+
+@Volatile
+private var installedAppsForRoutingCache: List<InstalledAppUi>? = null
 
 @Composable
 private fun RouteRuleCard(
@@ -1543,7 +1577,12 @@ private fun newRouteDraft(config: RoutingConfig): RouteRule = RouteRule(
     type = RouteRuleType.APP,
     targetProfileId = config.defaultProfileId ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID,
     dnsPolicyId = RoutingConfigDefaults.SYSTEM_DNS_ID,
-    priority = (config.rules.maxOfOrNull { it.priority } ?: 1000) + 10,
+    priority = (
+        config.rules
+            .filterNot(RouteRule::isManagedProfileAppRoutingRule)
+            .maxOfOrNull { it.priority }
+            ?: 1000
+        ) + 10,
     matchers = emptyList(),
     appMatchers = emptyList(),
     reason = routeReason(RouteMatcherKind.App),

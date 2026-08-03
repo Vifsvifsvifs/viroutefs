@@ -40,6 +40,7 @@ import dev.vifs.viroutefs.routing.DnsPolicyType
 import dev.vifs.viroutefs.routing.DnsServerConfig
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.orderedServers
+import dev.vifs.viroutefs.routing.parseHostsFileText
 import kotlinx.coroutines.launch
 import java.util.UUID
 
@@ -422,6 +423,8 @@ private fun HostOverridesScreen(
     var hostname by rememberSaveable { mutableStateOf("") }
     var ipAddress by rememberSaveable { mutableStateOf("") }
     var note by rememberSaveable { mutableStateOf("") }
+    var hostsFileText by rememberSaveable { mutableStateOf("") }
+    val parsedHosts = remember(hostsFileText) { parseHostsFileText(hostsFileText) }
 
     ScreenList(padding) {
         item {
@@ -433,6 +436,67 @@ private fun HostOverridesScreen(
         item {
             CardBlock {
                 Text(text.hostOverridesShort, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "Локальные записи hosts проверяются раньше всех DNS-политик и ответов внешних DNS-серверов.",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        item {
+            CardBlock {
+                Text("Вставить как файл hosts", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Поддерживаются оба варианта: «10.0.0.5 server.local» и «server.local 10.0.0.5». Комментарии после # игнорируются.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = hostsFileText,
+                    onValueChange = { hostsFileText = it },
+                    label = { Text("Записи hosts") },
+                    placeholder = { Text("10.0.0.5 server.local\nprinter.local 10.0.0.20") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 5,
+                    isError = parsedHosts.errors.isNotEmpty(),
+                    supportingText = {
+                        Text("Распознано: ${parsedHosts.entries.size}; ошибок: ${parsedHosts.errors.size}")
+                    },
+                )
+                parsedHosts.errors.take(4).forEach { error ->
+                    Text(error, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                }
+                Button(
+                    enabled = parsedHosts.entries.isNotEmpty() && parsedHosts.errors.isEmpty(),
+                    onClick = {
+                        val incoming = parsedHosts.entries.associateBy { it.hostname.lowercase() }
+                        val existingNames = config.hostOverrides.mapTo(mutableSetOf()) { it.hostname.lowercase() }
+                        val updatedExisting = config.hostOverrides.map { override ->
+                            incoming[override.hostname.lowercase()]?.let { entry ->
+                                override.copy(
+                                    hostname = entry.hostname,
+                                    ipAddress = entry.ipAddress,
+                                    enabled = true,
+                                )
+                            } ?: override
+                        }
+                        val added = parsedHosts.entries
+                            .filterNot { it.hostname.lowercase() in existingNames }
+                            .map { entry ->
+                                DnsHostOverride(
+                                    id = "host-${UUID.randomUUID()}",
+                                    hostname = entry.hostname,
+                                    ipAddress = entry.ipAddress,
+                                )
+                            }
+                        onConfig(
+                            config.copy(hostOverrides = updatedExisting + added),
+                            "Записи hosts сохранены: ${parsedHosts.entries.size}. Они имеют высший DNS-приоритет.",
+                        )
+                        hostsFileText = ""
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Добавить записи hosts") }
             }
         }
         items(config.hostOverrides, key = { it.id }) { override ->

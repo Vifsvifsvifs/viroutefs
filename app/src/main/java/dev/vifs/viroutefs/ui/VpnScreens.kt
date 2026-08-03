@@ -44,6 +44,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
@@ -74,10 +76,12 @@ import androidx.core.content.ContextCompat
 import dev.vifs.viroutefs.CardBlock
 import dev.vifs.viroutefs.Details
 import dev.vifs.viroutefs.Header
+import dev.vifs.viroutefs.InstalledAppUi
 import dev.vifs.viroutefs.ScreenList
 import dev.vifs.viroutefs.StatusChip
 import dev.vifs.viroutefs.UiText
 import dev.vifs.viroutefs.WarningText
+import dev.vifs.viroutefs.loadInstalledAppsForRouting
 import dev.vifs.viroutefs.engine.EngineCatalog
 import dev.vifs.viroutefs.engine.FeatureReadiness
 import dev.vifs.viroutefs.engine.ProtocolDescriptor
@@ -92,11 +96,13 @@ import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
 import dev.vifs.viroutefs.routing.ImportDuplicateResolution
 import dev.vifs.viroutefs.routing.ProfileImportPreview
+import dev.vifs.viroutefs.routing.ProfileAppRoutingMode
 import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.SingBoxProfileConfig
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.routing.importOpenVpnProfile
+import dev.vifs.viroutefs.routing.isValidIpOrCidr
 import dev.vifs.viroutefs.routing.applyProfileImport
 import dev.vifs.viroutefs.routing.defaultRouteActivationError
 import dev.vifs.viroutefs.routing.previewProfileImport
@@ -104,7 +110,9 @@ import dev.vifs.viroutefs.routing.singBoxProfileTemplate
 import dev.vifs.viroutefs.routing.singBoxProtocolSchema
 import dev.vifs.viroutefs.routing.validateSingBoxProfile
 import dev.vifs.viroutefs.routing.withDefaultRoute
+import dev.vifs.viroutefs.routing.withProfileAppRouting
 import dev.vifs.viroutefs.routing.withoutProfile
+import dev.vifs.viroutefs.routing.isManagedProfileAppRoutingRule
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_NOTICE
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_SECRET_NOTICE
 import dev.vifs.viroutefs.runtime.tcp.DevTcpBridgeSnapshot
@@ -176,6 +184,7 @@ internal fun VpnScreen(
     initialImportSource: String?,
     onProfileImportConsumed: () -> Unit,
     onVpnSwitch: (Boolean) -> Unit,
+    onAddQuickTile: () -> Unit,
     @Suppress("UNUSED_PARAMETER") onTunTestRoutePreview: (Boolean) -> Unit,
     @Suppress("UNUSED_PARAMETER") onClearPacketList: () -> Unit,
     @Suppress("UNUSED_PARAMETER") onPausePacketInspector: (Boolean) -> Unit,
@@ -402,13 +411,16 @@ internal fun VpnScreen(
                 serviceLabel = vpnState.label(text),
                 serviceDetail = vpnState.detail,
                 onToggle = { onVpnSwitch(!vpnState.switchChecked) },
+                onAddQuickTile = onAddQuickTile,
             )
         }
         item {
             PrimaryInternetCard(
                 config = config,
                 activationError = defaultRouteActivationError(config),
-                ruleCount = config.rules.count { it.enabled && it.type != RouteRuleType.DEFAULT },
+                ruleCount = config.rules.count {
+                    it.enabled && it.type != RouteRuleType.DEFAULT && !it.isManagedProfileAppRoutingRule()
+                },
                 profileCount = userProfiles.size,
                 onAddVpn = { showAddVpnSheet = true },
                 onUseSystem = {
@@ -580,6 +592,7 @@ private fun NetworkControlHero(
     serviceLabel: String,
     serviceDetail: String?,
     onToggle: () -> Unit,
+    onAddQuickTile: () -> Unit,
 ) {
     val containerColor by animateColorAsState(
         targetValue = if (active) Color(0xFF132A1D) else MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -666,6 +679,13 @@ private fun NetworkControlHero(
                         fontWeight = FontWeight.Bold,
                     )
                 }
+            }
+
+            OutlinedButton(
+                onClick = onAddQuickTile,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Добавить кнопку в шторку Android")
             }
 
             StatusStrip(
@@ -2025,7 +2045,11 @@ private fun CompactNetworkProfileCard(
     onTest: () -> Unit,
     onOpen: () -> Unit,
 ) {
-    val routeCount = config.rules.count { it.targetProfileId == profile.id && it.type != RouteRuleType.DEFAULT }
+    val routeCount = config.rules.count {
+        it.targetProfileId == profile.id &&
+            it.type != RouteRuleType.DEFAULT &&
+            !it.isManagedProfileAppRoutingRule()
+    }
     val context = LocalContext.current
     val historyStore = remember(context) { Socks5TestHistoryStore(context) }
     var readiness by remember(profile.id) { mutableStateOf<Socks5ReadinessSummary?>(null) }
@@ -2100,6 +2124,224 @@ private fun CompactNetworkProfileCard(
 }
 
 @Composable
+private fun ProfileAppRoutingCard(
+    profile: TunnelProfile,
+    config: RoutingConfig,
+    onConfig: (RoutingConfig, String?) -> Unit,
+) {
+    val context = LocalContext.current
+    var installedApps by remember(context) { mutableStateOf<List<InstalledAppUi>>(emptyList()) }
+    var appsLoading by remember(context) { mutableStateOf(true) }
+    LaunchedEffect(context) {
+        installedApps = withContext(Dispatchers.IO) { context.loadInstalledAppsForRouting() }
+        appsLoading = false
+    }
+    var expanded by rememberSaveable(profile.id) { mutableStateOf(false) }
+    var search by rememberSaveable(profile.id) { mutableStateOf("") }
+    var mode by remember(profile.id, profile.appRoutingMode) {
+        mutableStateOf(profile.appRoutingMode)
+    }
+    var selectedPackages by remember(profile.id, profile.appRoutingPackages) {
+        mutableStateOf(profile.appRoutingPackages.toSet())
+    }
+    var networksText by remember(profile.id, profile.appRoutingNetworks) {
+        mutableStateOf(profile.appRoutingNetworks.joinToString("\n"))
+    }
+    val packagesUsedByOtherProfiles = remember(config.profiles, profile.id) {
+        config.profiles
+            .asSequence()
+            .filterNot { it.id == profile.id }
+            .flatMap { it.appRoutingPackages.asSequence() }
+            .toSet()
+    }
+    val availableApps = remember(installedApps, packagesUsedByOtherProfiles, selectedPackages) {
+        installedApps.filter { app ->
+            app.packageName !in packagesUsedByOtherProfiles || app.packageName in selectedPackages
+        }
+    }
+    val filteredApps = remember(availableApps, search) {
+        val query = search.trim().lowercase()
+        availableApps.filter { app ->
+            query.isBlank() ||
+                app.label.lowercase().contains(query) ||
+                app.packageName.lowercase().contains(query)
+        }.sortedWith(
+            compareByDescending<InstalledAppUi> { it.packageName in selectedPackages }
+                .thenBy { it.isSystem }
+                .thenBy { it.label.lowercase() }
+                .thenBy { it.packageName },
+        )
+    }
+    val selectedInstalledCount = availableApps.count { it.packageName in selectedPackages }
+    val parsedNetworks = remember(networksText) {
+        networksText
+            .split(Regex("[,;\\s]+"))
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+    }
+    val invalidNetworks = remember(parsedNetworks) { parsedNetworks.filterNot(::isValidIpOrCidr) }
+
+    CardBlock {
+        Text("Приложения", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Text(
+            when (mode) {
+                ProfileAppRoutingMode.SelectedApps ->
+                    "Через этот VPN пойдут только выбранные приложения. Остальные сохранят основной маршрут."
+                ProfileAppRoutingMode.BypassSelected ->
+                    "Галки инвертируются: отмеченные приложения обходят этот VPN через System, неотмеченные используют VPN."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = mode == ProfileAppRoutingMode.SelectedApps,
+                onClick = { mode = ProfileAppRoutingMode.SelectedApps },
+                label = { Text("Через VPN") },
+            )
+            FilterChip(
+                selected = mode == ProfileAppRoutingMode.BypassSelected,
+                onClick = { mode = ProfileAppRoutingMode.BypassSelected },
+                label = { Text("Режим обхода") },
+            )
+        }
+        Text(
+            "Выбрано: $selectedInstalledCount из ${availableApps.size}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (packagesUsedByOtherProfiles.isNotEmpty()) {
+            Text(
+                "Скрыто как уже назначенные другим VPN: ${packagesUsedByOtherProfiles.size}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (appsLoading) {
+            Text(
+                "Загружаем список приложений…",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(
+                onClick = { selectedPackages = availableApps.mapTo(linkedSetOf()) { it.packageName } },
+            ) { Text("Выбрать все") }
+            TextButton(onClick = { selectedPackages = emptySet() }) { Text("Снять все") }
+        }
+        OutlinedButton(
+            onClick = { expanded = !expanded },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (expanded) "Скрыть список" else "Выбрать приложения")
+        }
+        Text("Сети через этот VPN", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+        OutlinedTextField(
+            value = networksText,
+            onValueChange = { networksText = it },
+            label = { Text("IP или CIDR") },
+            placeholder = { Text("10.0.0.0/24") },
+            supportingText = {
+                Text("По одной сети на строку или через запятую. Это правило выше списка приложений и режима обхода.")
+            },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 2,
+            isError = invalidNetworks.isNotEmpty(),
+        )
+        invalidNetworks.forEach { network -> WarningText("Некорректная сеть: $network") }
+        if (expanded) {
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                label = { Text("Поиск приложений") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(filteredApps, key = InstalledAppUi::packageName) { app ->
+                    val selected = app.packageName in selectedPackages
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selectedPackages = if (selected) {
+                                    selectedPackages - app.packageName
+                                } else {
+                                    selectedPackages + app.packageName
+                                }
+                            },
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (selected) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainer
+                            },
+                        ),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            InstalledApplicationIcon(
+                                packageName = app.packageName,
+                                contentDescription = null,
+                                modifier = Modifier.size(40.dp),
+                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(app.label, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    app.packageName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (app.isSystem) StatusChip("Системное")
+                            if (selected) StatusChip("Выбрано")
+                        }
+                    }
+                }
+            }
+        }
+        if (mode == ProfileAppRoutingMode.BypassSelected) {
+            WarningText(
+                "После сохранения «${profile.name}» станет основным маршрутом. Отмеченные приложения останутся на обычном интернете телефона, но указанные выше сети всё равно пойдут через этот VPN.",
+            )
+        }
+        Button(
+            onClick = {
+                val next = config.withProfileAppRouting(
+                    profileId = profile.id,
+                    mode = mode,
+                    packageNames = selectedPackages,
+                    networks = parsedNetworks,
+                )
+                onConfig(
+                    next,
+                    when (mode) {
+                        ProfileAppRoutingMode.SelectedApps ->
+                            "Список приложений для «${profile.name}» сохранён: через VPN — ${selectedPackages.size}."
+                        ProfileAppRoutingMode.BypassSelected ->
+                            "Режим обхода для «${profile.name}» сохранён: через System — ${selectedPackages.size}."
+                    },
+                )
+            },
+            enabled = invalidNetworks.isEmpty(),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Сохранить выбор приложений")
+        }
+    }
+}
+
+@Composable
 private fun NetworkProfileDetailsScreen(
     padding: PaddingValues,
     text: UiText,
@@ -2146,7 +2388,9 @@ private fun NetworkProfileDetailsScreen(
         return
     }
     val dns = config.dnsPolicies.firstOrNull { it.id == profile.dnsPolicyId }
-    val usedRuleNames = config.rules.filter { it.targetProfileId == profile.id }.map { it.name }
+    val usedRuleNames = config.rules
+        .filter { it.targetProfileId == profile.id && !it.isManagedProfileAppRoutingRule() }
+        .map { it.name }
     val protectedProfile = profile.type in listOf(TunnelType.Direct, TunnelType.Block, TunnelType.ByeDpi)
     val canDelete = !protectedProfile && usedRuleNames.isEmpty()
 
@@ -2171,6 +2415,11 @@ private fun NetworkProfileDetailsScreen(
                     OutlinedButton(onClick = { onConfig(config.withDefaultRoute(profile.id), text.defaultChanged) }) { Text(text.makeDefault) }
                 }
                 StatusChip("DNS: ${dns?.name ?: text.noDns}")
+            }
+        }
+        if (!protectedProfile) {
+            item {
+                ProfileAppRoutingCard(profile = profile, config = config, onConfig = onConfig)
             }
         }
         item {
@@ -2349,7 +2598,9 @@ private fun SingBoxProfileEditorScreen(
         }
     }
     val usedRules = profile?.let { current ->
-        config.rules.filter { it.targetProfileId == current.id }.map { it.name }
+        config.rules
+            .filter { it.targetProfileId == current.id && !it.isManagedProfileAppRoutingRule() }
+            .map { it.name }
     }.orEmpty()
     val openVpnTls = remember(optionsJson) {
         openVpnRoot(optionsJson).optJSONObject("tls")
@@ -2375,6 +2626,9 @@ private fun SingBoxProfileEditorScreen(
             platformNotes = "Проверенный ${schema.kind.name.lowercase()} sing-box ${schema.engineType}.",
             dnsPolicyId = dnsPolicyId,
             singBox = draft,
+            appRoutingMode = profile?.appRoutingMode ?: ProfileAppRoutingMode.SelectedApps,
+            appRoutingPackages = profile?.appRoutingPackages.orEmpty(),
+            appRoutingNetworks = profile?.appRoutingNetworks.orEmpty(),
         )
         val nextProfiles = if (profile == null) {
             config.profiles + nextProfile
@@ -2603,6 +2857,9 @@ private fun SingBoxProfileEditorScreen(
             }
         }
         if (profile != null) {
+            item {
+                ProfileAppRoutingCard(profile = profile, config = config, onConfig = onConfig)
+            }
             item {
                 CardBlock {
                     if (config.defaultProfileId == profile.id) {
@@ -3160,6 +3417,9 @@ private fun VlessProfileEditorScreen(
                             },
                             dnsPolicyId = dnsPolicyId,
                             vless = readyVless,
+                            appRoutingMode = profile?.appRoutingMode ?: ProfileAppRoutingMode.SelectedApps,
+                            appRoutingPackages = profile?.appRoutingPackages.orEmpty(),
+                            appRoutingNetworks = profile?.appRoutingNetworks.orEmpty(),
                         )
                         val nextProfiles = if (profile == null) config.profiles + nextProfile else config.profiles.map { if (it.id == profile.id) nextProfile else it }
                         onConfig(
@@ -3176,6 +3436,9 @@ private fun VlessProfileEditorScreen(
             }
         }
         if (profile != null) {
+            item {
+                ProfileAppRoutingCard(profile = profile, config = config, onConfig = onConfig)
+            }
             item {
                 CardBlock {
                     OutlinedButton(
@@ -3381,6 +3644,9 @@ private fun Socks5ProfileEditorScreen(
                             platformNotes = "SOCKS5 outbound compiled into the local sing-box TUN runtime. Manual diagnostics remain opt-in.",
                             dnsPolicyId = dnsPolicyId,
                             socks5 = nextSocks5,
+                            appRoutingMode = profile?.appRoutingMode ?: ProfileAppRoutingMode.SelectedApps,
+                            appRoutingPackages = profile?.appRoutingPackages.orEmpty(),
+                            appRoutingNetworks = profile?.appRoutingNetworks.orEmpty(),
                         )
                         val nextProfiles = if (profile == null) config.profiles + nextProfile else config.profiles.map { if (it.id == profile.id) nextProfile else it }
                         onConfig(config.copy(profiles = nextProfiles), "SOCKS5 profile saved for the local VPN runtime. Manual diagnostics remain opt-in.")
@@ -3439,6 +3705,9 @@ private fun Socks5ProfileEditorScreen(
             }
         }
         if (profile != null) {
+            item {
+                ProfileAppRoutingCard(profile = profile, config = config, onConfig = onConfig)
+            }
             item {
                 CardBlock {
                     Text("Recent local SOCKS5 test history", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)

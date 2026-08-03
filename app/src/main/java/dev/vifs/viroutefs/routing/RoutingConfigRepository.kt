@@ -227,6 +227,9 @@ object RoutingConfigJson {
         put("singBox", singBox?.toJson(includeSecrets))
         put("sourceSubscriptionId", sourceSubscriptionId)
         put("sourceEntryKey", sourceEntryKey)
+        put("appRoutingMode", appRoutingMode.name)
+        put("appRoutingPackages", JSONArray(appRoutingPackages))
+        put("appRoutingNetworks", JSONArray(appRoutingNetworks))
     }
 
     private fun JSONObject.toTunnelProfile(): TunnelProfile {
@@ -246,6 +249,9 @@ object RoutingConfigJson {
             singBox = optJSONObject("singBox")?.toSingBoxProfileConfig(),
             sourceSubscriptionId = optNullableString("sourceSubscriptionId"),
             sourceEntryKey = optNullableString("sourceEntryKey"),
+            appRoutingMode = optEnum("appRoutingMode", ProfileAppRoutingMode.SelectedApps),
+            appRoutingPackages = optJSONArray("appRoutingPackages")?.mapStrings().orEmpty(),
+            appRoutingNetworks = optJSONArray("appRoutingNetworks")?.mapStrings().orEmpty(),
         )
     }
 

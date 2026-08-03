@@ -764,6 +764,7 @@ class ViRouteVpnService : VpnService() {
             activeTcpSessions = activeTcpSessions,
             tcpSessionStateStats = tcpSessionStateStats,
         )
+        val statusChanged = lastState.status != state.status
         rememberState(state)
         val intent = Intent(VpnServiceController.ACTION_STATE_CHANGED)
             .setPackage(packageName)
@@ -801,6 +802,7 @@ class ViRouteVpnService : VpnService() {
                 ArrayList(VpnServiceController.encodeTcpSessionStateStats(tcpSessionStateStats)),
             )
         sendBroadcast(intent)
+        if (statusChanged) NetworkControlTileService.requestRefresh(this)
     }
 
     companion object {

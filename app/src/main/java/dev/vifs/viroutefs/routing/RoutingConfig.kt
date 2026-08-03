@@ -7,7 +7,7 @@ import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.validateVlessProfile
 import java.util.Locale
 
-const val CURRENT_ROUTING_CONFIG_VERSION = 13
+const val CURRENT_ROUTING_CONFIG_VERSION = 14
 const val MOCK_PROFILE_LIMITATION = "Профиль пока не подключает реальный тоннель. Он используется для симуляции маршрутов."
 const val SOCKS5_RUNTIME_STATUS = "SOCKS5 forwarding is available through the local sing-box TUN runtime."
 const val VLESS_ROUTE_DECISION_STATUS = "VLESS forwarding is available through the local sing-box TUN runtime."
@@ -51,7 +51,7 @@ fun RoutingConfig.withDefaultRoute(profileId: String): RoutingConfig = copy(
             rule
         }
     },
-)
+).withSyncedProfileAppRoutingRules()
 
 fun RoutingConfig.withoutProfile(profileId: String): RoutingConfig {
     val updatedGroups = profileGroups.map { group ->
@@ -92,7 +92,7 @@ fun RoutingConfig.withoutProfile(profileId: String): RoutingConfig {
     if (defaultProfileId in removedTargetIds) {
         next = next.withDefaultRoute(RoutingConfigDefaults.SYSTEM_PROFILE_ID)
     }
-    return next
+    return next.withSyncedProfileAppRoutingRules()
 }
 
 fun defaultRouteActivationError(config: RoutingConfig): String? {
@@ -201,6 +201,9 @@ data class TunnelProfile(
     val singBox: SingBoxProfileConfig? = null,
     val sourceSubscriptionId: String? = null,
     val sourceEntryKey: String? = null,
+    val appRoutingMode: ProfileAppRoutingMode = ProfileAppRoutingMode.SelectedApps,
+    val appRoutingPackages: List<String> = emptyList(),
+    val appRoutingNetworks: List<String> = emptyList(),
 ) {
     val warningText: String?
         get() = when (type) {
@@ -209,6 +212,11 @@ data class TunnelProfile(
             TunnelType.L2tpIpSec, TunnelType.Sstp -> "Legacy/corporate compatibility: используйте только при необходимости совместимости."
             else -> null
         }
+}
+
+enum class ProfileAppRoutingMode {
+    SelectedApps,
+    BypassSelected,
 }
 
 data class DnsHostOverride(

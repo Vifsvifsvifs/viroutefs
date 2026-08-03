@@ -97,7 +97,12 @@ fun applyProfileImport(
                 ImportDuplicateResolution.Skip -> skipped += 1
                 ImportDuplicateResolution.Replace -> {
                     val existing = mutable[existingIndex]
-                    mutable[existingIndex] = candidate.profile.copy(id = existing.id)
+                    mutable[existingIndex] = candidate.profile.copy(
+                        id = existing.id,
+                        appRoutingMode = existing.appRoutingMode,
+                        appRoutingPackages = existing.appRoutingPackages,
+                        appRoutingNetworks = existing.appRoutingNetworks,
+                    )
                     replaced += 1
                 }
                 ImportDuplicateResolution.Copy -> {

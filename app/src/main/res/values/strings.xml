@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ViRouteFS</string>
+    <string name="network_control_tile_label">Контроль сети</string>
+    <string name="network_control_tile_on">Включён</string>
+    <string name="network_control_tile_off">Выключен</string>
+    <string name="network_control_tile_starting">Запускается</string>
+    <string name="network_control_tile_error">Ошибка</string>
 </resources>

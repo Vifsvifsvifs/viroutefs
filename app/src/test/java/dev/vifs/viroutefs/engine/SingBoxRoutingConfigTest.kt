@@ -343,6 +343,8 @@ class SingBoxRoutingConfigTest {
         val actions = (0 until dnsRules.length())
             .map(dnsRules::getJSONObject)
         assertEquals("route", actions[0].getString("action"))
+        assertEquals("router.test", actions[0].getJSONArray("domain").getString(0))
+        assertEquals("dns_hosts_0", actions[0].getString("server"))
         assertEquals(listOf("evaluate", "respond", "route"), actions.drop(1).map { it.getString("action") })
         assertEquals("7s", actions[1].getString("timeout"))
         assertTrue(actions[2].getBoolean("match_response"))

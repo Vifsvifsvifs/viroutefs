@@ -114,7 +114,7 @@ object RoutingConfigDefaults {
                     rule
                 }
             },
-        )
+        ).withSyncedProfileAppRoutingRules()
     }
 
     private fun defaultDnsPolicies(): List<DnsPolicy> = listOf(
