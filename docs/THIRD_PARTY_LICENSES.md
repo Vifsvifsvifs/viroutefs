@@ -9,10 +9,10 @@ This file records actual APK inputs separately from future candidates.
 ### sing-box libbox
 
 - Upstream: https://github.com/SagerNet/sing-box
-- Tag: `v1.14.0-alpha.50`
-- Commit: `3fcfadd5ee45c460115243b55d48b438279aeacd`
+- Tag: `v1.14.0-beta.13`
+- Commit: `2dea956ea11ed9fdc47dc69fba56bea71c69ea9b`
 - Artifact: `app/libs/libbox.aar`
-- SHA-256: `f3729b42c247c257adc2c7d03b1134ed7139b6f77da174f69f036d4fa4c7b685`
+- SHA-256: `57a6029fcd63655f2fb189708a07a482a75d1a717663639199e38f977ba393db`
 - native ELF alignment: 16 KiB
 - License: upstream `GPL-3.0-or-later` notice plus its additional naming/association condition
 - Rebuild: `tools/build-libbox.ps1`

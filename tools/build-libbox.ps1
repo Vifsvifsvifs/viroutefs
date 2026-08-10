@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-$singBoxCommit = "3fcfadd5ee45c460115243b55d48b438279aeacd"
+$singBoxCommit = "2dea956ea11ed9fdc47dc69fba56bea71c69ea9b"
 $gomobileVersion = "v0.1.12"
 $requiredGoVersion = "go1.26.5"
 $requiredNdkVersion = "27.0.12077973"
@@ -55,9 +55,8 @@ git -C $resolvedSource checkout --detach $singBoxCommit
 
 $buildFile = Join-Path $resolvedSource "cmd/internal/build_libbox/main.go"
 $original = [System.IO.File]::ReadAllText($buildFile)
-$withNaive = '"with_gvisor", "with_quic", "with_wireguard", "with_utls", "with_naive_outbound", "with_clash_api"'
-$withoutNaive = '"with_gvisor", "with_quic", "with_wireguard", "with_utls", "with_clash_api"'
-$patched = $original.Replace($withNaive, $withoutNaive)
+$withNaive = ', "with_naive_outbound"'
+$patched = $original.Replace($withNaive, '')
 if ($patched -eq $original) {
     throw "Could not apply the pinned no-Naive build-tag change."
 }
