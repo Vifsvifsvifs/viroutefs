@@ -58,8 +58,8 @@ $openVpnSource = Join-Path $resolvedSource "third_party/sing-openvpn"
 git clone --filter=blob:none --no-checkout https://github.com/SagerNet/sing-openvpn.git $openVpnSource
 git -C $openVpnSource checkout --detach $singOpenVpnCommit
 $openVpnPatch = Join-Path $PSScriptRoot "patches/sing-openvpn-stage-errors.patch"
-git -C $openVpnSource apply --check $openVpnPatch
-git -C $openVpnSource apply $openVpnPatch
+git -C $openVpnSource apply --unidiff-zero --check $openVpnPatch
+git -C $openVpnSource apply --unidiff-zero $openVpnPatch
 Push-Location $resolvedSource
 try {
     & $goExecutable mod edit "-replace=github.com/sagernet/sing-openvpn=./third_party/sing-openvpn"

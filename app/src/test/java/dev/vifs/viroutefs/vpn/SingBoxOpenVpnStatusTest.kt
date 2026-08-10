@@ -11,13 +11,13 @@ import kotlin.test.assertTrue
 class SingBoxOpenVpnStatusTest {
     @Test
     fun connectionProbeNoiseDoesNotHideNativeSessionFailure() {
-        assertTrue(
-            isOpenVpnProbeNoise(
-                "connection: open connection to www.gstatic.com:443 using outbound/openvpn-client[office]: endpoint is not ready yet",
+        assertFalse(
+            isOpenVpnSessionDiagnostic(
+                "router: pre-match: forward icmp connection via outbound/openvpn-client[office]",
             ),
         )
-        assertFalse(
-            isOpenVpnProbeNoise(
+        assertTrue(
+            isOpenVpnSessionDiagnostic(
                 "endpoint/openvpn-client[office]: session with 10.0.0.1 over tcp failed: openvpn tls handshake: EOF",
             ),
         )
