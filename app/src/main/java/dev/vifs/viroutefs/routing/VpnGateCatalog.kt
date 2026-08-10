@@ -30,6 +30,42 @@ data class VpnGateServer(
         get() = "$hostName|$ipAddress"
 }
 
+data class VpnGateCountryChoice(
+    val code: String,
+    val name: String,
+) {
+    val label: String
+        get() = if (name.isBlank() || name.equals(code, ignoreCase = true)) code else "$name ($code)"
+}
+
+fun vpnGateCountryChoices(
+    servers: List<VpnGateServer>,
+    excludedCountryCode: String = "",
+    minimumServerCount: Int = 2,
+): List<VpnGateCountryChoice> {
+    require(minimumServerCount > 0) { "Минимальное число серверов должно быть положительным." }
+    val excluded = excludedCountryCode.trim().uppercase()
+    return servers
+        .asSequence()
+        .filter { server ->
+            server.countryCode.matches(Regex("[A-Z]{2}")) &&
+                server.countryCode != excluded &&
+                (server.pingMillis ?: 0) > 0
+        }
+        .groupBy(VpnGateServer::countryCode)
+        .filterValues { countryServers -> countryServers.size >= minimumServerCount }
+        .map { (code, countryServers) ->
+            val name = countryServers
+                .asSequence()
+                .map(VpnGateServer::countryName)
+                .map(String::trim)
+                .firstOrNull(String::isNotBlank)
+                .orEmpty()
+            VpnGateCountryChoice(code = code, name = name)
+        }
+        .sortedWith(compareBy<VpnGateCountryChoice> { it.name.ifBlank { it.code }.lowercase() }.thenBy { it.code })
+}
+
 data class VpnGateAutomaticRouteResult(
     val config: RoutingConfig,
     val selectedServers: List<VpnGateServer>,

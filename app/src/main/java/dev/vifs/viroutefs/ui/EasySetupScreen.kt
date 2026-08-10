@@ -52,6 +52,7 @@ import dev.vifs.viroutefs.routing.VpnGateCatalogSnapshot
 import dev.vifs.viroutefs.routing.createAutomaticVpnGateRoute
 import dev.vifs.viroutefs.routing.withAutomaticVpnGateApps
 import dev.vifs.viroutefs.routing.withAutomaticVpnGateEnabled
+import dev.vifs.viroutefs.routing.vpnGateCountryChoices
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -75,6 +76,7 @@ internal fun EasySetupScreen(
     var message by rememberSaveable { mutableStateOf<String?>(null) }
     var catalogSnapshot by remember { mutableStateOf<VpnGateCatalogSnapshot?>(client.loadCached()) }
     var loadingCountries by rememberSaveable { mutableStateOf(catalogSnapshot == null) }
+    val homeCountryCode = remember(context) { detectDeviceCountryCode(context).ifBlank { "RU" } }
     var preferredCountryCode by rememberSaveable {
         mutableStateOf(
             config.profileGroups
@@ -141,17 +143,15 @@ internal fun EasySetupScreen(
         loadingCountries = false
     }
 
-    val availableCountries = remember(catalogSnapshot) {
-        catalogSnapshot
-            ?.servers
-            .orEmpty()
-            .asSequence()
-            .filter { (it.pingMillis ?: 0) > 0 }
-            .groupBy { it.countryCode }
-            .filterValues { it.size >= 2 }
-            .keys
-            .filter { it.matches(Regex("[A-Z]{2}")) }
-            .sorted()
+    val availableCountries = remember(catalogSnapshot, homeCountryCode) {
+        vpnGateCountryChoices(
+            servers = catalogSnapshot?.servers.orEmpty(),
+            excludedCountryCode = homeCountryCode,
+        )
+    }
+
+    LaunchedEffect(homeCountryCode) {
+        if (preferredCountryCode.equals(homeCountryCode, ignoreCase = true)) preferredCountryCode = ""
     }
 
     val visibleApps = remember(availableApps, selectedPackages, query) {
@@ -181,7 +181,7 @@ internal fun EasySetupScreen(
                     createAutomaticVpnGateRoute(
                         config = config,
                         servers = snapshot.servers,
-                        excludedCountryCode = detectDeviceCountryCode(context).ifBlank { "RU" },
+                        excludedCountryCode = homeCountryCode,
                         preferredCountryCode = preferredCountryCode.ifBlank { null },
                     ).config
                         .withAutomaticVpnGateApps(selectedPackages)
@@ -234,11 +234,11 @@ internal fun EasySetupScreen(
                         label = { Text("Автоматически") },
                         enabled = !configuring,
                     )
-                    availableCountries.forEach { countryCode ->
+                    availableCountries.forEach { country ->
                         FilterChip(
-                            selected = preferredCountryCode == countryCode,
-                            onClick = { preferredCountryCode = countryCode },
-                            label = { Text(countryCode) },
+                            selected = preferredCountryCode == country.code,
+                            onClick = { preferredCountryCode = country.code },
+                            label = { Text(country.label) },
                             enabled = !configuring,
                         )
                     }

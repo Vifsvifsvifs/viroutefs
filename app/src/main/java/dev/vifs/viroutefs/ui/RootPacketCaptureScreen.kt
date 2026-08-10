@@ -2,6 +2,7 @@
 
 package dev.vifs.viroutefs.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -44,6 +45,7 @@ internal fun RootPacketCaptureScreen(
     padding: PaddingValues,
     onBack: () -> Unit,
 ) {
+    BackHandler(onBack = onBack)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val controller = remember(context) { RootPacketCaptureController(context.applicationContext) }

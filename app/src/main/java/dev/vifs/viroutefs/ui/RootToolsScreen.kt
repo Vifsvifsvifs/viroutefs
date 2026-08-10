@@ -2,6 +2,7 @@
 
 package dev.vifs.viroutefs.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -65,6 +66,12 @@ internal fun RootToolsScreen(
     var showVpnTethering by rememberSaveable { mutableStateOf(false) }
     var showAutomation by rememberSaveable { mutableStateOf(false) }
     var showKernelWireGuard by rememberSaveable { mutableStateOf(false) }
+
+    BackHandler(
+        enabled = !showAppFirewall && !showNetworkGuard && !showPacketCapture &&
+            !showVpnTethering && !showAutomation && !showKernelWireGuard,
+        onBack = onBack,
+    )
 
     if (showAppFirewall) {
         RootAppFirewallScreen(
@@ -197,7 +204,7 @@ internal fun RootToolsScreen(
             CardBlock {
                 Text("Безопасная модель", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Проверка выше ничего не меняет. Перед будущей операцией ViRouteFS сохранит только собственные цепочки и процессы, проверит применимость новой конфигурации и удалит их при ошибке. Чужие правила файрвола приложение очищать не будет.",
+                    "Проверка выше ничего не меняет. Перед каждой операцией ViRouteFS отмечает только собственные цепочки и процессы, проверяет новую конфигурацию и удаляет их при ошибке. Чужие правила файрвола приложение не очищает.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(

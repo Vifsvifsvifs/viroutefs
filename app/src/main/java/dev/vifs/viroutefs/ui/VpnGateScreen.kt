@@ -45,6 +45,7 @@ import dev.vifs.viroutefs.routing.VpnGateServer
 import dev.vifs.viroutefs.routing.applyProfileImport
 import dev.vifs.viroutefs.routing.createAutomaticVpnGateRoute
 import dev.vifs.viroutefs.routing.previewVpnGateProfile
+import dev.vifs.viroutefs.routing.vpnGateCountryChoices
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -72,7 +73,7 @@ internal fun VpnGateScreen(
     var sort by rememberSaveable { mutableStateOf(VPN_GATE_SORT_PING) }
     var selectionMode by rememberSaveable { mutableStateOf(VPN_GATE_MODE_MANUAL) }
     var homeCountryCode by rememberSaveable {
-        mutableStateOf(detectDeviceCountryCode(context))
+        mutableStateOf(detectDeviceCountryCode(context).ifBlank { "RU" })
     }
     var preferredCountryCode by rememberSaveable {
         mutableStateOf(
@@ -149,15 +150,11 @@ internal fun VpnGateScreen(
             .take(MAX_VISIBLE_VPN_GATE_SERVERS)
             .toList()
     }
-    val automaticCountryCodes = remember(snapshot, homeCountryCode) {
-        val excluded = homeCountryCode.trim().uppercase()
-        snapshot?.servers.orEmpty()
-            .asSequence()
-            .filter { it.countryCode.length == 2 && it.countryCode != excluded && (it.pingMillis ?: 0) > 0 }
-            .groupBy(VpnGateServer::countryCode)
-            .filterValues { it.size >= 2 }
-            .keys
-            .sorted()
+    val automaticCountries = remember(snapshot, homeCountryCode) {
+        vpnGateCountryChoices(
+            servers = snapshot?.servers.orEmpty(),
+            excludedCountryCode = homeCountryCode,
+        )
     }
     val automaticCandidates = remember(snapshot, homeCountryCode, preferredCountryCode) {
         val excluded = homeCountryCode.trim().uppercase()
@@ -250,6 +247,7 @@ internal fun VpnGateScreen(
                         value = homeCountryCode,
                         onValueChange = { value ->
                             homeCountryCode = value.filter(Char::isLetter).take(2).uppercase()
+                            if (preferredCountryCode == homeCountryCode) preferredCountryCode = ""
                         },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Не выбирать серверы в моей стране") },
@@ -268,11 +266,11 @@ internal fun VpnGateScreen(
                             onClick = { preferredCountryCode = "" },
                             label = { Text("Автоматически") },
                         )
-                        automaticCountryCodes.forEach { countryCode ->
+                        automaticCountries.forEach { country ->
                             FilterChip(
-                                selected = preferredCountryCode == countryCode,
-                                onClick = { preferredCountryCode = countryCode },
-                                label = { Text(countryCode) },
+                                selected = preferredCountryCode == country.code,
+                                onClick = { preferredCountryCode = country.code },
+                                label = { Text(country.label) },
                             )
                         }
                     }

@@ -60,6 +60,23 @@ class VpnGateCatalogTest {
         assertEquals(null, servers.single().pingMillis)
     }
 
+    @Test
+    fun countryChoicesExcludeHomeRequireFailoverAndShowReadableNames() {
+        val choices = vpnGateCountryChoices(
+            servers = listOf(
+                server("ru-1", "RU", 5).copy(countryName = "Russia"),
+                server("jp-1", "JP", 12).copy(countryName = "Japan"),
+                server("jp-2", "JP", 18).copy(countryName = "Japan"),
+                server("us-1", "US", 20).copy(countryName = "United States"),
+                server("de-no-ping", "DE", 0).copy(countryName = "Germany", pingMillis = null),
+            ),
+            excludedCountryCode = "ru",
+        )
+
+        assertEquals(listOf("JP"), choices.map { it.code })
+        assertEquals("Japan (JP)", choices.single().label)
+    }
+
     @Test(expected = IllegalStateException::class)
     fun invalidBase64IsRejectedBeforeImport() {
         decodeVpnGateOpenVpnConfig(

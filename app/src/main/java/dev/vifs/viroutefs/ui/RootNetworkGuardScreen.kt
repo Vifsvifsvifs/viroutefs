@@ -2,6 +2,7 @@
 
 package dev.vifs.viroutefs.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -42,6 +43,7 @@ internal fun RootNetworkGuardScreen(
     padding: PaddingValues,
     onBack: () -> Unit,
 ) {
+    BackHandler(onBack = onBack)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val controller = remember(context) { RootNetworkGuardController(context.applicationContext) }

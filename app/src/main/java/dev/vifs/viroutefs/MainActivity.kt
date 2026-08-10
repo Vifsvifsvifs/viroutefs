@@ -1126,37 +1126,41 @@ data class InstalledAppUi(
 @Suppress("DEPRECATION")
 internal fun android.content.Context.loadInstalledAppsForRouting(): List<InstalledAppUi> {
     installedAppsForRoutingCache?.let { return it }
-    val applications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        packageManager.getInstalledApplications(
-            PackageManager.ApplicationInfoFlags.of(0),
-        )
-    } else {
-        packageManager.getInstalledApplications(0)
-    }
-    val loaded = applications
-        .asSequence()
-        .filterNot { it.packageName == packageName }
-        .map { info ->
-            InstalledAppUi(
-                label = info.loadLabel(packageManager).toString(),
-                packageName = info.packageName,
-                isSystem = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
-                uid = info.uid,
-            )
+    return synchronized(installedAppsForRoutingCacheLock) {
+        installedAppsForRoutingCache ?: run {
+            val applications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getInstalledApplications(
+                    PackageManager.ApplicationInfoFlags.of(0),
+                )
+            } else {
+                packageManager.getInstalledApplications(0)
+            }
+            applications
+                .asSequence()
+                .filterNot { it.packageName == packageName }
+                .map { info ->
+                    InstalledAppUi(
+                        label = info.loadLabel(packageManager).toString(),
+                        packageName = info.packageName,
+                        isSystem = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
+                        uid = info.uid,
+                    )
+                }
+                .distinctBy { it.packageName }
+                .sortedWith(
+                    compareBy<InstalledAppUi> { it.isSystem }
+                        .thenBy { it.label.lowercase(Locale.ROOT) }
+                        .thenBy { it.packageName },
+                )
+                .toList()
+                .also { installedAppsForRoutingCache = it }
         }
-        .distinctBy { it.packageName }
-        .sortedWith(
-            compareBy<InstalledAppUi> { it.isSystem }
-                .thenBy { it.label.lowercase(Locale.ROOT) }
-                .thenBy { it.packageName },
-        )
-        .toList()
-    installedAppsForRoutingCache = loaded
-    return loaded
+    }
 }
 
 @Volatile
 private var installedAppsForRoutingCache: List<InstalledAppUi>? = null
+private val installedAppsForRoutingCacheLock = Any()
 
 @Composable
 private fun RouteRuleCard(
@@ -1773,7 +1777,7 @@ private fun routeReason(kind: RouteMatcherKind): String = when (kind) {
 private fun routeTechnicalDetails(kind: RouteMatcherKind): String = "Matcher type: ${kind.name}. Exact duplicate conflicts are validated locally before save. Active VPN rules are enforced by the fail-closed local runtime."
 
 private fun routeRecommendedAction(targetProfileId: String): String = if (targetProfileId == RoutingConfigDefaults.BLOCK_PROFILE_ID) {
-    "Traffic matching this rule should be blocked when runtime enforcement is implemented."
+    "Traffic matching this rule is blocked by the active fail-closed runtime."
 } else {
     "Keep the target profile available; explicit rules are fail-closed and must not silently fall back."
 }
@@ -1901,6 +1905,14 @@ private fun SettingsScreen(
         }
     }
     val clipboardManager = LocalClipboardManager.current
+    fun openSupportLink(url: String) {
+        supportMessage = runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }.fold(
+            onSuccess = { null },
+            onFailure = { text.supportLinkOpenFailed },
+        )
+    }
     if (showRootTools) {
         RootToolsScreen(
             padding = padding,
@@ -2092,25 +2104,11 @@ private fun SettingsScreen(
                         SupportQrCode(
                             url = donationUrl,
                             contentDescription = text.supportQrContentDescription,
-                            onClick = {
-                                supportMessage = runCatching {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(donationUrl)))
-                                }.fold(
-                                    onSuccess = { null },
-                                    onFailure = { text.supportLinkOpenFailed },
-                                )
-                            },
+                            onClick = { openSupportLink(donationUrl) },
                             modifier = Modifier.align(Alignment.CenterHorizontally),
                         )
                         OutlinedButton(
-                            onClick = {
-                                supportMessage = runCatching {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(donationUrl)))
-                                }.fold(
-                                    onSuccess = { null },
-                                    onFailure = { text.supportLinkOpenFailed },
-                                )
-                            },
+                            onClick = { openSupportLink(donationUrl) },
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text(text.voluntarySupport) }
                         TextButton(
@@ -2123,7 +2121,10 @@ private fun SettingsScreen(
                         Text(
                             donationUrl,
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { openSupportLink(donationUrl) },
                         )
                     } else {
                         Text(text.supportLinkNotConfigured, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -2542,7 +2543,7 @@ internal class UiText(private val language: AppLanguage) {
     val usedByRoutes = t("Используется маршрутами", "Used by routes", "路由使用")
     val hostOverrides = t("Host overrides", "Host overrides", "主机覆盖")
     val hostOverridesSubtitle = t("Локальные hosts-подстановки рабочего DNS-маршрутизатора.", "Local hosts-like mappings for the active DNS router.", "工作 DNS 路由器的本地主机映射。")
-    val hostOverridesShort = t("Локальная hosts-like подстановка. Реальный DNS-движок применит её позже.", "Local hosts-like mapping. Real DNS engine will apply it later.", "本地 hosts 类映射。真实 DNS 引擎稍后会应用。")
+    val hostOverridesShort = t("Локальная hosts-подстановка с высшим DNS-приоритетом.", "Local hosts-like mapping with the highest DNS priority.", "具有最高 DNS 优先级的本地主机映射。")
     val addHostOverride = t("Добавить запись", "Add override", "添加覆盖")
     val ipAddress = t("IP", "IP", "IP")
     val noteOptional = t("Заметка (необязательно)", "Note (optional)", "备注（可选）")

@@ -118,6 +118,7 @@ import dev.vifs.viroutefs.routing.withDefaultRoute
 import dev.vifs.viroutefs.routing.hasAutomaticVpnGate
 import dev.vifs.viroutefs.routing.isAutomaticVpnGateEnabled
 import dev.vifs.viroutefs.routing.isAutomaticVpnGateProfile
+import dev.vifs.viroutefs.routing.packagesAssignedToOtherVpnTargets
 import dev.vifs.viroutefs.routing.withAutomaticVpnGateEnabled
 import dev.vifs.viroutefs.routing.withProfileAppRouting
 import dev.vifs.viroutefs.routing.withoutProfile
@@ -2319,12 +2320,8 @@ private fun ProfileAppRoutingCard(
     var networksText by remember(profile.id, profile.appRoutingNetworks) {
         mutableStateOf(profile.appRoutingNetworks.joinToString("\n"))
     }
-    val packagesUsedByOtherProfiles = remember(config.profiles, profile.id) {
-        config.profiles
-            .asSequence()
-            .filterNot { it.id == profile.id }
-            .flatMap { it.appRoutingPackages.asSequence() }
-            .toSet()
+    val packagesUsedByOtherProfiles = remember(config.profiles, config.profileGroups, config.rules, profile.id) {
+        config.packagesAssignedToOtherVpnTargets(profile.id)
     }
     val availableApps = remember(installedApps, packagesUsedByOtherProfiles, selectedPackages) {
         installedApps.filter { app ->

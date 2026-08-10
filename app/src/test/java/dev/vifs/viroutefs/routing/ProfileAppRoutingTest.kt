@@ -66,6 +66,41 @@ class ProfileAppRoutingTest {
     }
 
     @Test
+    fun appsAssignedToVpnGateAreHiddenFromAnotherVpnPicker() {
+        val base = configWithProfiles()
+        val vpnGateGroup = ProfileGroup(
+            id = "vpngate-group",
+            name = "VPNGate",
+            mode = ProfileGroupMode.Latency,
+            memberProfileIds = listOf(VPN_B),
+            enabled = true,
+        )
+        val vpnGateRule = RouteRule(
+            id = "vpngate-apps",
+            name = "VPNGate apps",
+            type = RouteRuleType.APP_GROUP,
+            targetProfileId = vpnGateGroup.id,
+            priority = 100,
+            matchers = emptyList(),
+            appMatchers = listOf(
+                AppMatcher(AppMatcherPlatform.Android, "com.example.video", "Video"),
+            ),
+            reason = "test",
+            technicalDetails = "test",
+            recommendedAction = "test",
+        )
+        val config = base.copy(
+            profileGroups = listOf(vpnGateGroup),
+            rules = base.rules + vpnGateRule,
+        )
+
+        assertEquals(
+            setOf("com.example.video"),
+            config.packagesAssignedToOtherVpnTargets(VPN_A),
+        )
+    }
+
+    @Test
     fun profileRoutingFieldsSurviveJsonRoundTrip() {
         val source = configWithProfiles().withProfileAppRouting(
             profileId = VPN_A,

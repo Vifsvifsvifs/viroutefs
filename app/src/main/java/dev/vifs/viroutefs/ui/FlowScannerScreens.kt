@@ -216,7 +216,12 @@ internal fun FlowScannerScreen(
     var rootScanMessage by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val rootSocketScanner = remember(context) { RootSocketSnapshotScanner(context.applicationContext) }
-    val installedApps = remember(context) { context.loadInstalledAppsForRouting() }
+    var installedApps by remember(context) { mutableStateOf<List<InstalledAppUi>>(emptyList()) }
+    var installedAppsLoading by remember(context) { mutableStateOf(true) }
+    LaunchedEffect(context) {
+        installedApps = withContext(Dispatchers.IO) { context.loadInstalledAppsForRouting() }
+        installedAppsLoading = false
+    }
     val allEvents = remember(vpnState.connectionFlows, vpnState.packetSummaries, rootSockets, rootSnapshotAt, config, context) {
         val previewer = LiveRouteDecisionPreviewer(config)
         vpnState.connectionFlows.map { flow -> flow.toFlowEvent(context, config) } +
@@ -321,6 +326,7 @@ internal fun FlowScannerScreen(
         appPickerOpen -> FlowAppPickerScreen(
             padding = padding,
             apps = installedApps,
+            loading = installedAppsLoading,
             selectedPackage = selectedAppPackage,
             onBack = { appPickerOpen = false },
             onSelect = { packageName ->
@@ -481,9 +487,23 @@ private fun FlowScannerListScreen(
     item { FlowControlCard(text, vpnState, onClear, onPause) }
     item {
         CardBlock {
-            Text("Root-снимок прямых сокетов", fontWeight = FontWeight.SemiBold)
+            Text("Как пользоваться", fontWeight = FontWeight.SemiBold)
             Text(
-                "По отдельной кнопке читает ограниченные таблицы /proc/net/tcp*,udp* и сопоставляет UID с локальными пакетами. Это дополняет события VPN прямыми соединениями; содержимое пакетов и TLS не читается.",
+                "1. Нажмите «Выбрать» и укажите приложение. 2. Откройте его и повторите действие, которое не работает. 3. Вернитесь сюда: сверху появятся адрес, выбранное правило и маршрут.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "Сканер показывает только технические сведения о соединениях. Сообщения, пароли и содержимое трафика не читаются.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    item {
+        CardBlock {
+            Text("Дополнительно для root", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Если часть приложений идёт напрямую и не видна обычному сканеру, root-снимок добавит их активные подключения. Без root эта функция не нужна.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -835,6 +855,7 @@ private fun String.toCsvCell(): String =
 private fun FlowAppPickerScreen(
     padding: PaddingValues,
     apps: List<InstalledAppUi>,
+    loading: Boolean,
     selectedPackage: String?,
     onBack: () -> Unit,
     onSelect: (String?) -> Unit,
@@ -917,7 +938,11 @@ private fun FlowAppPickerScreen(
             }
         }
         if (filtered.isEmpty()) {
-            item { CardBlock { Text("Приложения по этому запросу не найдены.") } }
+            item {
+                CardBlock {
+                    Text(if (loading) "Загружаем список приложений…" else "Приложения по этому запросу не найдены.")
+                }
+            }
         }
     }
 }

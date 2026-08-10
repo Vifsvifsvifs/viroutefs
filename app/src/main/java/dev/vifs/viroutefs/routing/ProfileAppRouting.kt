@@ -60,6 +60,37 @@ fun RoutingConfig.withProfileAppRouting(
     return next
 }
 
+fun RoutingConfig.packagesAssignedToOtherVpnTargets(profileId: String): Set<String> {
+    val builtInIds = setOf(
+        RoutingConfigDefaults.SYSTEM_PROFILE_ID,
+        RoutingConfigDefaults.BLOCK_PROFILE_ID,
+        RoutingConfigDefaults.BYEDPI_PROFILE_ID,
+    )
+    val otherProfileIds = profiles
+        .asSequence()
+        .map(TunnelProfile::id)
+        .filter { it != profileId && it !in builtInIds }
+        .toSet()
+    val otherVpnTargets = otherProfileIds + profileGroups.map(ProfileGroup::id)
+    return buildSet {
+        profiles
+            .asSequence()
+            .filter { it.id in otherProfileIds }
+            .flatMap { it.appRoutingPackages.asSequence() }
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .forEach(::add)
+        rules
+            .asSequence()
+            .filter { it.targetProfileId in otherVpnTargets }
+            .flatMap { it.appMatchers.asSequence() }
+            .map(AppMatcher::value)
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .forEach(::add)
+    }
+}
+
 fun RoutingConfig.withSyncedProfileAppRoutingRules(): RoutingConfig {
     val manualRules = rules.filterNot(RouteRule::isManagedProfileAppRoutingRule)
     val generatedAppRules = profiles.mapNotNull { profile ->
