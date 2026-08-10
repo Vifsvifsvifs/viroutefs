@@ -71,11 +71,12 @@ class SingBoxOpenVpnStatusTest {
                 connected = false,
             ),
             statusStreamError = null,
-            runtimeDiagnostic = "openvpn-client[office]: TLS handshake failed",
+            runtimeDiagnostic = "\u001B[31mopenvpn-client[office]: TLS handshake failed\u001B[0m",
         )
 
         assertContains(result, "Connecting")
         assertContains(result, "TLS handshake failed")
         assertContains(result, "Connection reset")
+        assertFalse(result.contains("\u001B["))
     }
 }

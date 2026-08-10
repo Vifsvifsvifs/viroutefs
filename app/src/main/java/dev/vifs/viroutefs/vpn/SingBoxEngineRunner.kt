@@ -416,7 +416,10 @@ internal class SingBoxEngineRunner(
         override fun writeStatus(message: StatusMessage?) = Unit
 
         private fun rememberOpenVpnDiagnostic(message: String) {
-            if (openVpnProfileTags.isEmpty()) return
+            if (
+                openVpnProfileTags.isEmpty() ||
+                !message.contains("openvpn", ignoreCase = true)
+            ) return
             val profileIds = openVpnProfileTags
                 .filterValues { tag -> message.contains(tag, ignoreCase = true) }
                 .keys
@@ -984,6 +987,8 @@ internal fun openVpnProfileTestFailure(
 }
 
 private fun sanitizeOpenVpnDiagnostic(value: String): String = value
+    .replace(Regex("\\u001B\\[[0-9;]*m"), "")
+    .replace(Regex("\\.\\[[0-9;]*m"), "")
     .replace(Regex("[\\r\\n\\t]+"), " ")
     .replace(
         Regex(
