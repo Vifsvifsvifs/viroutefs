@@ -42,31 +42,67 @@ index 38df474..b369496 100644
 -	controlRecord, err := readTLSControlRecord(tlsConnection, mustNegotiate)
 +	controlRecord, err := readTLSKeyMethodRecord(tlsConnection, mustNegotiate, true)
 diff --git a/key_method.go b/key_method.go
-index 94224fc..9585b1b 100644
+index 94224fc..651971b 100644
 --- a/key_method.go
 +++ b/key_method.go
 @@ -10,0 +11 @@ import (
 +	"io"
+@@ -277 +278 @@ func parseTLSKeyMethod2Payload(payload []byte, server bool) (tlsKeyMethodMessage
+-		return tlsKeyMethodMessage{}, err
++		return tlsKeyMethodMessage{}, E.Extend(err, "reserved header")
+@@ -281 +282 @@ func parseTLSKeyMethod2Payload(payload []byte, server bool) (tlsKeyMethodMessage
+-		return tlsKeyMethodMessage{}, err
++		return tlsKeyMethodMessage{}, E.Extend(err, "key-method header")
 @@ -289 +290 @@ func parseTLSKeyMethod2Payload(payload []byte, server bool) (tlsKeyMethodMessage
 -		_, err = reader.Read(keySource.PreMaster)
 +		_, err = io.ReadFull(reader, keySource.PreMaster)
+@@ -291 +292 @@ func parseTLSKeyMethod2Payload(payload []byte, server bool) (tlsKeyMethodMessage
+-			return tlsKeyMethodMessage{}, err
++			return tlsKeyMethodMessage{}, E.Extend(err, "pre-master")
 @@ -295 +296 @@ func parseTLSKeyMethod2Payload(payload []byte, server bool) (tlsKeyMethodMessage
 -	_, err = reader.Read(keySource.Random1)
 +	_, err = io.ReadFull(reader, keySource.Random1)
+@@ -297 +298 @@ func parseTLSKeyMethod2Payload(payload []byte, server bool) (tlsKeyMethodMessage
+-		return tlsKeyMethodMessage{}, err
++		return tlsKeyMethodMessage{}, E.Extend(err, "random1")
 @@ -300 +301 @@ func parseTLSKeyMethod2Payload(payload []byte, server bool) (tlsKeyMethodMessage
 -	_, err = reader.Read(keySource.Random2)
 +	_, err = io.ReadFull(reader, keySource.Random2)
-@@ -490 +491 @@ func readLengthPrefixedString(reader *bytes.Reader) (string, error) {
+@@ -302 +303 @@ func parseTLSKeyMethod2Payload(payload []byte, server bool) (tlsKeyMethodMessage
+-		return tlsKeyMethodMessage{}, err
++		return tlsKeyMethodMessage{}, E.Extend(err, "random2")
+@@ -306 +307,10 @@ func parseTLSKeyMethod2Payload(payload []byte, server bool) (tlsKeyMethodMessage
+-		return tlsKeyMethodMessage{}, err
++		return tlsKeyMethodMessage{}, E.Extend(err, "options string")
++	}
++	// Older OpenVPN servers may end their key-method reply after the required
++	// options string. Upstream treats username, password, and peer-info reads as
++	// optional on the client side, so accept the same legacy shape.
++	if server && reader.Len() == 0 {
++		return tlsKeyMethodMessage{
++			OptionsString: optionsString,
++			KeySource:     keySource,
++		}, nil
+@@ -310 +320 @@ func parseTLSKeyMethod2Payload(payload []byte, server bool) (tlsKeyMethodMessage
+-		return tlsKeyMethodMessage{}, err
++		return tlsKeyMethodMessage{}, E.Extend(err, "username")
+@@ -314 +324 @@ func parseTLSKeyMethod2Payload(payload []byte, server bool) (tlsKeyMethodMessage
+-		return tlsKeyMethodMessage{}, err
++		return tlsKeyMethodMessage{}, E.Extend(err, "password")
+@@ -318 +328 @@ func parseTLSKeyMethod2Payload(payload []byte, server bool) (tlsKeyMethodMessage
+-		return tlsKeyMethodMessage{}, err
++		return tlsKeyMethodMessage{}, E.Extend(err, "peer info")
+@@ -490 +500 @@ func readLengthPrefixedString(reader *bytes.Reader) (string, error) {
 -	_, err = reader.Read(stringBytes)
 +	_, err = io.ReadFull(reader, stringBytes)
 diff --git a/peer_session.go b/peer_session.go
-index 534776d..fb4f228 100644
+index 534776d..87e170a 100644
 --- a/peer_session.go
 +++ b/peer_session.go
 @@ -4,0 +5,2 @@ import (
 +	"errors"
 +	"io"
-@@ -115,0 +118,37 @@ func readTLSControlRecord(connection *tls.Conn, deadline time.Time) ([]byte, err
+@@ -115,0 +118,41 @@ func readTLSControlRecord(connection *tls.Conn, deadline time.Time) ([]byte, err
 +// TLS is a byte stream: one OpenVPN key-method message may be returned by
 +// several Read calls. Accumulate only this bounded handshake message until it
 +// is structurally complete. Ordinary control messages keep the existing read
@@ -96,7 +132,11 @@ index 534776d..fb4f228 100644
 +		}
 +		if readErr != nil {
 +			if len(record) > 0 {
-+				return record, nil
++				_, parseErr := parseTLSKeyMethod2Payload(record, server)
++				return nil, E.Errors(
++					E.New("incomplete OpenVPN key-method record: ", len(record), " bytes"),
++					parseErr,
++				)
 +			}
 +			return nil, readErr
 +		}
