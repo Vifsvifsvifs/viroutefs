@@ -90,6 +90,7 @@ class VpnGateCatalogTest {
             server("de-fast", "DE", 18),
             server("us-fast", "US", 25),
             server("nl-fast", "NL", 30),
+            server("es-fast", "ES", 40),
             server("fr-slow", "FR", 90),
         )
 
@@ -101,12 +102,122 @@ class VpnGateCatalogTest {
         val group = result.config.profileGroups.single { it.id == VPN_GATE_AUTOMATIC_GROUP_ID }
         val selectedProfiles = result.config.profiles.filter { it.id in group.memberProfileIds }
 
-        assertEquals(listOf("JP", "DE", "US", "NL"), result.selectedServers.map { it.countryCode })
+        assertEquals(listOf("JP", "DE", "US", "NL", "ES", "FR"), result.selectedServers.map { it.countryCode })
         assertEquals(ProfileGroupMode.Latency, group.mode)
         assertEquals(group.id, result.config.defaultProfileId)
-        assertEquals(4, selectedProfiles.size)
+        assertEquals(6, selectedProfiles.size)
         assertTrue(selectedProfiles.all(TunnelProfile::enabled))
         assertTrue(selectedProfiles.none { it.name.contains("RU") })
+        assertTrue(selectedProfiles.all { it.sourceSubscriptionId == null && it.sourceEntryKey == null })
+        assertTrue(validateRoutingConfig(result.config).isEmpty())
+    }
+
+    @Test
+    fun automaticVpnGateIsOneManagedRouteForSelectedApps() {
+        val automatic = createAutomaticVpnGateRoute(
+            config = RoutingConfigDefaults.defaultConfig(),
+            servers = listOf(
+                server("jp", "JP", 12),
+                server("de", "DE", 18),
+            ),
+            excludedCountryCode = "RU",
+            makeDefault = false,
+        ).config
+            .withAutomaticVpnGateApps(listOf("com.google.android.youtube"))
+            .withAutomaticVpnGateEnabled(true)
+
+        assertEquals(RoutingConfigDefaults.SYSTEM_PROFILE_ID, automatic.defaultProfileId)
+        assertTrue(automatic.isAutomaticVpnGateEnabled())
+        assertEquals(
+            listOf("com.google.android.youtube"),
+            automatic.rules.single { it.id == VPN_GATE_AUTOMATIC_APP_RULE_ID }
+                .appMatchers.map { it.value },
+        )
+        assertTrue(validateRoutingConfig(automatic).isEmpty())
+
+        val disabled = automatic.withAutomaticVpnGateEnabled(false)
+        assertFalse(disabled.isAutomaticVpnGateEnabled())
+        assertEquals(RoutingConfigDefaults.SYSTEM_PROFILE_ID, disabled.defaultProfileId)
+
+        val removed = disabled.withoutAutomaticVpnGate()
+        assertFalse(removed.hasAutomaticVpnGate())
+        assertTrue(removed.profiles.none(TunnelProfile::isAutomaticVpnGateProfile))
+        assertTrue(removed.rules.none { it.id == VPN_GATE_AUTOMATIC_APP_RULE_ID })
+        assertTrue(validateRoutingConfig(removed).isEmpty())
+    }
+
+    @Test
+    fun betaTwelveLegacyVpnGateProfilesAreRepairedBeforeValidation() {
+        val legacy = createAutomaticVpnGateRoute(
+            config = RoutingConfigDefaults.defaultConfig(),
+            servers = listOf(
+                server("jp", "JP", 12),
+                server("de", "DE", 18),
+            ),
+            excludedCountryCode = "RU",
+        ).config.copy(
+            version = 15,
+            profiles = createAutomaticVpnGateRoute(
+                config = RoutingConfigDefaults.defaultConfig(),
+                servers = listOf(
+                    server("jp", "JP", 12),
+                    server("de", "DE", 18),
+                ),
+                excludedCountryCode = "RU",
+            ).config.profiles.map { profile ->
+                if (profile.isAutomaticVpnGateProfile()) {
+                    profile.copy(
+                        sourceSubscriptionId = "vpngate:auto",
+                        sourceEntryKey = profile.id,
+                    )
+                } else {
+                    profile
+                }
+            },
+        )
+
+        assertTrue(validateRoutingConfig(legacy).any { it.contains("подписка vpngate:auto не найдена") })
+        val migrated = legacy.withMigratedVpnGateManagement()
+        assertEquals(RoutingConfigDefaults.SYSTEM_PROFILE_ID, migrated.defaultProfileId)
+        assertFalse(migrated.isAutomaticVpnGateEnabled())
+        assertTrue(migrated.profiles.filter(TunnelProfile::isAutomaticVpnGateProfile).all {
+            it.sourceSubscriptionId == null && it.sourceEntryKey == null && !it.enabled
+        })
+        assertTrue(validateRoutingConfig(migrated).isEmpty())
+    }
+
+    @Test
+    fun migrationAndUnifiedDeleteNeverRemovePersonalProfileAddedToGroup() {
+        val servers = listOf(
+            server("jp", "JP", 12),
+            server("de", "DE", 18),
+        )
+        val automatic = createAutomaticVpnGateRoute(
+            config = RoutingConfigDefaults.defaultConfig(),
+            servers = servers,
+            excludedCountryCode = "RU",
+        ).config
+        val personal = previewVpnGateProfile(server("personal", "DE", 25))
+            .candidates.single().profile.copy(id = "profile_personal_openvpn", name = "Личный OpenVPN", enabled = true)
+        val mixed = automatic.copy(
+            version = 15,
+            profiles = automatic.profiles + personal,
+            profileGroups = automatic.profileGroups.map { group ->
+                if (group.id == VPN_GATE_AUTOMATIC_GROUP_ID) {
+                    group.copy(memberProfileIds = group.memberProfileIds + personal.id)
+                } else {
+                    group
+                }
+            },
+        )
+
+        val migrated = mixed.withMigratedVpnGateManagement()
+        assertTrue(migrated.profiles.single { it.id == personal.id }.enabled)
+
+        val removed = migrated.withoutAutomaticVpnGate()
+        assertTrue(removed.profiles.any { it.id == personal.id && it.enabled })
+        assertFalse(removed.hasAutomaticVpnGate())
+        assertTrue(validateRoutingConfig(removed).isEmpty())
     }
 
     private fun server(host: String, country: String, ping: Int): VpnGateServer {

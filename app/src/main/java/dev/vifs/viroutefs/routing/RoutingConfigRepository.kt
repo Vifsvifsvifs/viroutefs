@@ -70,12 +70,17 @@ class RoutingConfigRepository internal constructor(
             val configWithSecrets = decodedConfig
                 .withProfileSecrets(mergedSecrets)
                 .withSubscriptionUrls(mergedSubscriptionUrls)
-            val config = if (rawConfig.version < OPENVPN_ROUTE_ROUTER_MIGRATION_VERSION) {
+            val openVpnMigrated = if (rawConfig.version < OPENVPN_ROUTE_ROUTER_MIGRATION_VERSION) {
                 configWithSecrets
                     .withMigratedOpenVpnEndpointRoutes()
                     .withSyncedProfileAppRoutingRules()
             } else {
                 configWithSecrets
+            }
+            val config = if (rawConfig.version < VPN_GATE_MANAGEMENT_MIGRATION_VERSION) {
+                openVpnMigrated.withMigratedVpnGateManagement()
+            } else {
+                openVpnMigrated
             }
             val errors = validateRoutingConfig(config)
             if (errors.isNotEmpty()) {

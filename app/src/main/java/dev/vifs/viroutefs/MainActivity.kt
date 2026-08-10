@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -167,7 +168,6 @@ class MainActivity : ComponentActivity() {
                         onProfileImportConsumed = { incomingProfileImport = null },
                         quickTileStartRequested = quickTileStartRequested,
                         onQuickTileStartConsumed = { quickTileStartRequested = false },
-                        onAddQuickTile = { NetworkControlTileService.requestAdd(this@MainActivity) },
                         onSettings = { next ->
                             settings = next
                             settingsRepository.save(next)
@@ -239,7 +239,6 @@ private fun ViRouteFsApp(
     onProfileImportConsumed: () -> Unit,
     quickTileStartRequested: Boolean,
     onQuickTileStartConsumed: () -> Unit,
-    onAddQuickTile: () -> Unit,
     onSettings: (AppSettings) -> Unit,
 ) {
     val context = LocalContext.current
@@ -389,11 +388,52 @@ private fun ViRouteFsApp(
         }
     }
 
+    fun applyEasySetupAndStart(newConfig: RoutingConfig, note: String) {
+        val previousConfig = config
+        val normalizedConfig = newConfig
+            .copy(version = CURRENT_ROUTING_CONFIG_VERSION)
+            .withSyncedProfileAppRoutingRules()
+        config = normalizedConfig
+        message = note
+        scope.launch {
+            val saveResult = configSaveMutex.withLock {
+                runCatching { repository.save(normalizedConfig) }
+            }
+            saveResult
+                .onSuccess {
+                    if (vpnState.status in setOf(
+                            VpnServiceStatus.Starting,
+                            VpnServiceStatus.RuntimeActive,
+                            VpnServiceStatus.ServiceActiveNoTun,
+                            VpnServiceStatus.TunPreviewActive,
+                            VpnServiceStatus.TunTestRouteActive,
+                        )
+                    ) {
+                        vpnController.reloadLocalService(false)
+                    } else {
+                        setVpnEnabled(true)
+                    }
+                }
+                .onFailure { error ->
+                    config = previousConfig
+                    message = "Не удалось сохранить автоматическую настройку: ${error.localizedMessage ?: error::class.java.simpleName}"
+                }
+        }
+    }
+
     LaunchedEffect(quickTileStartRequested, loaded) {
         if (quickTileStartRequested && loaded) {
             selectedScreen = AppScreen.Vpn
             onQuickTileStartConsumed()
             setVpnEnabled(true)
+        }
+    }
+
+    BackHandler {
+        selectedScreen = when {
+            selectedScreen in moreScreens -> AppScreen.More
+            selectedScreen != AppScreen.Vpn -> AppScreen.Vpn
+            else -> AppScreen.Vpn
         }
     }
 
@@ -444,7 +484,7 @@ private fun ViRouteFsApp(
                 initialImportSource = incomingProfileImport,
                 onProfileImportConsumed = onProfileImportConsumed,
                 onVpnSwitch = ::setVpnEnabled,
-                onAddQuickTile = onAddQuickTile,
+                onEasySetupReady = ::applyEasySetupAndStart,
                 onTunTestRoutePreview = ::setTunTestRoutePreviewEnabled,
                 onClearPacketList = vpnController::clearPacketSummaries,
                 onPausePacketInspector = vpnController::setPacketInspectorPaused,
@@ -506,6 +546,20 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
     val selectedGroup = config.profileGroups.firstOrNull { it.id == selectedGroupId }
     val conflicts = remember(config.rules) { findExactRouteConflicts(config.rules) }
     val conflictsByRuleId = remember(conflicts) { conflicts.flatMap { conflict -> conflict.ruleIds.map { it to conflict } }.groupBy({ it.first }, { it.second }) }
+
+    BackHandler(enabled = selectedRoute != null || creatingRoute || selectedGroup != null || creatingGroup) {
+        when {
+            selectedRoute != null || creatingRoute -> {
+                selectedRouteId = null
+                creatingRoute = false
+                draftRoute = null
+            }
+            selectedGroup != null || creatingGroup -> {
+                selectedGroupId = null
+                creatingGroup = false
+            }
+        }
+    }
 
     if (selectedRoute != null || creatingRoute) {
         RouteDetailsScreen(

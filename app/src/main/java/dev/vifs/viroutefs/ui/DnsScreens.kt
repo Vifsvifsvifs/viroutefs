@@ -1,5 +1,6 @@
 package dev.vifs.viroutefs.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -55,6 +56,15 @@ internal fun DnsScreen(padding: PaddingValues, text: UiText, config: RoutingConf
     var selectedPolicyId by rememberSaveable { mutableStateOf<String?>(null) }
     var newPolicy by remember { mutableStateOf<DnsPolicy?>(null) }
     val selectedPolicy = newPolicy ?: config.dnsPolicies.firstOrNull { it.id == selectedPolicyId }
+
+    BackHandler(enabled = selectedPolicy != null || selectedRoute != DnsRoute.Main) {
+        if (selectedPolicy != null) {
+            selectedPolicyId = null
+            newPolicy = null
+        } else {
+            selectedRoute = DnsRoute.Main
+        }
+    }
 
     when {
         selectedPolicy != null -> DnsPolicyDetailsScreen(

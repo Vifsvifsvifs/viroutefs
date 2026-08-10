@@ -153,6 +153,7 @@ fun createAutomaticVpnGateRoute(
     servers: List<VpnGateServer>,
     excludedCountryCode: String,
     memberLimit: Int = VPN_GATE_AUTOMATIC_MEMBER_LIMIT,
+    makeDefault: Boolean = true,
 ): VpnGateAutomaticRouteResult {
     val countryCode = excludedCountryCode.trim().uppercase()
     require(countryCode.matches(Regex("[A-Z]{2}"))) {
@@ -185,8 +186,8 @@ fun createAutomaticVpnGateRoute(
                 selected += server to imported.copy(
                     id = profileId,
                     enabled = true,
-                    sourceSubscriptionId = VPN_GATE_AUTOMATIC_SOURCE_ID,
-                    sourceEntryKey = server.stableKey,
+                    sourceSubscriptionId = null,
+                    sourceEntryKey = null,
                     dnsPolicyId = existing?.dnsPolicyId,
                     appRoutingMode = existing?.appRoutingMode ?: ProfileAppRoutingMode.SelectedApps,
                     appRoutingPackages = existing?.appRoutingPackages.orEmpty(),
@@ -200,7 +201,7 @@ fun createAutomaticVpnGateRoute(
     }
 
     val oldAutomaticIds = config.profiles
-        .filter { it.sourceSubscriptionId == VPN_GATE_AUTOMATIC_SOURCE_ID }
+        .filter(TunnelProfile::isAutomaticVpnGateProfile)
         .mapTo(linkedSetOf(), TunnelProfile::id)
     val protectedOldIds = buildSet {
         config.rules
@@ -212,10 +213,18 @@ fun createAutomaticVpnGateRoute(
             .flatMapTo(this) { it.memberProfileIds.filter(oldAutomaticIds::contains) }
     }
     val selectedIds = selected.mapTo(linkedSetOf()) { it.second.id }
-    val retainedProfiles = config.profiles.filterNot { profile ->
-        profile.id in selectedIds ||
-            (profile.id in oldAutomaticIds && profile.id !in protectedOldIds)
-    }
+    val retainedProfiles = config.profiles
+        .filterNot { profile ->
+            profile.id in selectedIds ||
+                (profile.id in oldAutomaticIds && profile.id !in protectedOldIds)
+        }
+        .map { profile ->
+            if (profile.isAutomaticVpnGateProfile()) {
+                profile.copy(sourceSubscriptionId = null, sourceEntryKey = null)
+            } else {
+                profile
+            }
+        }
     val group = ProfileGroup(
         id = VPN_GATE_AUTOMATIC_GROUP_ID,
         name = "VPNGate • автоматический выбор",
@@ -227,10 +236,15 @@ fun createAutomaticVpnGateRoute(
         toleranceMs = 35,
         enabled = true,
     )
-    val next = config.copy(
+    val prepared = config.copy(
         profiles = retainedProfiles + selected.map { it.second },
         profileGroups = config.profileGroups.filterNot { it.id == VPN_GATE_AUTOMATIC_GROUP_ID } + group,
-    ).withDefaultRoute(group.id)
+    )
+    val next = if (makeDefault || config.defaultProfileId == VPN_GATE_AUTOMATIC_GROUP_ID) {
+        prepared.withDefaultRoute(group.id)
+    } else {
+        prepared.withDefaultRoute(config.defaultProfileId ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID)
+    }
     return VpnGateAutomaticRouteResult(
         config = next,
         selectedServers = selected.map { it.first },
@@ -238,11 +252,146 @@ fun createAutomaticVpnGateRoute(
     )
 }
 
+fun TunnelProfile.isAutomaticVpnGateProfile(): Boolean =
+    id.startsWith(VPN_GATE_AUTOMATIC_PROFILE_PREFIX) ||
+        sourceSubscriptionId == VPN_GATE_LEGACY_AUTOMATIC_SOURCE_ID
+
+fun RoutingConfig.hasAutomaticVpnGate(): Boolean =
+    profileGroups.any { it.id == VPN_GATE_AUTOMATIC_GROUP_ID }
+
+fun RoutingConfig.isAutomaticVpnGateEnabled(): Boolean {
+    val group = profileGroups.firstOrNull { it.id == VPN_GATE_AUTOMATIC_GROUP_ID } ?: return false
+    val members = profiles.filter { it.id in group.memberProfileIds && it.isAutomaticVpnGateProfile() }
+    return group.enabled && members.size >= 2 && members.any(TunnelProfile::enabled)
+}
+
+fun RoutingConfig.withAutomaticVpnGateEnabled(enabled: Boolean): RoutingConfig {
+    val group = profileGroups.firstOrNull { it.id == VPN_GATE_AUTOMATIC_GROUP_ID } ?: return this
+    val memberIds = group.memberProfileIds.toSet()
+    val hasAppSelection = rules.any {
+        it.id == VPN_GATE_AUTOMATIC_APP_RULE_ID && it.appMatchers.isNotEmpty()
+    }
+    var next = copy(
+        profiles = profiles.map { profile ->
+            if (profile.id in memberIds && profile.isAutomaticVpnGateProfile()) {
+                profile.copy(enabled = enabled, sourceSubscriptionId = null, sourceEntryKey = null)
+            } else {
+                profile
+            }
+        },
+        profileGroups = profileGroups.map { current ->
+            if (current.id == group.id) current.copy(enabled = enabled) else current
+        },
+        rules = rules.map { rule ->
+            if (rule.id == VPN_GATE_AUTOMATIC_APP_RULE_ID) rule.copy(enabled = enabled) else rule
+        },
+    )
+    next = when {
+        !enabled && next.defaultProfileId == group.id ->
+            next.withDefaultRoute(RoutingConfigDefaults.SYSTEM_PROFILE_ID)
+        enabled && !hasAppSelection -> next.withDefaultRoute(group.id)
+        else -> next.withSyncedProfileAppRoutingRules()
+    }
+    return next
+}
+
+fun RoutingConfig.withAutomaticVpnGateApps(packageNames: Collection<String>): RoutingConfig {
+    require(hasAutomaticVpnGate()) { "Сначала нужно подготовить автоматический VPNGate." }
+    val packages = packageNames.map(String::trim).filter(String::isNotBlank).distinct().sorted()
+    val withoutOldRule = rules.filterNot { it.id == VPN_GATE_AUTOMATIC_APP_RULE_ID }
+    val appRule = packages.takeIf { it.isNotEmpty() }?.let {
+        RouteRule(
+            id = VPN_GATE_AUTOMATIC_APP_RULE_ID,
+            name = "Приложения через автоматический VPNGate",
+            type = RouteRuleType.APP_GROUP,
+            targetProfileId = VPN_GATE_AUTOMATIC_GROUP_ID,
+            dnsPolicyId = RoutingConfigDefaults.SYSTEM_DNS_ID,
+            priority = VPN_GATE_AUTOMATIC_APP_RULE_PRIORITY,
+            matchers = emptyList(),
+            appMatchers = packages.map { packageName ->
+                AppMatcher(
+                    platform = AppMatcherPlatform.Android,
+                    value = packageName,
+                    displayName = packageName,
+                )
+            },
+            enabled = true,
+            reason = "Пользователь выбрал приложения в мастере «Настрой всё за меня».",
+            technicalDetails = "Управляемое правило VPNGate; остальные приложения используют основной маршрут System.",
+            recommendedAction = "Измените выбор в мастере VPNGate или удалите автоматический VPNGate одной кнопкой.",
+        )
+    }
+    return copy(rules = withoutOldRule + listOfNotNull(appRule))
+        .withDefaultRoute(RoutingConfigDefaults.SYSTEM_PROFILE_ID)
+}
+
+fun RoutingConfig.withoutAutomaticVpnGate(): RoutingConfig {
+    val automaticIds = profiles
+        .filter(TunnelProfile::isAutomaticVpnGateProfile)
+        .mapTo(linkedSetOf(), TunnelProfile::id)
+    val removedTargets = automaticIds + VPN_GATE_AUTOMATIC_GROUP_ID
+    var next = copy(
+        profiles = profiles.filterNot { it.id in automaticIds },
+        profileGroups = profileGroups
+            .filterNot { it.id == VPN_GATE_AUTOMATIC_GROUP_ID }
+            .map { current ->
+                val remainingMembers = current.memberProfileIds.filterNot(automaticIds::contains)
+                current.copy(
+                    memberProfileIds = remainingMembers,
+                    selectedProfileId = current.selectedProfileId
+                        ?.takeIf { it in remainingMembers }
+                        ?: remainingMembers.firstOrNull(),
+                )
+            }
+            .filter { it.memberProfileIds.distinct().size >= 2 },
+        rules = rules.filterNot {
+            it.id == VPN_GATE_AUTOMATIC_APP_RULE_ID || it.targetProfileId in removedTargets
+        },
+        dnsPolicies = dnsPolicies.map { policy ->
+            if (policy.resolveThroughProfileId in removedTargets) {
+                policy.copy(enabled = false, resolveThroughProfileId = null)
+            } else {
+                policy
+            }
+        },
+    )
+    if (next.defaultProfileId in removedTargets) {
+        next = next.withDefaultRoute(RoutingConfigDefaults.SYSTEM_PROFILE_ID)
+    }
+    return next.withSyncedProfileAppRoutingRules()
+}
+
+/** Repairs beta.11/beta.12 automatic profiles before full config validation. */
+fun RoutingConfig.withMigratedVpnGateManagement(): RoutingConfig {
+    val group = profileGroups.firstOrNull { it.id == VPN_GATE_AUTOMATIC_GROUP_ID }
+    val hasLegacyProfiles = profiles.any { it.isAutomaticVpnGateProfile() }
+    if (group == null && !hasLegacyProfiles) return this
+    var next = copy(
+        profiles = profiles.map { profile ->
+            if (profile.isAutomaticVpnGateProfile()) {
+                profile.copy(enabled = false, sourceSubscriptionId = null, sourceEntryKey = null)
+            } else {
+                profile
+            }
+        },
+        profileGroups = profileGroups.map { current ->
+            if (current.id == VPN_GATE_AUTOMATIC_GROUP_ID) current.copy(enabled = false) else current
+        },
+        rules = rules.map { rule ->
+            if (rule.id == VPN_GATE_AUTOMATIC_APP_RULE_ID) rule.copy(enabled = false) else rule
+        },
+    )
+    if (next.defaultProfileId == VPN_GATE_AUTOMATIC_GROUP_ID) {
+        next = next.withDefaultRoute(RoutingConfigDefaults.SYSTEM_PROFILE_ID)
+    }
+    return next.withSyncedProfileAppRoutingRules()
+}
+
 private fun automaticVpnGateProfileId(server: VpnGateServer): String {
     val digest = java.security.MessageDigest.getInstance("SHA-256")
         .digest(server.stableKey.toByteArray(StandardCharsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
-    return "profile_vpngate_auto_${digest.take(20)}"
+    return "$VPN_GATE_AUTOMATIC_PROFILE_PREFIX${digest.take(20)}"
 }
 
 private fun parseCsvRow(line: String): List<String> {
@@ -280,8 +429,12 @@ private const val MAX_VPN_GATE_CONFIG_BYTES = 256 * 1024
 private const val MAX_VPN_GATE_CONFIG_BASE64_CHARS = 512 * 1024
 private const val MAX_VPN_GATE_TEXT_LENGTH = 160
 private const val MAX_VPN_GATE_LONG_TEXT_LENGTH = 512
-private const val VPN_GATE_AUTOMATIC_MEMBER_LIMIT = 4
+const val VPN_GATE_AUTOMATIC_MEMBER_LIMIT = 6
 private const val VPN_GATE_AUTOMATIC_IMPORT_ATTEMPTS = 32
-private const val VPN_GATE_AUTOMATIC_SOURCE_ID = "vpngate:auto"
+private const val VPN_GATE_LEGACY_AUTOMATIC_SOURCE_ID = "vpngate:auto"
+const val VPN_GATE_AUTOMATIC_PROFILE_PREFIX = "profile_vpngate_auto_"
 const val VPN_GATE_AUTOMATIC_GROUP_ID = "group_vpngate_auto"
+const val VPN_GATE_AUTOMATIC_APP_RULE_ID = "route_vpngate_auto_apps"
+const val VPN_GATE_MANAGEMENT_MIGRATION_VERSION = 16
+private const val VPN_GATE_AUTOMATIC_APP_RULE_PRIORITY = 15_000
 private const val VPN_GATE_AUTOMATIC_TEST_URL = "https://www.gstatic.com/generate_204"

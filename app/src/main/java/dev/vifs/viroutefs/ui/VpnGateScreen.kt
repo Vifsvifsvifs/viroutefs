@@ -4,6 +4,7 @@ package dev.vifs.viroutefs.ui
 
 import android.content.Context
 import android.telephony.TelephonyManager
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -37,6 +38,7 @@ import dev.vifs.viroutefs.WarningText
 import dev.vifs.viroutefs.routing.ImportDuplicateResolution
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.VPN_GATE_VOLUNTEER_WARNING
+import dev.vifs.viroutefs.routing.VPN_GATE_AUTOMATIC_MEMBER_LIMIT
 import dev.vifs.viroutefs.routing.VpnGateCatalogClient
 import dev.vifs.viroutefs.routing.VpnGateCatalogSnapshot
 import dev.vifs.viroutefs.routing.VpnGateServer
@@ -57,6 +59,7 @@ internal fun VpnGateScreen(
     onBack: () -> Unit,
     onConfig: (RoutingConfig, String?) -> Unit,
 ) {
+    BackHandler(onBack = onBack)
     val context = LocalContext.current
     val client = remember(context) { VpnGateCatalogClient(context.applicationContext) }
     val scope = rememberCoroutineScope()
@@ -145,7 +148,7 @@ internal fun VpnGateScreen(
             .filter { it.countryCode.length == 2 && it.countryCode != excluded }
             .filter { (it.pingMillis ?: 0) > 0 }
             .sortedWith(compareBy<VpnGateServer> { it.pingMillis ?: Int.MAX_VALUE }.thenByDescending { it.score })
-            .take(4)
+            .take(VPN_GATE_AUTOMATIC_MEMBER_LIMIT)
             .toList()
     }
 
@@ -214,7 +217,7 @@ internal fun VpnGateScreen(
                     if (selectionMode == VPN_GATE_MODE_MANUAL) {
                         "Вы видите полный список и добавляете один выключенный профиль вручную."
                     } else {
-                        "ViRouteFS исключит вашу страну, подготовит четыре сервера с наименьшим пингом и будет проверять их через реальное HTTPS-соединение каждые 60 секунд."
+                        "ViRouteFS исключит вашу страну, подготовит до шести серверов с наименьшим пингом и будет проверять их через реальное HTTPS-соединение каждые 60 секунд."
                     },
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -252,7 +255,7 @@ internal fun VpnGateScreen(
                         )
                     }
                     Text(
-                        "После подтверждения профили будут включены, группа станет основным маршрутом, а System не будет добавлен как скрытый резерв. При падении сервера новые соединения пойдут через другой доступный сервер с малой задержкой.",
+                        "После подтверждения появится один управляемый пункт VPNGate. Внутренние серверы не будут засорять список VPN. При каждом включении каталог анализируется заново, а при падении сервера новые соединения пойдут через другой доступный сервер с малой задержкой.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Button(
@@ -380,7 +383,7 @@ internal fun VpnGateScreen(
     }
 }
 
-private fun detectDeviceCountryCode(context: Context): String {
+internal fun detectDeviceCountryCode(context: Context): String {
     val telephony = context.getSystemService(TelephonyManager::class.java)
     return listOf(
         runCatching { telephony?.networkCountryIso }.getOrNull(),

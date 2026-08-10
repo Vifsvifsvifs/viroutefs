@@ -24,9 +24,9 @@ val donationUrl = providers.environmentVariable("VIROUTEFS_DONATION_URL")
     ?.trim()
     ?.takeIf(String::isNotBlank)
     ?: "https://messenger.online.sberbank.ru/sl/PV0SJRfgsEARtx5Ka"
-val baseVersionName = "0.14.0-beta.12"
+val baseVersionName = "0.14.0-beta.13"
 val appVersionName = if (buildNumber > 0) "$baseVersionName.$buildNumber" else baseVersionName
-val appVersionCode = 14012 + buildNumber
+val appVersionCode = 14013 + buildNumber
 
 android {
     namespace = "dev.vifs.viroutefs"

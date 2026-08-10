@@ -6,6 +6,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.graphicsLayer
@@ -94,6 +95,8 @@ import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigBackup
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
+import dev.vifs.viroutefs.routing.VPN_GATE_AUTOMATIC_APP_RULE_ID
+import dev.vifs.viroutefs.routing.VPN_GATE_AUTOMATIC_GROUP_ID
 import dev.vifs.viroutefs.routing.ImportDuplicateResolution
 import dev.vifs.viroutefs.routing.ProfileImportPreview
 import dev.vifs.viroutefs.routing.ProfileAppRoutingMode
@@ -112,8 +115,13 @@ import dev.vifs.viroutefs.routing.singBoxProfileTemplate
 import dev.vifs.viroutefs.routing.singBoxProtocolSchema
 import dev.vifs.viroutefs.routing.validateSingBoxProfile
 import dev.vifs.viroutefs.routing.withDefaultRoute
+import dev.vifs.viroutefs.routing.hasAutomaticVpnGate
+import dev.vifs.viroutefs.routing.isAutomaticVpnGateEnabled
+import dev.vifs.viroutefs.routing.isAutomaticVpnGateProfile
+import dev.vifs.viroutefs.routing.withAutomaticVpnGateEnabled
 import dev.vifs.viroutefs.routing.withProfileAppRouting
 import dev.vifs.viroutefs.routing.withoutProfile
+import dev.vifs.viroutefs.routing.withoutAutomaticVpnGate
 import dev.vifs.viroutefs.routing.isManagedProfileAppRoutingRule
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_NOTICE
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_SECRET_NOTICE
@@ -187,7 +195,7 @@ internal fun VpnScreen(
     initialImportSource: String?,
     onProfileImportConsumed: () -> Unit,
     onVpnSwitch: (Boolean) -> Unit,
-    onAddQuickTile: () -> Unit,
+    onEasySetupReady: (RoutingConfig, String) -> Unit,
     @Suppress("UNUSED_PARAMETER") onTunTestRoutePreview: (Boolean) -> Unit,
     @Suppress("UNUSED_PARAMETER") onClearPacketList: () -> Unit,
     @Suppress("UNUSED_PARAMETER") onPausePacketInspector: (Boolean) -> Unit,
@@ -197,6 +205,8 @@ internal fun VpnScreen(
     var addSocks5 by rememberSaveable { mutableStateOf(false) }
     var addVless by rememberSaveable { mutableStateOf(false) }
     var showVpnGate by rememberSaveable { mutableStateOf(false) }
+    var showEasySetup by rememberSaveable { mutableStateOf(false) }
+    var showAddVpnSheet by rememberSaveable { mutableStateOf(false) }
     var addSingBoxTypeName by rememberSaveable { mutableStateOf<String?>(null) }
     var showProfileImport by rememberSaveable { mutableStateOf(!initialImportSource.isNullOrBlank()) }
     var showConfigBackup by rememberSaveable { mutableStateOf(false) }
@@ -216,8 +226,11 @@ internal fun VpnScreen(
             RoutingConfigDefaults.SYSTEM_PROFILE_ID,
             RoutingConfigDefaults.BLOCK_PROFILE_ID,
             RoutingConfigDefaults.BYEDPI_PROFILE_ID,
-        ) && (!it.mockOnly || it.type == TunnelType.Socks5 || it.type == TunnelType.VLESS || it.singBox != null)
+        ) && !it.isAutomaticVpnGateProfile() &&
+            (!it.mockOnly || it.type == TunnelType.Socks5 || it.type == TunnelType.VLESS || it.singBox != null)
     }
+    val hasAutomaticVpnGate = config.hasAutomaticVpnGate()
+    val visibleProfileCount = userProfiles.size + if (hasAutomaticVpnGate) 1 else 0
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val readinessReport = remember(config) { evaluateReleaseReadiness(config) }
@@ -239,6 +252,27 @@ internal fun VpnScreen(
     var devBridgeMessage by rememberSaveable { mutableStateOf<String?>(null) }
     val profileTestController = remember(context) { VpnServiceController(context.applicationContext) }
     var profileTests by remember { mutableStateOf<Map<String, ProfileTunnelTestReport>>(emptyMap()) }
+
+    BackHandler(
+        enabled = showProfileImport || showConfigBackup || showVpnGate || showEasySetup ||
+            addSocks5 || addVless || addSingBoxType != null || selectedProfile != null || showAddVpnSheet,
+    ) {
+        when {
+            showAddVpnSheet -> showAddVpnSheet = false
+            showProfileImport -> {
+                showProfileImport = false
+                profileImportSource = ""
+                onProfileImportConsumed()
+            }
+            showConfigBackup -> showConfigBackup = false
+            showVpnGate -> showVpnGate = false
+            showEasySetup -> showEasySetup = false
+            addSocks5 -> addSocks5 = false
+            addVless -> addVless = false
+            addSingBoxType != null -> addSingBoxTypeName = null
+            selectedProfile != null -> selectedProfileId = null
+        }
+    }
 
     fun testProfile(profile: TunnelProfile) {
         if (profileTests[profile.id]?.running == true) return
@@ -335,6 +369,19 @@ internal fun VpnScreen(
         return
     }
 
+    if (showEasySetup) {
+        EasySetupScreen(
+            padding = padding,
+            config = config,
+            onBack = { showEasySetup = false },
+            onReady = { next, message ->
+                showEasySetup = false
+                onEasySetupReady(next, message)
+            },
+        )
+        return
+    }
+
     if (addSocks5) {
         Socks5ProfileEditorScreen(
             padding = padding,
@@ -387,7 +434,6 @@ internal fun VpnScreen(
         return
     }
 
-    var showAddVpnSheet by remember { mutableStateOf(false) }
     val addVpnSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     if (showAddVpnSheet) {
@@ -429,7 +475,7 @@ internal fun VpnScreen(
                 serviceLabel = vpnState.label(text),
                 serviceDetail = vpnState.detail,
                 onToggle = { onVpnSwitch(!vpnState.switchChecked) },
-                onAddQuickTile = onAddQuickTile,
+                onEasySetup = { showEasySetup = true },
             )
         }
         item {
@@ -439,7 +485,7 @@ internal fun VpnScreen(
                 ruleCount = config.rules.count {
                     it.enabled && it.type != RouteRuleType.DEFAULT && !it.isManagedProfileAppRoutingRule()
                 },
-                profileCount = userProfiles.size,
+                profileCount = visibleProfileCount,
                 onAddVpn = { showAddVpnSheet = true },
                 onUseSystem = {
                     onConfig(
@@ -527,11 +573,20 @@ internal fun VpnScreen(
         }
         item {
             ProfilesHeader(
-                profileCount = userProfiles.size,
+                profileCount = visibleProfileCount,
                 onAdd = { showAddVpnSheet = true },
             )
         }
-        if (userProfiles.isEmpty()) {
+        if (hasAutomaticVpnGate) {
+            item {
+                ManagedVpnGateCard(
+                    config = config,
+                    onOpenSetup = { showEasySetup = true },
+                    onConfig = onConfig,
+                )
+            }
+        }
+        if (visibleProfileCount == 0) {
             item {
                 CardBlock {
                     Text("VPN-профили не добавлены", fontWeight = FontWeight.SemiBold)
@@ -610,7 +665,7 @@ private fun NetworkControlHero(
     serviceLabel: String,
     serviceDetail: String?,
     onToggle: () -> Unit,
-    onAddQuickTile: () -> Unit,
+    onEasySetup: () -> Unit,
 ) {
     val containerColor by animateColorAsState(
         targetValue = if (active) Color(0xFF132A1D) else MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -700,10 +755,10 @@ private fun NetworkControlHero(
             }
 
             OutlinedButton(
-                onClick = onAddQuickTile,
+                onClick = onEasySetup,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Добавить кнопку в шторку Android")
+                Text("Настрой всё за меня")
             }
 
             StatusStrip(
@@ -1658,6 +1713,75 @@ private suspend fun readProfileImportBytes(
             output.write(buffer, 0, read)
         }
         output.toByteArray()
+    }
+}
+
+@Composable
+private fun ManagedVpnGateCard(
+    config: RoutingConfig,
+    onOpenSetup: () -> Unit,
+    onConfig: (RoutingConfig, String?) -> Unit,
+) {
+    val group = config.profileGroups.firstOrNull { it.id == VPN_GATE_AUTOMATIC_GROUP_ID } ?: return
+    val enabled = config.isAutomaticVpnGateEnabled()
+    val selectedAppCount = config.rules
+        .firstOrNull { it.id == VPN_GATE_AUTOMATIC_APP_RULE_ID }
+        ?.appMatchers
+        ?.size
+        ?: 0
+    CardBlock {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("VPNGate • автоматически", fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (selectedAppCount > 0) {
+                        "Через VPNGate: $selectedAppCount приложений"
+                    } else {
+                        "Для всего трафика, когда включён"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = { checked ->
+                    onConfig(
+                        config.withAutomaticVpnGateEnabled(checked),
+                        if (checked) {
+                            "Автоматический VPNGate включён. При запуске каталог будет проверен заново."
+                        } else {
+                            "Автоматический VPNGate выключен; обычный интернет System сохранён."
+                        },
+                    )
+                },
+            )
+        }
+        Text(
+            "Внутри подготовлено серверов: ${group.memberProfileIds.size}. Они скрыты из общего списка. При каждом включении выполняется новый анализ, затем группа переключается между доступными серверами с малой задержкой.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = onOpenSetup, modifier = Modifier.weight(1f)) {
+                Text("Приложения")
+            }
+            TextButton(
+                onClick = {
+                    onConfig(
+                        config.withoutAutomaticVpnGate(),
+                        "Автоматический VPNGate и все его внутренние серверы удалены одним действием.",
+                    )
+                },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Удалить")
+            }
+        }
     }
 }
 

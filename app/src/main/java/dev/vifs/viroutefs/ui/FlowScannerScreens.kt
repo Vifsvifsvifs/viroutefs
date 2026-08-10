@@ -3,6 +3,7 @@ package dev.vifs.viroutefs.ui
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -304,6 +305,15 @@ internal fun FlowScannerScreen(
                     exportMessage = "Не удалось сохранить CSV: ${error.localizedMessage ?: "неизвестная ошибка"}"
                 }
             }
+        }
+    }
+
+    BackHandler(enabled = appPickerOpen || runtimeDetailsOpen || liveDetailsOpen || selectedEvent != null) {
+        when {
+            appPickerOpen -> appPickerOpen = false
+            runtimeDetailsOpen -> runtimeDetailsOpen = false
+            liveDetailsOpen -> liveDetailsOpen = false
+            selectedEvent != null -> selectedEventIndex = null
         }
     }
 
