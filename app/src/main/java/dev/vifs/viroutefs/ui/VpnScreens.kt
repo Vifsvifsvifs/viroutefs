@@ -2560,6 +2560,9 @@ private fun SingBoxProfileEditorScreen(
     var openVpnPkcs12Password by remember(profile?.id ?: "new-${type.name}-pkcs12-password") {
         mutableStateOf("")
     }
+    var importedOpenVpnRoutes by remember(profile?.id ?: "new-${type.name}-imported-routes") {
+        mutableStateOf<List<String>?>(null)
+    }
     var errors by remember(profile?.id ?: "new-${type.name}-errors") {
         mutableStateOf(emptyList<String>())
     }
@@ -2728,6 +2731,7 @@ private fun SingBoxProfileEditorScreen(
             }
             imported.onSuccess { result ->
                 optionsJson = result.optionsJson
+                importedOpenVpnRoutes = result.routes
                 openVpnRoot(result.optionsJson).let { root ->
                     openVpnUsername = root.optString("username")
                     openVpnPassword = root.optString("password")
@@ -2774,7 +2778,7 @@ private fun SingBoxProfileEditorScreen(
             singBox = draft,
             appRoutingMode = profile?.appRoutingMode ?: ProfileAppRoutingMode.SelectedApps,
             appRoutingPackages = profile?.appRoutingPackages.orEmpty(),
-            appRoutingNetworks = profile?.appRoutingNetworks.orEmpty(),
+            appRoutingNetworks = importedOpenVpnRoutes ?: profile?.appRoutingNetworks.orEmpty(),
         )
         val nextProfiles = if (profile == null) {
             config.profiles + nextProfile

@@ -11,12 +11,15 @@ import org.json.JSONObject
 data class OpenVpnImportResult(
     val optionsJson: String,
     val warnings: List<String>,
+    val routes: List<String>,
 )
 
 data class OpenVpnAuthUserPass(
     val username: String,
     val password: String,
 )
+
+internal const val OPENVPN_ROUTE_ROUTER_MIGRATION_VERSION = 15
 
 /** Reads the standard two-line OpenVPN auth-user-pass file without logging its contents. */
 fun importOpenVpnAuthUserPass(bytes: ByteArray): OpenVpnAuthUserPass {
@@ -223,8 +226,51 @@ fun importOpenVpnProfile(source: String): OpenVpnImportResult {
     return OpenVpnImportResult(
         optionsJson = root.toString(2),
         warnings = warnings.distinct(),
+        routes = routes.distinct(),
     )
 }
+
+/**
+ * One-time compatibility migration for profiles imported by beta.10.
+ *
+ * beta.10 preserved OpenVPN `route` directives in the sing-box endpoint, but
+ * did not mirror them to ViRouteFS' shared router. An endpoint that is not a
+ * default/rule target is not started, so those networks could never reach it.
+ */
+fun RoutingConfig.withMigratedOpenVpnEndpointRoutes(): RoutingConfig {
+    var changed = false
+    val migratedProfiles = profiles.map { profile ->
+        if (profile.type != TunnelType.OpenVpn || profile.appRoutingNetworks.isNotEmpty()) {
+            return@map profile
+        }
+        val routes = profile.singBox
+            ?.optionsJson
+            ?.let(::openVpnEndpointRoutes)
+            .orEmpty()
+        if (routes.isEmpty()) {
+            profile
+        } else {
+            changed = true
+            profile.copy(appRoutingNetworks = routes)
+        }
+    }
+    return if (changed) copy(profiles = migratedProfiles) else this
+}
+
+internal fun openVpnEndpointRoutes(optionsJson: String): List<String> = runCatching {
+    val root = JSONObject(optionsJson)
+    if (root.optString("type") != "openvpn-client") return@runCatching emptyList()
+    val routes = root.optJSONArray("routes") ?: return@runCatching emptyList()
+    buildList {
+        repeat(routes.length()) { index ->
+            routes.optString(index)
+                .trim()
+                .takeIf(String::isNotBlank)
+                ?.takeIf(::isValidIpOrCidr)
+                ?.let(::add)
+        }
+    }.distinct()
+}.getOrDefault(emptyList())
 
 private data class OpenVpnRemote(
     val host: String,

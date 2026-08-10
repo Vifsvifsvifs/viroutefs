@@ -67,9 +67,16 @@ class RoutingConfigRepository internal constructor(
                 .mergeSecrets(legacySecrets)
                 .mergeSecrets(embeddedSecrets)
             val mergedSubscriptionUrls = embeddedSubscriptionUrls + encryptedSubscriptionUrls
-            val config = decodedConfig
+            val configWithSecrets = decodedConfig
                 .withProfileSecrets(mergedSecrets)
                 .withSubscriptionUrls(mergedSubscriptionUrls)
+            val config = if (rawConfig.version < OPENVPN_ROUTE_ROUTER_MIGRATION_VERSION) {
+                configWithSecrets
+                    .withMigratedOpenVpnEndpointRoutes()
+                    .withSyncedProfileAppRoutingRules()
+            } else {
+                configWithSecrets
+            }
             val errors = validateRoutingConfig(config)
             if (errors.isNotEmpty()) {
                 RoutingConfigLoadResult(RoutingConfigDefaults.defaultConfig(), "Сохранённая конфигурация некорректна: ${errors.joinToString()}")

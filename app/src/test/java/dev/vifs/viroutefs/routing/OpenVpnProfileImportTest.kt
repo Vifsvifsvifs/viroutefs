@@ -81,7 +81,37 @@ class OpenVpnProfileImportTest {
         assertEquals("AES-256-GCM", endpoint.getString("data_ciphers_fallback"))
         assertEquals("10.0.0.0/24", endpoint.getJSONArray("routes").getString(0))
         assertEquals("10.40.0.0/24", endpoint.getJSONArray("routes").getString(1))
+        assertEquals(listOf("10.0.0.0/24", "10.40.0.0/24"), result.routes)
         assertFalse(result.warnings.any { it.contains("dev") || it.contains("route»") })
+    }
+
+    @Test
+    fun migratesBeta10EndpointRoutesToSharedRouter() {
+        val endpoint = JSONObject()
+            .put("type", "openvpn-client")
+            .put("routes", org.json.JSONArray(listOf("10.0.0.0/24", "10.40.0.0/24", "invalid")))
+        val openVpn = TunnelProfile(
+            id = "office-openvpn",
+            name = "Office",
+            type = TunnelType.OpenVpn,
+            description = "Imported OpenVPN profile",
+            enabled = true,
+            mockOnly = false,
+            singBox = SingBoxProfileConfig(SingBoxProfileKind.Endpoint, endpoint.toString()),
+        )
+
+        val migrated = RoutingConfigDefaults.defaultConfig()
+            .copy(profiles = RoutingConfigDefaults.defaultConfig().profiles + openVpn)
+            .withMigratedOpenVpnEndpointRoutes()
+            .withSyncedProfileAppRoutingRules()
+
+        val profile = migrated.profiles.single { it.id == openVpn.id }
+        assertEquals(listOf("10.0.0.0/24", "10.40.0.0/24"), profile.appRoutingNetworks)
+        assertTrue(migrated.rules.any { rule ->
+            rule.targetProfileId == openVpn.id &&
+                rule.type == RouteRuleType.CIDR &&
+                rule.matchers == profile.appRoutingNetworks
+        })
     }
 
     @Test
