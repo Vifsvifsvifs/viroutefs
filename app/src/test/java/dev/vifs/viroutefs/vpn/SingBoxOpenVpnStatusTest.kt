@@ -59,4 +59,23 @@ class SingBoxOpenVpnStatusTest {
 
         assertEquals("Connection reset", result)
     }
+
+    @Test
+    fun runtimeLogExplainsFailureWhileEndpointIsStillConnecting() {
+        val result = openVpnProfileTestFailure(
+            transportFailure = "Connection reset",
+            status = OpenVpnRuntimeStatusSnapshot(
+                state = "connecting",
+                stateText = "Connecting",
+                error = "",
+                connected = false,
+            ),
+            statusStreamError = null,
+            runtimeDiagnostic = "openvpn-client[office]: TLS handshake failed",
+        )
+
+        assertContains(result, "Connecting")
+        assertContains(result, "TLS handshake failed")
+        assertContains(result, "Connection reset")
+    }
 }

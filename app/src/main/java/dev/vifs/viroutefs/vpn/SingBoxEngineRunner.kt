@@ -108,6 +108,7 @@ internal class SingBoxEngineRunner(
     private val running = AtomicBoolean(false)
     @Volatile private var openVpnStatuses: Map<String, OpenVpnRuntimeStatusSnapshot> = emptyMap()
     @Volatile private var openVpnStatusStreamError: String? = null
+    @Volatile private var openVpnRuntimeDiagnostics: Map<String, List<String>> = emptyMap()
 
     fun start(configJson: String): Result<Unit> {
         if (running.get()) return Result.success(Unit)
@@ -201,6 +202,9 @@ internal class SingBoxEngineRunner(
                 transportFailure = transportFailure,
                 status = openVpnStatuses[profileId],
                 statusStreamError = openVpnStatusStreamError,
+                runtimeDiagnostic = openVpnRuntimeDiagnostics[profileId]
+                    ?.takeLast(MAX_OPENVPN_DIAGNOSTIC_LINES)
+                    ?.joinToString(" | "),
             )
         }
         EngineConnectionTest(
@@ -245,7 +249,9 @@ internal class SingBoxEngineRunner(
             if (managedProfileGroups.isNotEmpty()) {
                 addCommand(Libbox.CommandOutbounds)
             }
-            if (dnsFallbackPolicyNames.isNotEmpty()) addCommand(Libbox.CommandLog)
+            if (dnsFallbackPolicyNames.isNotEmpty() || openVpnProfileTags.isNotEmpty()) {
+                addCommand(Libbox.CommandLog)
+            }
         }
         val client = CommandClient(ConnectionClientHandler(), options)
         val groupController = managedProfileGroups.takeIf(List<*>::isNotEmpty)?.let {
@@ -300,6 +306,7 @@ internal class SingBoxEngineRunner(
             connections = Connections()
             openVpnStatuses = emptyMap()
             openVpnStatusStreamError = null
+            openVpnRuntimeDiagnostics = emptyMap()
         }
         onConnections(emptyList())
     }
@@ -371,7 +378,9 @@ internal class SingBoxEngineRunner(
 
         override fun updateClashMode(newMode: String?) = Unit
 
-        override fun clearLogs() = Unit
+        override fun clearLogs() {
+            synchronized(lock) { openVpnRuntimeDiagnostics = emptyMap() }
+        }
 
         override fun setDefaultLogLevel(level: Int) = Unit
 
@@ -388,19 +397,47 @@ internal class SingBoxEngineRunner(
         }
 
         override fun writeLogs(messageList: LogIterator?) {
-            if (messageList == null || dnsFallbackPolicyNames.isEmpty()) return
+            if (messageList == null) return
             while (messageList.hasNext()) {
                 val message = messageList.next()?.message.orEmpty()
-                if (message.contains(DNS_EVALUATE_FAILURE_MARKER, ignoreCase = true)) {
+                if (
+                    dnsFallbackPolicyNames.isNotEmpty() &&
+                    message.contains(DNS_EVALUATE_FAILURE_MARKER, ignoreCase = true)
+                ) {
                     // The engine log contains the queried hostname. ViRouteFS
                     // intentionally drops it and emits only a generic,
                     // bounded in-memory fallback event.
                     onDnsFallback(dnsFallbackPolicyNames)
                 }
+                rememberOpenVpnDiagnostic(message)
             }
         }
 
         override fun writeStatus(message: StatusMessage?) = Unit
+
+        private fun rememberOpenVpnDiagnostic(message: String) {
+            if (openVpnProfileTags.isEmpty()) return
+            val profileIds = openVpnProfileTags
+                .filterValues { tag -> message.contains(tag, ignoreCase = true) }
+                .keys
+                .ifEmpty {
+                    openVpnProfileTags.keys.takeIf {
+                        it.size == 1 && message.contains("openvpn", ignoreCase = true)
+                    }.orEmpty()
+                }
+            if (profileIds.isEmpty()) return
+            val diagnostic = sanitizeOpenVpnDiagnostic(message)
+            if (diagnostic.isBlank()) return
+            synchronized(lock) {
+                val next = openVpnRuntimeDiagnostics.toMutableMap()
+                profileIds.forEach { profileId ->
+                    next[profileId] = (next[profileId].orEmpty() + diagnostic)
+                        .distinct()
+                        .takeLast(MAX_OPENVPN_STORED_LOG_LINES)
+                }
+                openVpnRuntimeDiagnostics = next
+            }
+        }
 
         override fun writeConnectionEvents(events: ConnectionEvents?) {
             if (events == null) return
@@ -867,6 +904,8 @@ internal class SingBoxEngineRunner(
         const val MIN_MTU = 1280
         const val MAX_MTU = 9000
         const val MAX_LOG_LENGTH = 600
+        const val MAX_OPENVPN_DIAGNOSTIC_LINES = 4
+        const val MAX_OPENVPN_STORED_LOG_LINES = 12
         const val MAX_FLOW_HISTORY = 250
         const val PROFILE_TEST_ATTEMPTS = 2
         const val PROFILE_TEST_TIMEOUT_MILLIS = 12_000
@@ -909,14 +948,16 @@ internal fun openVpnProfileTestFailure(
     transportFailure: String,
     status: OpenVpnRuntimeStatusSnapshot?,
     statusStreamError: String?,
+    runtimeDiagnostic: String? = null,
 ): String {
     val transport = sanitizeOpenVpnDiagnostic(transportFailure)
+    val runtime = sanitizeOpenVpnDiagnostic(runtimeDiagnostic.orEmpty())
     if (status == null) {
         val streamProblem = sanitizeOpenVpnDiagnostic(statusStreamError.orEmpty())
-        return if (streamProblem.isBlank()) {
-            transport
-        } else {
-            "$transport Статус OpenVPN недоступен: $streamProblem"
+        return when {
+            runtime.isNotBlank() -> "OpenVPN: $runtime. Сетевая ошибка: $transport"
+            streamProblem.isNotBlank() -> "$transport Статус OpenVPN недоступен: $streamProblem"
+            else -> transport
         }
     }
     val state = sanitizeOpenVpnDiagnostic(status.stateText.ifBlank { status.state })
@@ -933,6 +974,9 @@ internal fun openVpnProfileTestFailure(
             "OpenVPN ожидает данные авторизации. Проверьте логин, пароль или дополнительный запрос провайдера."
         status.connected ->
             "OpenVPN-туннель установлен, но HTTPS-проверка через него не прошла: $transport"
+        runtime.isNotBlank() ->
+            "OpenVPN${state.takeIf(String::isNotBlank)?.let { " ($it)" }.orEmpty()}: " +
+                "$runtime. Сетевая ошибка: $transport"
         state.isNotBlank() ->
             "OpenVPN ещё не подключён ($state). Сетевая ошибка: $transport"
         else -> transport
