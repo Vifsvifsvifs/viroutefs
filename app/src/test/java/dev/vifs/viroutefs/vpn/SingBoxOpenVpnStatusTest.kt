@@ -6,8 +6,23 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class SingBoxOpenVpnStatusTest {
+    @Test
+    fun connectionProbeNoiseDoesNotHideNativeSessionFailure() {
+        assertTrue(
+            isOpenVpnProbeNoise(
+                "connection: open connection to www.gstatic.com:443 using outbound/openvpn-client[office]: endpoint is not ready yet",
+            ),
+        )
+        assertFalse(
+            isOpenVpnProbeNoise(
+                "endpoint/openvpn-client[office]: session with 10.0.0.1 over tcp failed: openvpn tls handshake: EOF",
+            ),
+        )
+    }
+
     @Test
     fun nativeOpenVpnErrorReplacesGenericTransportFailure() {
         val result = openVpnProfileTestFailure(

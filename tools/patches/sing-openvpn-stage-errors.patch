@@ -1,0 +1,70 @@
+diff --git a/client_session_tls.go b/client_session_tls.go
+index 38df474..3eec80d 100644
+--- a/client_session_tls.go
++++ b/client_session_tls.go
+@@ -236,7 +236,7 @@ func (c *tlsClient) Start() error {
+ 	serverResetPacket, err := c.handshakeReset(handshakeDeadline)
+ 	if err != nil {
+ 		_ = c.Close()
+-		return err
++		return E.Extend(err, "openvpn reset handshake")
+ 	}
+ 
+ 	// Upstream process_incoming_link_part1 (forward.c) resets ping_rec_interval
+@@ -278,7 +278,7 @@ func (c *tlsClient) Start() error {
+ 	deadlineErr := tlsConnection.SetDeadline(handshakeDeadline)
+ 	if deadlineErr != nil {
+ 		_ = c.Close()
+-		return deadlineErr
++		return E.Extend(deadlineErr, "openvpn tls deadline")
+ 	}
+ 	handshakeErr := tlsConnection.Handshake()
+ 	if handshakeErr != nil {
+@@ -286,14 +286,14 @@ func (c *tlsClient) Start() error {
+ 		if E.IsTimeout(handshakeErr) {
+ 			return E.Extend(ErrHandshakeTimeout, handshakeErr.Error())
+ 		}
+-		return handshakeErr
++		return E.Extend(handshakeErr, "openvpn tls handshake")
+ 	}
+ 	_ = tlsConnection.SetDeadline(time.Time{})
+ 
+ 	err = c.exchangeKeyMethod(handshakeDeadline)
+ 	if err != nil {
+ 		_ = c.Close()
+-		return err
++		return E.Extend(err, "openvpn key-method exchange")
+ 	}
+ 
+ 	selectedCipher := ""
+@@ -307,18 +307,18 @@ func (c *tlsClient) Start() error {
+ 	}
+ 	if err != nil {
+ 		_ = c.Close()
+-		return err
++		return E.Extend(err, "openvpn pull configuration")
+ 	}
+ 	c.parent.clearChallengeOwnedBy(c)
+ 	selectedCipher, err = tlsValidateServerPushedCipher(c.parent.options, selectedCipher)
+ 	if err != nil {
+ 		_ = c.Close()
+-		return err
++		return E.Extend(err, "openvpn cipher negotiation")
+ 	}
+ 	keyMaterial, err := c.roleCallbacks.deriveKeyMaterial(c.tlsPeerSession)
+ 	if err != nil {
+ 		_ = c.Close()
+-		return err
++		return E.Extend(err, "openvpn key derivation")
+ 	}
+ 	initialCodec, err := newTLSDataCodec(
+ 		keyMaterial,
+@@ -330,7 +330,7 @@ func (c *tlsClient) Start() error {
+ 	)
+ 	if err != nil {
+ 		_ = c.Close()
+-		return err
++		return E.Extend(err, "openvpn data channel")
+ 	}
+ 	c.remoteSelectedCipher = selectedCipher
+ 	c.remoteSelectedAuth = selectedAuth

@@ -163,6 +163,7 @@ data class ProfileGroup(
     val testUrl: String = "https://www.gstatic.com/generate_204",
     val testIntervalSeconds: Int = 180,
     val toleranceMs: Int = 50,
+    val preferredCountryCode: String? = null,
     val enabled: Boolean = true,
 )
 
@@ -710,6 +711,11 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
             add("Группа ${group.name}: выбранный профиль не входит в группу.")
         }
         if (group.mode != ProfileGroupMode.Manual) {
+            if (group.preferredCountryCode != null &&
+                !group.preferredCountryCode.matches(Regex("[A-Z]{2}"))
+            ) {
+                add("Группа ${group.name}: код предпочтительной страны должен содержать две заглавные латинские буквы.")
+            }
             if (!group.testUrl.startsWith("https://", ignoreCase = true)) {
                 add("Группа ${group.name}: проверка доступности должна использовать HTTPS.")
             }

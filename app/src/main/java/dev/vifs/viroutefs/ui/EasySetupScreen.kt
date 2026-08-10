@@ -4,6 +4,7 @@ package dev.vifs.viroutefs.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -11,10 +12,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -45,6 +48,7 @@ import dev.vifs.viroutefs.routing.VPN_GATE_AUTOMATIC_APP_RULE_ID
 import dev.vifs.viroutefs.routing.VPN_GATE_AUTOMATIC_GROUP_ID
 import dev.vifs.viroutefs.routing.VPN_GATE_VOLUNTEER_WARNING
 import dev.vifs.viroutefs.routing.VpnGateCatalogClient
+import dev.vifs.viroutefs.routing.VpnGateCatalogSnapshot
 import dev.vifs.viroutefs.routing.createAutomaticVpnGateRoute
 import dev.vifs.viroutefs.routing.withAutomaticVpnGateApps
 import dev.vifs.viroutefs.routing.withAutomaticVpnGateEnabled
@@ -69,6 +73,16 @@ internal fun EasySetupScreen(
     var configuring by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var message by rememberSaveable { mutableStateOf<String?>(null) }
+    var catalogSnapshot by remember { mutableStateOf<VpnGateCatalogSnapshot?>(client.loadCached()) }
+    var loadingCountries by rememberSaveable { mutableStateOf(catalogSnapshot == null) }
+    var preferredCountryCode by rememberSaveable {
+        mutableStateOf(
+            config.profileGroups
+                .firstOrNull { it.id == VPN_GATE_AUTOMATIC_GROUP_ID }
+                ?.preferredCountryCode
+                .orEmpty(),
+        )
+    }
     val currentSelection = remember(config.rules) {
         config.rules
             .firstOrNull { it.id == VPN_GATE_AUTOMATIC_APP_RULE_ID }
@@ -117,6 +131,29 @@ internal fun EasySetupScreen(
         loadingApps = false
     }
 
+    LaunchedEffect(client, config) {
+        loadingCountries = true
+        runCatching {
+            withContext(Dispatchers.IO) { client.fetch(config) }
+        }.onSuccess { loaded ->
+            catalogSnapshot = loaded
+        }
+        loadingCountries = false
+    }
+
+    val availableCountries = remember(catalogSnapshot) {
+        catalogSnapshot
+            ?.servers
+            .orEmpty()
+            .asSequence()
+            .filter { (it.pingMillis ?: 0) > 0 }
+            .groupBy { it.countryCode }
+            .filterValues { it.size >= 2 }
+            .keys
+            .filter { it.matches(Regex("[A-Z]{2}")) }
+            .sorted()
+    }
+
     val visibleApps = remember(availableApps, selectedPackages, query) {
         val needle = query.trim().lowercase(Locale.ROOT)
         availableApps
@@ -140,12 +177,12 @@ internal fun EasySetupScreen(
         scope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    val snapshot = client.fetch(config)
+                    val snapshot = catalogSnapshot ?: client.fetch(config)
                     createAutomaticVpnGateRoute(
                         config = config,
                         servers = snapshot.servers,
                         excludedCountryCode = detectDeviceCountryCode(context).ifBlank { "RU" },
-                        makeDefault = false,
+                        preferredCountryCode = preferredCountryCode.ifBlank { null },
                     ).config
                         .withAutomaticVpnGateApps(selectedPackages)
                         .withAutomaticVpnGateEnabled(true)
@@ -176,7 +213,39 @@ internal fun EasySetupScreen(
                     "Отметьте, например, YouTube. Только выбранные приложения пойдут через VPNGate; банковские и остальные приложения останутся на обычном интернете.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                WarningText(
+                    "Не выбирайте банковские приложения, Госуслуги и приложения с платёжными или личными данными.",
+                )
                 WarningText(VPN_GATE_VOLUNTEER_WARNING)
+                Text("Предпочтительная страна", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "«Автоматически» выбирает быстрые серверы вне вашей страны. Конкретная страна закрепляет автоматическое переключение внутри неё.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = preferredCountryCode.isBlank(),
+                        onClick = { preferredCountryCode = "" },
+                        label = { Text("Автоматически") },
+                        enabled = !configuring,
+                    )
+                    availableCountries.forEach { countryCode ->
+                        FilterChip(
+                            selected = preferredCountryCode == countryCode,
+                            onClick = { preferredCountryCode = countryCode },
+                            label = { Text(countryCode) },
+                            enabled = !configuring,
+                        )
+                    }
+                }
+                if (loadingCountries) {
+                    Text("Обновляем список стран…", style = MaterialTheme.typography.labelSmall)
+                }
                 if (packagesUsedByOtherVpn.isNotEmpty()) {
                     Text(
                         "Приложения, уже назначенные другому VPN, здесь скрыты: ${packagesUsedByOtherVpn.size}.",

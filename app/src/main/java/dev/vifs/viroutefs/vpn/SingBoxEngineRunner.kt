@@ -418,7 +418,8 @@ internal class SingBoxEngineRunner(
         private fun rememberOpenVpnDiagnostic(message: String) {
             if (
                 openVpnProfileTags.isEmpty() ||
-                !message.contains("openvpn", ignoreCase = true)
+                !message.contains("openvpn", ignoreCase = true) ||
+                isOpenVpnProbeNoise(message)
             ) return
             val profileIds = openVpnProfileTags
                 .filterValues { tag -> message.contains(tag, ignoreCase = true) }
@@ -999,6 +1000,12 @@ private fun sanitizeOpenVpnDiagnostic(value: String): String = value
     )
     .trim()
     .take(MAX_OPENVPN_DIAGNOSTIC_LENGTH)
+
+internal fun isOpenVpnProbeNoise(value: String): Boolean = listOf(
+    "outbound connection to",
+    "using outbound/openvpn-client",
+    "endpoint is not ready yet",
+).any { marker -> value.contains(marker, ignoreCase = true) }
 
 internal object SingBoxEnvironment {
     private val initialized = AtomicBoolean(false)

@@ -424,13 +424,14 @@ class ViRouteVpnService : VpnService() {
     }
 
     private fun refreshAutomaticVpnGate(config: RoutingConfig): Result<RoutingConfig> = runCatching {
-        val groupWasDefault = config.defaultProfileId == VPN_GATE_AUTOMATIC_GROUP_ID
         val snapshot = VpnGateCatalogClient(applicationContext).fetch(config)
         val refreshed = createAutomaticVpnGateRoute(
             config = config,
             servers = snapshot.servers,
             excludedCountryCode = detectRuntimeCountryCode(),
-            makeDefault = groupWasDefault,
+            preferredCountryCode = config.profileGroups
+                .firstOrNull { it.id == VPN_GATE_AUTOMATIC_GROUP_ID }
+                ?.preferredCountryCode,
         ).config
         runBlocking {
             RoutingConfigRepository(applicationContext).save(refreshed)

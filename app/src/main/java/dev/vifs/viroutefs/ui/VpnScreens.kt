@@ -1741,7 +1741,7 @@ private fun ManagedVpnGateCard(
                     if (selectedAppCount > 0) {
                         "Через VPNGate: $selectedAppCount приложений"
                     } else {
-                        "Для всего трафика, когда включён"
+                        "Сначала выберите приложения"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1750,19 +1750,23 @@ private fun ManagedVpnGateCard(
             Switch(
                 checked = enabled,
                 onCheckedChange = { checked ->
-                    onConfig(
-                        config.withAutomaticVpnGateEnabled(checked),
-                        if (checked) {
-                            "Автоматический VPNGate включён. При запуске каталог будет проверен заново."
-                        } else {
-                            "Автоматический VPNGate выключен; обычный интернет System сохранён."
-                        },
-                    )
+                    if (checked && selectedAppCount == 0) {
+                        onOpenSetup()
+                    } else {
+                        onConfig(
+                            config.withAutomaticVpnGateEnabled(checked),
+                            if (checked) {
+                                "VPNGate включён только для выбранных приложений. При запуске каталог будет проверен заново."
+                            } else {
+                                "Автоматический VPNGate выключен; обычный интернет System сохранён."
+                            },
+                        )
+                    }
                 },
             )
         }
         Text(
-            "Внутри подготовлено серверов: ${group.memberProfileIds.size}. Они скрыты из общего списка. При каждом включении выполняется новый анализ, затем группа переключается между доступными серверами с малой задержкой.",
+            "Внутри подготовлено серверов: ${group.memberProfileIds.size}. Они скрыты из общего списка. Только выбранные приложения используют VPNGate; остальные всегда идут через обычный интернет System.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

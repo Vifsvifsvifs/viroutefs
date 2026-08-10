@@ -30,6 +30,7 @@ class RoutingConfigRepositoryTest {
             testUrl = "https://example.com/health",
             testIntervalSeconds = 90,
             toleranceMs = 100,
+            preferredCountryCode = "US",
         )
         val encoded = RoutingConfigJson.encode(defaults.copy(profileGroups = listOf(group)))
         val oldJson = RoutingConfigJson.encode(defaults)

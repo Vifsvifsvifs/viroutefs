@@ -152,8 +152,10 @@ fun createAutomaticVpnGateRoute(
     config: RoutingConfig,
     servers: List<VpnGateServer>,
     excludedCountryCode: String,
+    preferredCountryCode: String? = config.profileGroups
+        .firstOrNull { it.id == VPN_GATE_AUTOMATIC_GROUP_ID }
+        ?.preferredCountryCode,
     memberLimit: Int = VPN_GATE_AUTOMATIC_MEMBER_LIMIT,
-    makeDefault: Boolean = true,
 ): VpnGateAutomaticRouteResult {
     val countryCode = excludedCountryCode.trim().uppercase()
     require(countryCode.matches(Regex("[A-Z]{2}"))) {
@@ -162,10 +164,22 @@ fun createAutomaticVpnGateRoute(
     require(memberLimit in 2..VPN_GATE_AUTOMATIC_MEMBER_LIMIT) {
         "Для автоматического VPNGate нужно от 2 до $VPN_GATE_AUTOMATIC_MEMBER_LIMIT серверов."
     }
+    val preferredCountry = preferredCountryCode
+        ?.trim()
+        ?.uppercase()
+        ?.takeIf(String::isNotBlank)
+    require(preferredCountry == null || preferredCountry.matches(Regex("[A-Z]{2}"))) {
+        "Код предпочтительной страны должен содержать две латинские буквы."
+    }
+    require(preferredCountry == null || preferredCountry != countryCode) {
+        "Предпочтительная страна не должна совпадать с исключённой страной."
+    }
+    val keepEnabled = config.isAutomaticVpnGateEnabled()
 
     val candidates = servers
         .asSequence()
         .filter { it.countryCode.length == 2 && it.countryCode != countryCode }
+        .filter { preferredCountry == null || it.countryCode == preferredCountry }
         .filter { (it.pingMillis ?: 0) > 0 }
         .sortedWith(
             compareBy<VpnGateServer> { it.pingMillis ?: Int.MAX_VALUE }
@@ -185,7 +199,7 @@ fun createAutomaticVpnGateRoute(
                 val existing = config.profiles.firstOrNull { it.id == profileId }
                 selected += server to imported.copy(
                     id = profileId,
-                    enabled = true,
+                    enabled = keepEnabled,
                     sourceSubscriptionId = null,
                     sourceEntryKey = null,
                     dnsPolicyId = existing?.dnsPolicyId,
@@ -197,7 +211,11 @@ fun createAutomaticVpnGateRoute(
             .onFailure { rejected += 1 }
     }
     require(selected.size >= 2) {
-        "Не удалось подготовить хотя бы два исправных VPNGate-профиля из других стран. Обновите каталог или выберите сервер вручную."
+        if (preferredCountry == null) {
+            "Не удалось подготовить хотя бы два исправных VPNGate-профиля из других стран. Обновите каталог или выберите сервер вручную."
+        } else {
+            "В выбранной стране $preferredCountry не найдено хотя бы двух исправных серверов. Выберите другую страну или автоматический режим."
+        }
     }
 
     val oldAutomaticIds = config.profiles
@@ -234,17 +252,19 @@ fun createAutomaticVpnGateRoute(
         testUrl = VPN_GATE_AUTOMATIC_TEST_URL,
         testIntervalSeconds = 60,
         toleranceMs = 35,
-        enabled = true,
+        preferredCountryCode = preferredCountry,
+        enabled = keepEnabled,
     )
     val prepared = config.copy(
         profiles = retainedProfiles + selected.map { it.second },
         profileGroups = config.profileGroups.filterNot { it.id == VPN_GATE_AUTOMATIC_GROUP_ID } + group,
     )
-    val next = if (makeDefault || config.defaultProfileId == VPN_GATE_AUTOMATIC_GROUP_ID) {
-        prepared.withDefaultRoute(group.id)
-    } else {
-        prepared.withDefaultRoute(config.defaultProfileId ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID)
-    }
+    // VPNGate is a public volunteer network. It must never become the catch-all
+    // route implicitly: only an explicit application rule may send traffic to it.
+    val safeDefault = config.defaultProfileId
+        ?.takeUnless { it == VPN_GATE_AUTOMATIC_GROUP_ID }
+        ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID
+    val next = prepared.withDefaultRoute(safeDefault)
     return VpnGateAutomaticRouteResult(
         config = next,
         selectedServers = selected.map { it.first },
@@ -262,7 +282,12 @@ fun RoutingConfig.hasAutomaticVpnGate(): Boolean =
 fun RoutingConfig.isAutomaticVpnGateEnabled(): Boolean {
     val group = profileGroups.firstOrNull { it.id == VPN_GATE_AUTOMATIC_GROUP_ID } ?: return false
     val members = profiles.filter { it.id in group.memberProfileIds && it.isAutomaticVpnGateProfile() }
-    return group.enabled && members.size >= 2 && members.any(TunnelProfile::enabled)
+    val appRule = rules.firstOrNull { it.id == VPN_GATE_AUTOMATIC_APP_RULE_ID }
+    return group.enabled &&
+        members.size >= 2 &&
+        members.any(TunnelProfile::enabled) &&
+        appRule?.enabled == true &&
+        appRule.appMatchers.isNotEmpty()
 }
 
 fun RoutingConfig.withAutomaticVpnGateEnabled(enabled: Boolean): RoutingConfig {
@@ -289,7 +314,7 @@ fun RoutingConfig.withAutomaticVpnGateEnabled(enabled: Boolean): RoutingConfig {
     next = when {
         !enabled && next.defaultProfileId == group.id ->
             next.withDefaultRoute(RoutingConfigDefaults.SYSTEM_PROFILE_ID)
-        enabled && !hasAppSelection -> next.withDefaultRoute(group.id)
+        enabled && !hasAppSelection -> next.withDefaultRoute(RoutingConfigDefaults.SYSTEM_PROFILE_ID)
         else -> next.withSyncedProfileAppRoutingRules()
     }
     return next

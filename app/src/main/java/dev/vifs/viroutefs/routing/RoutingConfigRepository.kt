@@ -295,6 +295,7 @@ object RoutingConfigJson {
         put("testUrl", testUrl)
         put("testIntervalSeconds", testIntervalSeconds)
         put("toleranceMs", toleranceMs)
+        put("preferredCountryCode", preferredCountryCode)
         put("enabled", enabled)
     }
 
@@ -307,6 +308,7 @@ object RoutingConfigJson {
         testUrl = optString("testUrl", "https://www.gstatic.com/generate_204"),
         testIntervalSeconds = optInt("testIntervalSeconds", 180),
         toleranceMs = optInt("toleranceMs", 50),
+        preferredCountryCode = optNullableString("preferredCountryCode"),
         enabled = optBoolean("enabled", true),
     )
 

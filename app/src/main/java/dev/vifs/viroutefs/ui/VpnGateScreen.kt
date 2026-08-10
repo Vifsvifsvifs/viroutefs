@@ -74,6 +74,14 @@ internal fun VpnGateScreen(
     var homeCountryCode by rememberSaveable {
         mutableStateOf(detectDeviceCountryCode(context))
     }
+    var preferredCountryCode by rememberSaveable {
+        mutableStateOf(
+            config.profileGroups
+                .firstOrNull { it.id == dev.vifs.viroutefs.routing.VPN_GATE_AUTOMATIC_GROUP_ID }
+                ?.preferredCountryCode
+                .orEmpty(),
+        )
+    }
 
     LaunchedEffect(client) {
         snapshot = withContext(Dispatchers.IO) { client.loadCached() }
@@ -141,11 +149,22 @@ internal fun VpnGateScreen(
             .take(MAX_VISIBLE_VPN_GATE_SERVERS)
             .toList()
     }
-    val automaticCandidates = remember(snapshot, homeCountryCode) {
+    val automaticCountryCodes = remember(snapshot, homeCountryCode) {
+        val excluded = homeCountryCode.trim().uppercase()
+        snapshot?.servers.orEmpty()
+            .asSequence()
+            .filter { it.countryCode.length == 2 && it.countryCode != excluded && (it.pingMillis ?: 0) > 0 }
+            .groupBy(VpnGateServer::countryCode)
+            .filterValues { it.size >= 2 }
+            .keys
+            .sorted()
+    }
+    val automaticCandidates = remember(snapshot, homeCountryCode, preferredCountryCode) {
         val excluded = homeCountryCode.trim().uppercase()
         snapshot?.servers.orEmpty()
             .asSequence()
             .filter { it.countryCode.length == 2 && it.countryCode != excluded }
+            .filter { preferredCountryCode.isBlank() || it.countryCode == preferredCountryCode }
             .filter { (it.pingMillis ?: 0) > 0 }
             .sortedWith(compareBy<VpnGateServer> { it.pingMillis ?: Int.MAX_VALUE }.thenByDescending { it.score })
             .take(VPN_GATE_AUTOMATIC_MEMBER_LIMIT)
@@ -237,6 +256,26 @@ internal fun VpnGateScreen(
                         supportingText = { Text("Двухбуквенный код, например RU, KZ или DE") },
                         singleLine = true,
                     )
+                    Text("Предпочтительная страна", fontWeight = FontWeight.SemiBold)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilterChip(
+                            selected = preferredCountryCode.isBlank(),
+                            onClick = { preferredCountryCode = "" },
+                            label = { Text("Автоматически") },
+                        )
+                        automaticCountryCodes.forEach { countryCode ->
+                            FilterChip(
+                                selected = preferredCountryCode == countryCode,
+                                onClick = { preferredCountryCode = countryCode },
+                                label = { Text(countryCode) },
+                            )
+                        }
+                    }
                     if (automaticCandidates.isNotEmpty()) {
                         Text(
                             "Предварительный выбор: " + automaticCandidates.joinToString { server ->
@@ -255,7 +294,7 @@ internal fun VpnGateScreen(
                         )
                     }
                     Text(
-                        "После подтверждения появится один управляемый пункт VPNGate. Внутренние серверы не будут засорять список VPN. При каждом включении каталог анализируется заново, а при падении сервера новые соединения пойдут через другой доступный сервер с малой задержкой.",
+                        "После подтверждения появится один управляемый пункт VPNGate. Затем выберите приложения: без этого VPNGate не получит трафик и обычный интернет останется основным маршрутом.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     Button(
@@ -271,14 +310,15 @@ internal fun VpnGateScreen(
                                             config = config,
                                             servers = loaded.servers,
                                             excludedCountryCode = homeCountryCode,
+                                            preferredCountryCode = preferredCountryCode.ifBlank { null },
                                         )
                                     }
                                 }.onSuccess { result ->
                                     onConfig(
                                         result.config,
-                                        "Автоматический VPNGate включён: ${result.selectedServers.size} сервера из других стран. Основным маршрутом стала группа минимальной задержки.",
+                                        "VPNGate подготовлен: ${result.selectedServers.size} сервера. Теперь выберите приложения; основной маршрут остаётся System.",
                                     )
-                                    message = "Автоматический маршрут создан: " + result.selectedServers.joinToString { server ->
+                                    message = "Серверы подготовлены. Откройте «Приложения» у VPNGate: " + result.selectedServers.joinToString { server ->
                                         "${server.countryCode} ${server.pingMillis} мс"
                                     }
                                 }.onFailure { error ->
@@ -289,7 +329,7 @@ internal fun VpnGateScreen(
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(if (importKey == VPN_GATE_AUTOMATIC_IMPORT_KEY) "Подготавливаем…" else "Создать и использовать автоматически")
+                        Text(if (importKey == VPN_GATE_AUTOMATIC_IMPORT_KEY) "Подготавливаем…" else "Подготовить автоматический VPNGate")
                     }
                 }
             }

@@ -157,7 +157,7 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 
 Перед компиляцией Gradle проверяет все три нативных компонента:
 
-- `app/libs/libbox.aar`: sing-box `v1.14.0-beta.13`, commit `2dea956ea11ed9fdc47dc69fba56bea71c69ea9b`, SHA-256 `57a6029fcd63655f2fb189708a07a482a75d1a717663639199e38f977ba393db`;
+- `app/libs/libbox.aar`: sing-box `v1.14.0-beta.13`, commit `2dea956ea11ed9fdc47dc69fba56bea71c69ea9b`, sing-openvpn `103eb5fe5eb69b8e747971eaaf0185a6618b7da7` with the auditable stage-error patch, SHA-256 `0ed6bd1942866237ad210417392ff0f6633d7a149d16cdea742e7b359e7977fa`;
 - `app/src/main/jniLibs/arm64-v8a/libxray.so`: Xray-core commit `94ffd50060f1cfd5d7482ec90a23a92bdefdff68`, SHA-256 `9bb0b815086395164066b5fa27b1797bf9a0fcc493d1491f02166560604dcaff`;
 - `app/src/main/jniLibs/arm64-v8a/libbyedpi.so`: ByeDPI commit `ba532298de7b28cfe854aea83d061369d13ca290`, SHA-256 `abae93da6e426da5bbe5611f53a550eccb021d7be88b2c13865461024c4862d1`.
 

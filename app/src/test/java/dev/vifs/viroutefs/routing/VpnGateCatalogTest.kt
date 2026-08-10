@@ -104,12 +104,49 @@ class VpnGateCatalogTest {
 
         assertEquals(listOf("JP", "DE", "US", "NL", "ES", "FR"), result.selectedServers.map { it.countryCode })
         assertEquals(ProfileGroupMode.Latency, group.mode)
-        assertEquals(group.id, result.config.defaultProfileId)
+        assertEquals(RoutingConfigDefaults.SYSTEM_PROFILE_ID, result.config.defaultProfileId)
         assertEquals(6, selectedProfiles.size)
-        assertTrue(selectedProfiles.all(TunnelProfile::enabled))
+        assertTrue(selectedProfiles.none(TunnelProfile::enabled))
         assertTrue(selectedProfiles.none { it.name.contains("RU") })
         assertTrue(selectedProfiles.all { it.sourceSubscriptionId == null && it.sourceEntryKey == null })
         assertTrue(validateRoutingConfig(result.config).isEmpty())
+    }
+
+    @Test
+    fun automaticVpnGateNeverBecomesDefaultWithoutSelectedApps() {
+        val prepared = createAutomaticVpnGateRoute(
+            config = RoutingConfigDefaults.defaultConfig(),
+            servers = listOf(
+                server("jp", "JP", 12),
+                server("de", "DE", 18),
+            ),
+            excludedCountryCode = "RU",
+        ).config.withAutomaticVpnGateEnabled(true)
+
+        assertEquals(RoutingConfigDefaults.SYSTEM_PROFILE_ID, prepared.defaultProfileId)
+        assertTrue(prepared.rules.none { it.id == VPN_GATE_AUTOMATIC_APP_RULE_ID })
+    }
+
+    @Test
+    fun preferredCountryKeepsAutomaticFailoverInsideThatCountry() {
+        val result = createAutomaticVpnGateRoute(
+            config = RoutingConfigDefaults.defaultConfig(),
+            servers = listOf(
+                server("jp-fast", "JP", 8),
+                server("us-one", "US", 25),
+                server("us-two", "US", 35),
+                server("de-fast", "DE", 10),
+            ),
+            excludedCountryCode = "RU",
+            preferredCountryCode = "us",
+        )
+
+        assertEquals(listOf("US", "US"), result.selectedServers.map(VpnGateServer::countryCode))
+        assertEquals(
+            "US",
+            result.config.profileGroups.single { it.id == VPN_GATE_AUTOMATIC_GROUP_ID }.preferredCountryCode,
+        )
+        assertEquals(RoutingConfigDefaults.SYSTEM_PROFILE_ID, result.config.defaultProfileId)
     }
 
     @Test
@@ -121,7 +158,6 @@ class VpnGateCatalogTest {
                 server("de", "DE", 18),
             ),
             excludedCountryCode = "RU",
-            makeDefault = false,
         ).config
             .withAutomaticVpnGateApps(listOf("com.google.android.youtube"))
             .withAutomaticVpnGateEnabled(true)

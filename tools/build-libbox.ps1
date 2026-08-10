@@ -10,6 +10,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $singBoxCommit = "2dea956ea11ed9fdc47dc69fba56bea71c69ea9b"
+$singOpenVpnCommit = "103eb5fe5eb69b8e747971eaaf0185a6618b7da7"
 $gomobileVersion = "v0.1.12"
 $requiredGoVersion = "go1.26.5"
 $requiredNdkVersion = "27.0.12077973"
@@ -52,6 +53,22 @@ if (Test-Path -LiteralPath $resolvedSource) {
 New-Item -ItemType Directory -Path (Split-Path -Parent $resolvedSource) -Force | Out-Null
 git clone --filter=blob:none --no-checkout https://github.com/SagerNet/sing-box.git $resolvedSource
 git -C $resolvedSource checkout --detach $singBoxCommit
+
+$openVpnSource = Join-Path $resolvedSource "third_party/sing-openvpn"
+git clone --filter=blob:none --no-checkout https://github.com/SagerNet/sing-openvpn.git $openVpnSource
+git -C $openVpnSource checkout --detach $singOpenVpnCommit
+$openVpnPatch = Join-Path $PSScriptRoot "patches/sing-openvpn-stage-errors.patch"
+git -C $openVpnSource apply --check $openVpnPatch
+git -C $openVpnSource apply $openVpnPatch
+Push-Location $resolvedSource
+try {
+    & $goExecutable mod edit "-replace=github.com/sagernet/sing-openvpn=./third_party/sing-openvpn"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not pin the locally patched sing-openvpn source."
+    }
+} finally {
+    Pop-Location
+}
 
 $buildFile = Join-Path $resolvedSource "cmd/internal/build_libbox/main.go"
 $original = [System.IO.File]::ReadAllText($buildFile)
