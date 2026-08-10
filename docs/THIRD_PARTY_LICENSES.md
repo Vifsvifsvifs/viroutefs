@@ -13,7 +13,7 @@ This file records actual APK inputs separately from future candidates.
 - Commit: `2dea956ea11ed9fdc47dc69fba56bea71c69ea9b`
 - Artifact: `app/libs/libbox.aar`
 - sing-openvpn commit: `103eb5fe5eb69b8e747971eaaf0185a6618b7da7`
-- Local patch: `tools/patches/sing-openvpn-stage-errors.patch` (connection-stage error context only)
+- Local patch: `tools/patches/sing-openvpn-stage-errors.patch` (connection-stage error context and bounded fragmented key-method reads)
 - SHA-256: `0ed6bd1942866237ad210417392ff0f6633d7a149d16cdea742e7b359e7977fa`
 - native ELF alignment: 16 KiB
 - License: upstream `GPL-3.0-or-later` notice plus its additional naming/association condition

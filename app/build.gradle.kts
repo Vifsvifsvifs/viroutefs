@@ -24,9 +24,9 @@ val donationUrl = providers.environmentVariable("VIROUTEFS_DONATION_URL")
     ?.trim()
     ?.takeIf(String::isNotBlank)
     ?: "https://messenger.online.sberbank.ru/sl/PV0SJRfgsEARtx5Ka"
-val baseVersionName = "0.14.0-beta.20"
+val baseVersionName = "0.14.0-beta.21"
 val appVersionName = if (buildNumber > 0) "$baseVersionName.$buildNumber" else baseVersionName
-val appVersionCode = 14020 + buildNumber
+val appVersionCode = 14021 + buildNumber
 
 android {
     namespace = "dev.vifs.viroutefs"
@@ -116,7 +116,7 @@ android {
 }
 
 val libBoxVersion = "v1.14.0-beta.13-viroutefs-openvpn-stage-errors-arm64-16k"
-val libBoxSha256 = "2475971fcb3529325fb538651dc85fa04b59da657a9757845a9350105c907591"
+val libBoxSha256 = "1929f46ff45b2675d394dfe7e9903350cb97e26a4a0e9d9d3fc8bea596632e3c"
 val libBoxFile = file("libs/libbox.aar")
 val xrayVersion = "xray-core-94ffd50060f1-arm64"
 val xraySha256 = "9bb0b815086395164066b5fa27b1797bf9a0fcc493d1491f02166560604dcaff"
