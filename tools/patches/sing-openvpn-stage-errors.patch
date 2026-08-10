@@ -26,3 +26,12 @@ index 38df474..3eec80d 100644
 @@ -333 +333 @@ func (c *tlsClient) Start() error {
 -		return err
 +		return E.Extend(err, "openvpn data channel")
+@@ -530 +530 @@ func (c *tlsClient) exchangeKeyMethod(mustNegotiate time.Time) error {
+-		return err
++		return E.Extend(err, "openvpn key-method write")
+@@ -538 +538 @@ func (c *tlsClient) exchangeKeyMethod(mustNegotiate time.Time) error {
+-		return err
++		return E.Extend(err, "openvpn key-method response")
+@@ -545 +545 @@ func (c *tlsClient) exchangeKeyMethod(mustNegotiate time.Time) error {
+-		return err
++		return E.Extend(err, "openvpn key-method response parse")
