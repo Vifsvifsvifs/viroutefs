@@ -2,6 +2,9 @@
 
 package dev.vifs.viroutefs.routing
 
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
+import java.nio.charset.StandardCharsets
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -9,6 +12,40 @@ data class OpenVpnImportResult(
     val optionsJson: String,
     val warnings: List<String>,
 )
+
+data class OpenVpnAuthUserPass(
+    val username: String,
+    val password: String,
+)
+
+/** Reads the standard two-line OpenVPN auth-user-pass file without logging its contents. */
+fun importOpenVpnAuthUserPass(bytes: ByteArray): OpenVpnAuthUserPass {
+    require(bytes.size in 1..MAX_OPENVPN_AUTH_USER_PASS_BYTES) {
+        "Файл auth-user-pass пуст или превышает безопасный размер."
+    }
+    val decoder = StandardCharsets.UTF_8.newDecoder()
+        .onMalformedInput(CodingErrorAction.REPORT)
+        .onUnmappableCharacter(CodingErrorAction.REPORT)
+    val source = runCatching { decoder.decode(ByteBuffer.wrap(bytes)).toString() }
+        .getOrElse { error("Файл auth-user-pass должен быть текстом UTF-8.") }
+        .replace("\r\n", "\n")
+        .replace('\r', '\n')
+    require('\u0000' !in source) { "Файл auth-user-pass содержит недопустимые данные." }
+
+    val lines = source.split('\n')
+    val username = lines.getOrNull(0).orEmpty().removePrefix("\uFEFF")
+    val password = lines.getOrNull(1).orEmpty()
+    require(username.isNotBlank() && password.isNotEmpty()) {
+        "В auth-user-pass нужны две строки: логин и пароль."
+    }
+    require(username.length <= MAX_OPENVPN_CREDENTIAL_CHARS && password.length <= MAX_OPENVPN_CREDENTIAL_CHARS) {
+        "Логин или пароль в auth-user-pass превышает безопасную длину."
+    }
+    require(lines.drop(2).none(String::isNotBlank)) {
+        "В auth-user-pass должны быть только две строки: логин и пароль."
+    }
+    return OpenVpnAuthUserPass(username = username, password = password)
+}
 
 /**
  * Converts common OpenVPN client directives to a sing-box openvpn-client endpoint.
@@ -25,8 +62,9 @@ fun importOpenVpnProfile(source: String): OpenVpnImportResult {
     var network = "udp"
     var username: String? = null
     var password: String? = null
-    var cipher: String? = null
+    var legacyCipher: String? = null
     var dataCiphers: List<String> = emptyList()
+    var dataCiphersFallback: String? = null
     var auth: String? = null
     var serverName: String? = null
     var remoteCertificateTls: String? = null
@@ -35,6 +73,10 @@ fun importOpenVpnProfile(source: String): OpenVpnImportResult {
     var compressionLzo: String? = null
     var controlWrapType: String? = null
     var keyDirection: String? = null
+    val routes = mutableListOf<String>()
+    var routeNoPull = false
+    var redirectGateway = false
+    var redirectGatewayFlags: List<String> = emptyList()
 
     blocks.withoutBlocks.lineSequence().forEachIndexed { index, rawLine ->
         val line = rawLine.trim()
@@ -44,7 +86,7 @@ fun importOpenVpnProfile(source: String): OpenVpnImportResult {
         val directive = tokens.first().lowercase()
         val args = tokens.drop(1)
         when (directive) {
-            "client", "nobind", "persist-key", "persist-tun", "remote-random",
+            "client", "dev", "nobind", "persist-key", "persist-tun", "remote-random",
             "remote-random-hostname", "resolv-retry", "verb", "mute",
             "auth-nocache", "pull", "route-delay", "route-method" -> Unit
 
@@ -71,11 +113,12 @@ fun importOpenVpnProfile(source: String): OpenVpnImportResult {
             }
             "username" -> username = args.joinToString(" ").takeIf(String::isNotBlank)
             "password" -> password = args.joinToString(" ").takeIf(String::isNotBlank)
-            "cipher" -> cipher = args.firstOrNull()
+            "cipher" -> legacyCipher = args.firstOrNull()
             "data-ciphers" -> dataCiphers = args.joinToString(" ")
                 .split(':')
                 .map(String::trim)
                 .filter(String::isNotBlank)
+            "data-ciphers-fallback" -> dataCiphersFallback = args.firstOrNull()
             "auth" -> auth = args.firstOrNull()
             "remote-cert-tls" -> remoteCertificateTls = args.firstOrNull()
             "verify-x509-name" -> serverName = args.firstOrNull()
@@ -96,6 +139,17 @@ fun importOpenVpnProfile(source: String): OpenVpnImportResult {
             }
             "compress" -> compression = args.firstOrNull().orEmpty()
             "comp-lzo" -> compressionLzo = args.firstOrNull() ?: "adaptive"
+            "route" -> parseOpenVpnIpv4Route(args)?.let(routes::add)
+                ?: run { warnings += "Строка ${index + 1}: некорректный IPv4 route пропущен." }
+            "route-ipv6" -> args.firstOrNull()
+                ?.takeIf(::isOpenVpnIpv6Prefix)
+                ?.let(routes::add)
+                ?: run { warnings += "Строка ${index + 1}: некорректный IPv6 route пропущен." }
+            "route-nopull", "route-no-pull" -> routeNoPull = true
+            "redirect-gateway" -> {
+                redirectGateway = true
+                redirectGatewayFlags = args
+            }
             "ca", "cert", "key" -> if (!args.firstOrNull().equals("[inline]", true)) {
                 warnings += "Внешний файл $directive не импортирован. Используйте профиль со встроенным блоком <$directive>…</$directive>."
             }
@@ -132,11 +186,20 @@ fun importOpenVpnProfile(source: String): OpenVpnImportResult {
     }
     username?.let { root.put("username", it) }
     password?.let { root.put("password", it) }
-    cipher?.let { root.put("cipher", it) }
-    if (dataCiphers.isNotEmpty()) root.put("data_ciphers", JSONArray(dataCiphers))
+    val negotiatedCiphers = dataCiphers.ifEmpty { listOfNotNull(legacyCipher) }
+    if (negotiatedCiphers.isNotEmpty()) root.put("data_ciphers", JSONArray(negotiatedCiphers))
+    (dataCiphersFallback ?: legacyCipher)?.let { root.put("data_ciphers_fallback", it) }
     auth?.let { root.put("auth", it) }
     compression?.let { root.put("compression", it) }
     compressionLzo?.let { root.put("compression_lzo", it) }
+    if (routes.isNotEmpty()) root.put("routes", JSONArray(routes.distinct()))
+    if (routeNoPull) root.put("route_no_pull", true)
+    if (redirectGateway) {
+        root.put("redirect_gateway", true)
+        if (redirectGatewayFlags.isNotEmpty()) {
+            root.put("redirect_gateway_flags", JSONArray(redirectGatewayFlags))
+        }
+    }
 
     val tls = JSONObject()
     blocks.ca?.let { tls.put("certificate", it) }
@@ -207,6 +270,34 @@ private fun normalizeOpenVpnNetwork(value: String?, warnings: MutableList<String
     }
 }
 
+private fun parseOpenVpnIpv4Route(args: List<String>): String? {
+    val addressParts = args.getOrNull(0)?.split('.')?.map(String::toIntOrNull) ?: return null
+    if (addressParts.size != 4 || addressParts.any { it == null || it !in 0..255 }) return null
+    val maskParts = args.getOrNull(1)
+        ?.takeUnless { it.equals("vpn_gateway", true) || it.equals("net_gateway", true) }
+        ?.split('.')
+        ?.map(String::toIntOrNull)
+        ?: listOf(255, 255, 255, 255)
+    if (maskParts.size != 4 || maskParts.any { it == null || it !in 0..255 }) return null
+    val maskBits = maskParts.fold(0L) { value, part -> (value shl 8) or requireNotNull(part).toLong() }
+    val inverted = maskBits.inv() and 0xffffffffL
+    if ((inverted and (inverted + 1L)) != 0L) return null
+    val prefix = java.lang.Long.bitCount(maskBits)
+    val addressBits = addressParts.fold(0L) { value, part -> (value shl 8) or requireNotNull(part).toLong() }
+    val networkBits = addressBits and maskBits
+    val normalized = listOf(24, 16, 8, 0).joinToString(".") { shift ->
+        ((networkBits shr shift) and 0xff).toString()
+    }
+    return "$normalized/$prefix"
+}
+
+private fun isOpenVpnIpv6Prefix(value: String): Boolean {
+    val parts = value.split('/', limit = 2)
+    if (parts.size != 2 || parts[1].toIntOrNull() !in 0..128) return false
+    return runCatching { java.net.InetAddress.getByName(parts[0]) }
+        .getOrNull() is java.net.Inet6Address
+}
+
 private fun tokenizeOpenVpnLine(line: String): List<String> =
     OPENVPN_TOKEN_PATTERN.findAll(line).map { match ->
         match.groups[1]?.value
@@ -222,3 +313,6 @@ private val INLINE_BLOCK_PATTERN = Regex(
 private val OPENVPN_TOKEN_PATTERN = Regex(
     """"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)""",
 )
+
+private const val MAX_OPENVPN_AUTH_USER_PASS_BYTES = 16 * 1024
+private const val MAX_OPENVPN_CREDENTIAL_CHARS = 1024

@@ -101,6 +101,7 @@ import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.SingBoxProfileConfig
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
+import dev.vifs.viroutefs.routing.importOpenVpnAuthUserPass
 import dev.vifs.viroutefs.routing.importOpenVpnPkcs12
 import dev.vifs.viroutefs.routing.importOpenVpnProfile
 import dev.vifs.viroutefs.routing.isValidIpOrCidr
@@ -2616,6 +2617,36 @@ private fun SingBoxProfileEditorScreen(
                 !it.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----")
         }
     }
+    val openVpnAuthUserPassLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val imported = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bytes = readProfileImportBytes(context, uri)
+                    try {
+                        importOpenVpnAuthUserPass(bytes)
+                    } finally {
+                        bytes.fill(0)
+                    }
+                }
+            }
+            imported.onSuccess { credentials ->
+                openVpnUsername = credentials.username
+                openVpnPassword = credentials.password
+                var updated = updateOpenVpnCredential(optionsJson, "username", credentials.username)
+                updated = updateOpenVpnCredential(updated, "password", credentials.password)
+                optionsJson = updated
+                errors = emptyList()
+                nativeCheckMessage =
+                    "Файл auth-user-pass прочитан: логин и пароль добавлены. Содержимое файла не выводилось; при сохранении профиль защищается Android Keystore."
+            }.onFailure { error ->
+                nativeCheckMessage =
+                    "Не удалось прочитать auth-user-pass: ${error.localizedMessage ?: "неизвестная ошибка"}"
+            }
+        }
+    }
     val openVpnPkcs12Launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
@@ -2853,6 +2884,17 @@ private fun SingBoxProfileEditorScreen(
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
+                    )
+                    OutlinedButton(
+                        onClick = { openVpnAuthUserPassLauncher.launch(OPENVPN_AUTH_USER_PASS_MIME_TYPES) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Выбрать auth-user-pass / pass.txt")
+                    }
+                    Text(
+                        "Стандартный файл должен содержать две строки: логин и пароль. Они не показываются в сообщениях или журнале.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -3108,6 +3150,12 @@ private val OPENVPN_PKCS12_MIME_TYPES = arrayOf(
     // Several Android document providers hide .p12/.pfx files even when they report the
     // standard PKCS#12 MIME type. Let the user pick any document and validate the actual
     // PKCS#12 contents locally instead of relying on a vendor-specific MIME filter.
+    "*/*",
+)
+
+private val OPENVPN_AUTH_USER_PASS_MIME_TYPES = arrayOf(
+    "text/plain",
+    "application/octet-stream",
     "*/*",
 )
 

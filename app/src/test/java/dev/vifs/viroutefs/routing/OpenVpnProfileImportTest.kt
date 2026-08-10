@@ -2,10 +2,13 @@
 
 package dev.vifs.viroutefs.routing
 
-import org.json.JSONObject
+import java.nio.charset.StandardCharsets
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.json.JSONObject
 
 class OpenVpnProfileImportTest {
     @Test
@@ -51,5 +54,54 @@ class OpenVpnProfileImportTest {
         assertTrue(root.getBoolean("remote_random"))
         assertTrue(result.warnings.any { it.contains("vendor-custom-option") })
         assertTrue(result.warnings.any { it.contains("<ca>") })
+    }
+
+    @Test
+    fun tlsCipherAndIpv4RoutesUseOpenVpnClientFields() {
+        val result = importOpenVpnProfile(
+            """
+            client
+            dev tun
+            proto tcp
+            remote 192.0.2.10 1194
+            cipher AES-256-GCM
+            route 10.0.0.0 255.255.255.0 vpn_gateway
+            route 10.40.0.9 255.255.255.0 vpn_gateway
+            <ca>
+            -----BEGIN CERTIFICATE-----
+            test
+            -----END CERTIFICATE-----
+            </ca>
+            """.trimIndent(),
+        )
+        val endpoint = JSONObject(result.optionsJson)
+
+        assertFalse(endpoint.has("cipher"))
+        assertEquals("AES-256-GCM", endpoint.getJSONArray("data_ciphers").getString(0))
+        assertEquals("AES-256-GCM", endpoint.getString("data_ciphers_fallback"))
+        assertEquals("10.0.0.0/24", endpoint.getJSONArray("routes").getString(0))
+        assertEquals("10.40.0.0/24", endpoint.getJSONArray("routes").getString(1))
+        assertFalse(result.warnings.any { it.contains("dev") || it.contains("route»") })
+    }
+
+    @Test
+    fun authUserPassReadsExactlyTwoUtf8Lines() {
+        val credentials = importOpenVpnAuthUserPass(
+            "office-user\ncorrect horse battery staple\n".toByteArray(StandardCharsets.UTF_8),
+        )
+
+        assertEquals("office-user", credentials.username)
+        assertEquals("correct horse battery staple", credentials.password)
+    }
+
+    @Test
+    fun authUserPassRejectsMissingPasswordWithoutLeakingUsername() {
+        val secretUsername = "do-not-leak-user"
+        val error = assertFailsWith<IllegalArgumentException> {
+            importOpenVpnAuthUserPass("$secretUsername\n".toByteArray(StandardCharsets.UTF_8))
+        }
+
+        assertTrue(error.message.orEmpty().contains("две строки"))
+        assertFalse(error.message.orEmpty().contains(secretUsername))
     }
 }

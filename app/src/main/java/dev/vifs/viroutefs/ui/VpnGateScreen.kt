@@ -81,10 +81,14 @@ internal fun VpnGateScreen(
         loading = true
         message = null
         scope.launch {
-            runCatching { withContext(Dispatchers.IO) { client.fetch() } }
+            runCatching { withContext(Dispatchers.IO) { client.fetch(config) } }
                 .onSuccess { loaded ->
                     snapshot = loaded
-                    message = "Каталог VPNGate обновлён: ${loaded.servers.size} серверов. Ничего не подключено автоматически."
+                    message = buildString {
+                        append("Каталог VPNGate обновлён: ${loaded.servers.size} серверов")
+                        loaded.transportProfileName?.let { append(" через профиль «$it»") }
+                        append(". Ничего не подключено автоматически.")
+                    }
                 }
                 .onFailure { error ->
                     message = if (snapshot != null) {
