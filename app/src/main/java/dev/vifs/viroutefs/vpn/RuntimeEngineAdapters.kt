@@ -591,6 +591,17 @@ internal class SingBoxEngineAdapter(
                     .map { it.name },
                 onDnsFallback = onDnsFallback,
                 profileConnectionTestPorts = nativeConfig.profileConnectionTestPorts,
+                openVpnProfileTags = config.profiles
+                    .asSequence()
+                    .filter { profile ->
+                        profile.enabled &&
+                            profile.type == TunnelType.OpenVpn &&
+                            profile.id in config.routedProfileIds() &&
+                            nativeConfig.profileTags.containsKey(profile.id)
+                    }
+                    .associate { profile ->
+                        profile.id to nativeConfig.profileTags.getValue(profile.id)
+                    },
             )
             runner = nextRunner
             state = EngineState.Connecting

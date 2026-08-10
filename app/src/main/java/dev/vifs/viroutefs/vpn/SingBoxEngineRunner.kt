@@ -37,6 +37,9 @@ import io.nekohasekai.libbox.LogIterator
 import io.nekohasekai.libbox.NetworkInterfaceIterator
 import io.nekohasekai.libbox.NeighborUpdateListener
 import io.nekohasekai.libbox.Notification
+import io.nekohasekai.libbox.OpenVPNStatusHandler
+import io.nekohasekai.libbox.OpenVPNStatusSubscription
+import io.nekohasekai.libbox.OpenVPNStatusUpdate
 import io.nekohasekai.libbox.OutboundGroupIterator
 import io.nekohasekai.libbox.OutboundGroupItemIterator
 import io.nekohasekai.libbox.OverrideOptions
@@ -68,6 +71,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.HttpsURLConnection
 import io.nekohasekai.libbox.NetworkInterface as BoxNetworkInterface
 
+private const val MAX_OPENVPN_DIAGNOSTIC_LENGTH = 600
+
 /**
  * Android host for the pinned sing-box libbox runtime.
  *
@@ -85,6 +90,7 @@ internal class SingBoxEngineRunner(
     private val dnsFallbackPolicyNames: List<String> = emptyList(),
     private val onDnsFallback: (List<String>) -> Unit = {},
     private val profileConnectionTestPorts: Map<String, Int> = emptyMap(),
+    private val openVpnProfileTags: Map<String, String> = emptyMap(),
 ) : PlatformInterface, CommandServerHandler {
     private val appContext = service.applicationContext
     private val connectivity =
@@ -92,6 +98,7 @@ internal class SingBoxEngineRunner(
     private val lock = Any()
     private var commandServer: CommandServer? = null
     private var commandClient: CommandClient? = null
+    private var openVpnStatusSubscription: OpenVPNStatusSubscription? = null
     private var profileGroupController: ProfileGroupRuntimeController? = null
     private var connections = Connections()
     private var tunDescriptor: ParcelFileDescriptor? = null
@@ -99,6 +106,8 @@ internal class SingBoxEngineRunner(
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     @Volatile private var underlyingNetwork: Network? = null
     private val running = AtomicBoolean(false)
+    @Volatile private var openVpnStatuses: Map<String, OpenVpnRuntimeStatusSnapshot> = emptyMap()
+    @Volatile private var openVpnStatusStreamError: String? = null
 
     fun start(configJson: String): Result<Unit> {
         if (running.get()) return Result.success(Unit)
@@ -186,7 +195,13 @@ internal class SingBoxEngineRunner(
             connections.forEach(HttpsURLConnection::disconnect)
         }
         check(latencies.isNotEmpty()) {
-            lastFailure?.message ?: "HTTPS-проверка через выбранный профиль не получила ответ."
+            val transportFailure = lastFailure?.message
+                ?: "HTTPS-проверка через выбранный профиль не получила ответ."
+            openVpnProfileTestFailure(
+                transportFailure = transportFailure,
+                status = openVpnStatuses[profileId],
+                statusStreamError = openVpnStatusStreamError,
+            )
         }
         EngineConnectionTest(
             successful = true,
@@ -247,6 +262,7 @@ internal class SingBoxEngineRunner(
         }
         runCatching { client.connect() }
             .onSuccess {
+                startOpenVpnStatusMonitor(client)
                 groupController?.start()
                 onLog("Flow Scanner connected to the local sing-box connection stream.")
             }
@@ -268,14 +284,78 @@ internal class SingBoxEngineRunner(
             current
         }
         groupController?.stop()
+        val openVpnSubscription = synchronized(lock) {
+            val current = openVpnStatusSubscription
+            openVpnStatusSubscription = null
+            current
+        }
+        runCatching { openVpnSubscription?.close() }
         val client = synchronized(lock) {
             val current = commandClient
             commandClient = null
             current
         }
         runCatching { client?.disconnect() }
-        synchronized(lock) { connections = Connections() }
+        synchronized(lock) {
+            connections = Connections()
+            openVpnStatuses = emptyMap()
+            openVpnStatusStreamError = null
+        }
         onConnections(emptyList())
+    }
+
+    private fun startOpenVpnStatusMonitor(client: CommandClient) {
+        if (openVpnProfileTags.isEmpty()) return
+        val profileIdByTag = openVpnProfileTags.entries
+            .associate { (profileId, tag) -> tag to profileId }
+        runCatching {
+            client.subscribeOpenVPNStatus(
+                object : OpenVPNStatusHandler {
+                    override fun onStatusUpdate(status: OpenVPNStatusUpdate?) {
+                        status ?: return
+                        val next = linkedMapOf<String, OpenVpnRuntimeStatusSnapshot>()
+                        val endpoints = status.endpoints()
+                        while (endpoints.hasNext()) {
+                            val endpoint = endpoints.next()
+                            val profileId = profileIdByTag[endpoint.endpointTag] ?: continue
+                            next[profileId] = OpenVpnRuntimeStatusSnapshot(
+                                state = endpoint.state.orEmpty(),
+                                stateText = endpoint.stateText.orEmpty(),
+                                error = endpoint.error.orEmpty(),
+                                challengeMessage = endpoint.challenge?.message.orEmpty(),
+                                challengePreviousError = endpoint.challenge?.previousError.orEmpty(),
+                                connected = endpoint.tunnelInfo != null,
+                            )
+                        }
+                        synchronized(lock) {
+                            if (commandClient === client) {
+                                openVpnStatuses = next
+                                openVpnStatusStreamError = null
+                            }
+                        }
+                    }
+
+                    override fun onError(message: String?) {
+                        synchronized(lock) {
+                            if (commandClient === client) {
+                                openVpnStatusStreamError = message.orEmpty().take(MAX_LOG_LENGTH)
+                            }
+                        }
+                    }
+                },
+            )
+        }.onSuccess { subscription ->
+            synchronized(lock) {
+                if (commandClient === client) {
+                    openVpnStatusSubscription = subscription
+                } else {
+                    runCatching { subscription.close() }
+                }
+            }
+        }.onFailure { error ->
+            openVpnStatusStreamError = error.message.orEmpty().take(MAX_LOG_LENGTH)
+            onLog("OpenVPN status channel is unavailable: ${error.message.orEmpty()}")
+        }
     }
 
     private inner class ConnectionClientHandler : CommandClientHandler {
@@ -815,6 +895,61 @@ internal class SingBoxEngineRunner(
         }
     }
 }
+
+internal data class OpenVpnRuntimeStatusSnapshot(
+    val state: String,
+    val stateText: String,
+    val error: String,
+    val challengeMessage: String = "",
+    val challengePreviousError: String = "",
+    val connected: Boolean,
+)
+
+internal fun openVpnProfileTestFailure(
+    transportFailure: String,
+    status: OpenVpnRuntimeStatusSnapshot?,
+    statusStreamError: String?,
+): String {
+    val transport = sanitizeOpenVpnDiagnostic(transportFailure)
+    if (status == null) {
+        val streamProblem = sanitizeOpenVpnDiagnostic(statusStreamError.orEmpty())
+        return if (streamProblem.isBlank()) {
+            transport
+        } else {
+            "$transport Статус OpenVPN недоступен: $streamProblem"
+        }
+    }
+    val state = sanitizeOpenVpnDiagnostic(status.stateText.ifBlank { status.state })
+    val openVpnError = sanitizeOpenVpnDiagnostic(status.error)
+    val challenge = sanitizeOpenVpnDiagnostic(
+        status.challengePreviousError.ifBlank { status.challengeMessage },
+    )
+    return when {
+        openVpnError.isNotBlank() ->
+            "OpenVPN${state.takeIf(String::isNotBlank)?.let { " ($it)" }.orEmpty()}: $openVpnError"
+        status.state.equals("auth_pending", ignoreCase = true) && challenge.isNotBlank() ->
+            "OpenVPN ожидает данные авторизации: $challenge"
+        status.state.equals("auth_pending", ignoreCase = true) ->
+            "OpenVPN ожидает данные авторизации. Проверьте логин, пароль или дополнительный запрос провайдера."
+        status.connected ->
+            "OpenVPN-туннель установлен, но HTTPS-проверка через него не прошла: $transport"
+        state.isNotBlank() ->
+            "OpenVPN ещё не подключён ($state). Сетевая ошибка: $transport"
+        else -> transport
+    }.take(MAX_OPENVPN_DIAGNOSTIC_LENGTH)
+}
+
+private fun sanitizeOpenVpnDiagnostic(value: String): String = value
+    .replace(Regex("[\\r\\n\\t]+"), " ")
+    .replace(
+        Regex(
+            "(?i)(password|passphrase|private_key|psk|auth_key|cookie|username|secret|token|otp|pin)" +
+                "\\s*[=:]\\s*[^\\s,;]+",
+        ),
+        "$1=<redacted>",
+    )
+    .trim()
+    .take(MAX_OPENVPN_DIAGNOSTIC_LENGTH)
 
 internal object SingBoxEnvironment {
     private val initialized = AtomicBoolean(false)
