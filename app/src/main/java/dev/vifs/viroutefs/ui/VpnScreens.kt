@@ -2622,19 +2622,22 @@ private fun SingBoxProfileEditorScreen(
         if (uri == null) return@rememberLauncherForActivityResult
         val password = openVpnPkcs12Password.toCharArray()
         scope.launch {
-            val imported = runCatching {
-                withContext(Dispatchers.IO) {
-                    val bytes = readProfileImportBytes(context, uri)
-                    try {
-                        importOpenVpnPkcs12(
-                            bytes = bytes,
-                            password = password,
-                        )
-                    } finally {
-                        bytes.fill(0)
-                        password.fill('\u0000')
+            val imported = try {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val bytes = readProfileImportBytes(context, uri)
+                        try {
+                            importOpenVpnPkcs12(
+                                bytes = bytes,
+                                password = password,
+                            )
+                        } finally {
+                            bytes.fill(0)
+                        }
                     }
                 }
+            } finally {
+                password.fill('\u0000')
             }
             openVpnPkcs12Password = ""
             imported.onSuccess { material ->

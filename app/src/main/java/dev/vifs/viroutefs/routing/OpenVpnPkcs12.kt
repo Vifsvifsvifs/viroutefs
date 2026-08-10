@@ -96,7 +96,7 @@ internal fun importOpenVpnPkcs12(
             ?.joinToString(separator = "\n") { certificate ->
                 certificate.encoded.toPem("CERTIFICATE")
             }
-        val encodedKey = privateKey.encoded?.copyOf()
+        val encodedKey = privateKey.encoded
             ?: error("Закрытый ключ PKCS#12 нельзя экспортировать в формате PKCS#8.")
         val clientKey = try {
             encodedKey.toPem("PRIVATE KEY")
