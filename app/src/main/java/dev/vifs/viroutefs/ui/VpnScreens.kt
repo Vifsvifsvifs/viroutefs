@@ -3105,9 +3105,10 @@ private val OPENVPN_PEM_MIME_TYPES = arrayOf(
 )
 
 private val OPENVPN_PKCS12_MIME_TYPES = arrayOf(
-    "application/x-pkcs12",
-    "application/pkcs12",
-    "application/octet-stream",
+    // Several Android document providers hide .p12/.pfx files even when they report the
+    // standard PKCS#12 MIME type. Let the user pick any document and validate the actual
+    // PKCS#12 contents locally instead of relying on a vendor-specific MIME filter.
+    "*/*",
 )
 
 private val OPENVPN_PRIVATE_KEY_PATTERN = Regex(
