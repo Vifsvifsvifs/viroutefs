@@ -449,18 +449,7 @@ internal class SingBoxEngineAdapter(
         private set
 
     override fun validateProfile(profile: TunnelProfile): List<EngineError> =
-        validateRoutingConfig(
-            RoutingConfig(
-                profiles = listOf(profile),
-                dnsPolicies = emptyList(),
-                rules = emptyList(),
-            ),
-        )
-            .filterNot {
-                it.startsWith("Нужно хотя бы") ||
-                    it.startsWith("Нужен хотя бы") ||
-                    it.contains("DNS-политика")
-            }
+        validateSingBoxEngineProfile(profile)
             .map { details ->
                 error(
                     EngineErrorStage.Validation,
@@ -661,6 +650,7 @@ internal class SingBoxEngineAdapter(
             repeat(count) {
                 reservations += ServerSocket(0, 1, InetAddress.getLoopbackAddress())
             }
+
             reservations.map(ServerSocket::getLocalPort)
         } finally {
             reservations.forEach { runCatching { it.close() } }
@@ -694,4 +684,21 @@ internal class SingBoxEngineAdapter(
         const val ID = "sing-box"
     }
 }
+
+internal fun validateSingBoxEngineProfile(profile: TunnelProfile): List<String> =
+    validateRoutingConfig(
+        RoutingConfig(
+            profiles = listOf(profile),
+            dnsPolicies = emptyList(),
+            rules = emptyList(),
+        ),
+    ).filterNot { details ->
+        // This deliberately validates one profile outside the real router.
+        // Ignore requirements that belong to the surrounding RoutingConfig;
+        // they are checked against the complete config before compilation.
+        details.startsWith("Нужно хотя бы") ||
+            details.startsWith("Нужен хотя бы") ||
+            details.startsWith("Должно быть активно ровно одно правило DEFAULT") ||
+            details.contains("DNS-политика")
+    }
 
