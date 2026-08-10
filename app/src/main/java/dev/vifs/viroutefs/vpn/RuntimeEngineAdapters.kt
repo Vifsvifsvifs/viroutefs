@@ -19,6 +19,7 @@ import dev.vifs.viroutefs.engine.LocalEngineEndpoint
 import dev.vifs.viroutefs.engine.SingBoxRoutingConfigCompiler
 import dev.vifs.viroutefs.engine.XrayLocalProfile
 import dev.vifs.viroutefs.engine.compileXrayRuntime
+import dev.vifs.viroutefs.engine.resolveXrayServerAddress
 import dev.vifs.viroutefs.engine.routedProfileIds
 import dev.vifs.viroutefs.engine.runtimeProfileGroupHealthTag
 import dev.vifs.viroutefs.engine.validateXrayProfile
@@ -255,10 +256,12 @@ internal class XrayEngineAdapter(
             val ports = reserveLoopbackPorts(payload.profiles.size)
             val runtime = compileXrayRuntime(
                 payload.profiles.zip(ports).map { (profile, port) ->
+                    val vless = requireNotNull(profile.vless)
                     XrayLocalProfile(
                         profileId = profile.id,
                         localSocksPort = port,
-                        profile = requireNotNull(profile.vless),
+                        profile = vless,
+                        resolvedServerAddress = resolveXrayServerAddress(vless.host),
                     )
                 },
             )

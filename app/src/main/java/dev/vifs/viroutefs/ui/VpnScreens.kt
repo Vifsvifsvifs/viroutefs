@@ -101,6 +101,7 @@ import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.SingBoxProfileConfig
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
+import dev.vifs.viroutefs.routing.importOpenVpnPkcs12
 import dev.vifs.viroutefs.routing.importOpenVpnProfile
 import dev.vifs.viroutefs.routing.isValidIpOrCidr
 import dev.vifs.viroutefs.routing.applyProfileImport
@@ -1635,7 +1636,13 @@ private suspend fun readProfileImportFile(
     context: Context,
     uri: Uri,
     maxBytes: Int = 2 * 1024 * 1024,
-): String = withContext(Dispatchers.IO) {
+): String = readProfileImportBytes(context, uri, maxBytes).toString(Charsets.UTF_8)
+
+private suspend fun readProfileImportBytes(
+    context: Context,
+    uri: Uri,
+    maxBytes: Int = 2 * 1024 * 1024,
+): ByteArray = withContext(Dispatchers.IO) {
     val input = context.contentResolver.openInputStream(uri)
         ?: error("Android не предоставил доступ к выбранному файлу.")
     input.use { stream ->
@@ -1649,7 +1656,7 @@ private suspend fun readProfileImportFile(
             require(total <= maxBytes) { "Файл слишком большой. Максимум — 2 МБ." }
             output.write(buffer, 0, read)
         }
-        output.toString(Charsets.UTF_8.name())
+        output.toByteArray()
     }
 }
 
@@ -2549,6 +2556,9 @@ private fun SingBoxProfileEditorScreen(
     var openVpnPassword by rememberSaveable(profile?.id ?: "new-${type.name}-password") {
         mutableStateOf(openVpnRoot(optionsJson).optString("password"))
     }
+    var openVpnPkcs12Password by remember(profile?.id ?: "new-${type.name}-pkcs12-password") {
+        mutableStateOf("")
+    }
     var errors by remember(profile?.id ?: "new-${type.name}-errors") {
         mutableStateOf(emptyList<String>())
     }
@@ -2604,6 +2614,68 @@ private fun SingBoxProfileEditorScreen(
         importOpenVpnMaterial(uri, "client_key", "Закрытый ключ") {
             OPENVPN_PRIVATE_KEY_PATTERN.containsMatchIn(it) &&
                 !it.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----")
+        }
+    }
+    val openVpnPkcs12Launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val password = openVpnPkcs12Password.toCharArray()
+        scope.launch {
+            val imported = runCatching {
+                withContext(Dispatchers.IO) {
+                    val bytes = readProfileImportBytes(context, uri)
+                    try {
+                        importOpenVpnPkcs12(
+                            bytes = bytes,
+                            password = password,
+                        )
+                    } finally {
+                        bytes.fill(0)
+                        password.fill('\u0000')
+                    }
+                }
+            }
+            openVpnPkcs12Password = ""
+            imported.onSuccess { material ->
+                val hadCertificateAuthority = openVpnRoot(optionsJson)
+                    .optJSONObject("tls")
+                    .hasOpenVpnMaterial("certificate")
+                var updated = updateOpenVpnTlsMaterial(
+                    optionsJson,
+                    "client_certificate",
+                    material.clientCertificatePem,
+                )
+                updated = updateOpenVpnTlsMaterial(
+                    updated,
+                    "client_key",
+                    material.clientKeyPem,
+                )
+                if (!hadCertificateAuthority && material.certificateAuthorityPem != null) {
+                    updated = updateOpenVpnTlsMaterial(
+                        updated,
+                        "certificate",
+                        material.certificateAuthorityPem,
+                    )
+                }
+                optionsJson = updated
+                errors = emptyList()
+                nativeCheckMessage = buildString {
+                    append("Файл .p12/.pfx открыт: клиентский сертификат и ключ добавлены")
+                    append(" (сертификатов в цепочке: ${material.certificateCount}).")
+                    if (!hadCertificateAuthority && material.certificateAuthorityPem != null) {
+                        append(" CA-сертификат из цепочки также добавлен.")
+                    }
+                    if (material.warnings.isNotEmpty()) {
+                        append(" Проверьте предупреждение: ${material.warnings.joinToString(" ")}")
+                    }
+                    append(" Пароль контейнера не сохранён.")
+                }
+            }.onFailure { error ->
+                nativeCheckMessage =
+                    "Не удалось открыть .p12/.pfx. Проверьте пароль и сам файл: " +
+                    (error.localizedMessage ?: "неизвестная ошибка")
+            }
         }
     }
     val openVpnImportLauncher = rememberLauncherForActivityResult(
@@ -2787,6 +2859,25 @@ private fun SingBoxProfileEditorScreen(
                     Text(
                         "Поддерживаются текстовые PEM-файлы .pem/.crt/.cer/.key размером до 2 МБ. Зашифрованный закрытый ключ без отдельной поддержки passphrase не принимается.",
                         style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = openVpnPkcs12Password,
+                        onValueChange = { openVpnPkcs12Password = it },
+                        label = { Text("Пароль .p12/.pfx (не сохраняется)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                    )
+                    OutlinedButton(
+                        onClick = { openVpnPkcs12Launcher.launch(OPENVPN_PKCS12_MIME_TYPES) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Выбрать .p12 / .pfx")
+                    }
+                    Text(
+                        "Контейнер открывается только на устройстве. ViRouteFS извлекает сертификат и ключ в профиль, защищённый Android Keystore; пароль и исходный файл не сохраняются.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     OpenVpnMaterialPicker(
                         label = "CA-сертификат",
@@ -3007,6 +3098,12 @@ private val OPENVPN_PEM_MIME_TYPES = arrayOf(
     "application/pkix-cert",
     "application/x-x509-ca-cert",
     "text/plain",
+    "application/octet-stream",
+)
+
+private val OPENVPN_PKCS12_MIME_TYPES = arrayOf(
+    "application/x-pkcs12",
+    "application/pkcs12",
     "application/octet-stream",
 )
 

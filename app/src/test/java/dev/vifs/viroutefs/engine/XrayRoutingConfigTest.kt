@@ -6,6 +6,7 @@ import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.VlessSecurityMode
+import java.net.InetAddress
 import org.json.JSONObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,6 +27,7 @@ class XrayRoutingConfigTest {
                     profileId = "xhttp-office",
                     localSocksPort = 22080,
                     profile = profile,
+                    resolvedServerAddress = "203.0.113.17",
                 ),
             ),
         )
@@ -35,12 +37,16 @@ class XrayRoutingConfigTest {
         val stream = outbound.getJSONObject("streamSettings")
         val xhttp = stream.getJSONObject("xhttpSettings")
         val tls = stream.getJSONObject("tlsSettings")
+        val endpoint = outbound.getJSONObject("settings")
+            .getJSONArray("vnext")
+            .getJSONObject(0)
 
         assertEquals("127.0.0.1", inbound.getString("listen"))
         assertEquals(22080, inbound.getInt("port"))
         assertEquals("socks", inbound.getString("protocol"))
         assertTrue(inbound.getJSONObject("settings").getBoolean("udp"))
         assertEquals("vless", outbound.getString("protocol"))
+        assertEquals("203.0.113.17", endpoint.getString("address"))
         assertEquals("xhttp", stream.getString("network"))
         assertEquals("packet-up", xhttp.getString("mode"))
         assertEquals("/route", xhttp.getString("path"))
@@ -53,6 +59,18 @@ class XrayRoutingConfigTest {
         assertFalse(tls.has("allowInsecure"))
         assertEquals(mapOf("xhttp-office" to 22080), compiled.profilePorts)
         assertFalse(compiled.json.contains("vless://"))
+    }
+
+    @Test
+    fun androidDnsResolutionPrefersIpv4AndDoesNotChangeTlsHostname() {
+        val resolved = resolveXrayServerAddress("edge.example") {
+            arrayOf(
+                InetAddress.getByName("2001:db8::17"),
+                InetAddress.getByName("203.0.113.17"),
+            )
+        }
+
+        assertEquals("203.0.113.17", resolved)
     }
 
     @Test

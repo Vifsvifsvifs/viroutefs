@@ -7,6 +7,8 @@ import dev.vifs.viroutefs.routing.TunnelType
 import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.VlessSecurityMode
 import dev.vifs.viroutefs.vless.validateVlessProfile
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.util.Locale
 import org.json.JSONArray
 import org.json.JSONObject
@@ -15,6 +17,7 @@ internal data class XrayLocalProfile(
     val profileId: String,
     val localSocksPort: Int,
     val profile: VlessProfileConfig,
+    val resolvedServerAddress: String? = null,
 )
 
 internal data class XrayCompiledRuntime(
@@ -61,7 +64,12 @@ internal fun compileXrayRuntime(profiles: List<XrayLocalProfile>): XrayCompiledR
                         .put("userLevel", 8),
                 ),
         )
-        outbounds.put(item.profile.toXrayVlessOutbound(outboundTag))
+        outbounds.put(
+            item.profile.toXrayVlessOutbound(
+                tag = outboundTag,
+                serverAddress = item.resolvedServerAddress,
+            ),
+        )
         rules.put(
             JSONObject()
                 .put("type", "field")
@@ -166,7 +174,34 @@ internal fun validateXrayVlessProfile(profile: VlessProfileConfig): List<String>
     }
 }
 
-private fun VlessProfileConfig.toXrayVlessOutbound(tag: String): JSONObject {
+/**
+ * Standalone Xray processes on Android do not have v2rayNG's platform DNS
+ * bridge and otherwise try the unavailable localhost resolver ([::1]:53).
+ * Resolve through Android/Java before the process starts, preferring IPv4
+ * where both families are available. The original hostname is still retained
+ * for TLS SNI and the XHTTP Host header.
+ */
+internal fun resolveXrayServerAddress(
+    host: String,
+    lookup: (String) -> Array<InetAddress> = InetAddress::getAllByName,
+): String {
+    val normalizedHost = host.trim().removePrefix("[").removeSuffix("]")
+    require(normalizedHost.isNotBlank()) { "The Xray server address is empty." }
+    val addresses = lookup(normalizedHost).distinctBy(InetAddress::getHostAddress)
+    require(addresses.isNotEmpty()) {
+        "Android DNS returned no addresses for the Xray server."
+    }
+    val selectedAddress = addresses.firstOrNull { it is Inet4Address } ?: addresses.first()
+    return requireNotNull(selectedAddress.hostAddress) {
+        "Android DNS returned an address without a textual representation."
+    }
+        .substringBefore('%')
+}
+
+private fun VlessProfileConfig.toXrayVlessOutbound(
+    tag: String,
+    serverAddress: String?,
+): JSONObject {
     val user = JSONObject()
         .put("id", uuid.trim())
         .put("encryption", encryption?.takeIf(String::isNotBlank) ?: "none")
@@ -216,7 +251,7 @@ private fun VlessProfileConfig.toXrayVlessOutbound(tag: String): JSONObject {
                 "vnext",
                 JSONArray().put(
                     JSONObject()
-                        .put("address", host.trim())
+                        .put("address", serverAddress?.trim()?.takeIf(String::isNotBlank) ?: host.trim())
                         .put("port", port)
                         .put("users", JSONArray().put(user)),
                 ),
