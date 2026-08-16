@@ -67,9 +67,21 @@ class RoutingConfigRepository internal constructor(
                 .mergeSecrets(legacySecrets)
                 .mergeSecrets(embeddedSecrets)
             val mergedSubscriptionUrls = embeddedSubscriptionUrls + encryptedSubscriptionUrls
-            val config = decodedConfig
+            val configWithSecrets = decodedConfig
                 .withProfileSecrets(mergedSecrets)
                 .withSubscriptionUrls(mergedSubscriptionUrls)
+            val openVpnMigrated = if (rawConfig.version < OPENVPN_ROUTE_ROUTER_MIGRATION_VERSION) {
+                configWithSecrets
+                    .withMigratedOpenVpnEndpointRoutes()
+                    .withSyncedProfileAppRoutingRules()
+            } else {
+                configWithSecrets
+            }
+            val config = if (rawConfig.version < VPN_GATE_MANAGEMENT_MIGRATION_VERSION) {
+                openVpnMigrated.withMigratedVpnGateManagement()
+            } else {
+                openVpnMigrated
+            }
             val errors = validateRoutingConfig(config)
             if (errors.isNotEmpty()) {
                 RoutingConfigLoadResult(RoutingConfigDefaults.defaultConfig(), "Сохранённая конфигурация некорректна: ${errors.joinToString()}")
@@ -227,6 +239,9 @@ object RoutingConfigJson {
         put("singBox", singBox?.toJson(includeSecrets))
         put("sourceSubscriptionId", sourceSubscriptionId)
         put("sourceEntryKey", sourceEntryKey)
+        put("appRoutingMode", appRoutingMode.name)
+        put("appRoutingPackages", JSONArray(appRoutingPackages))
+        put("appRoutingNetworks", JSONArray(appRoutingNetworks))
     }
 
     private fun JSONObject.toTunnelProfile(): TunnelProfile {
@@ -246,6 +261,9 @@ object RoutingConfigJson {
             singBox = optJSONObject("singBox")?.toSingBoxProfileConfig(),
             sourceSubscriptionId = optNullableString("sourceSubscriptionId"),
             sourceEntryKey = optNullableString("sourceEntryKey"),
+            appRoutingMode = optEnum("appRoutingMode", ProfileAppRoutingMode.SelectedApps),
+            appRoutingPackages = optJSONArray("appRoutingPackages")?.mapStrings().orEmpty(),
+            appRoutingNetworks = optJSONArray("appRoutingNetworks")?.mapStrings().orEmpty(),
         )
     }
 
@@ -277,6 +295,7 @@ object RoutingConfigJson {
         put("testUrl", testUrl)
         put("testIntervalSeconds", testIntervalSeconds)
         put("toleranceMs", toleranceMs)
+        put("preferredCountryCode", preferredCountryCode)
         put("enabled", enabled)
     }
 
@@ -289,6 +308,7 @@ object RoutingConfigJson {
         testUrl = optString("testUrl", "https://www.gstatic.com/generate_204"),
         testIntervalSeconds = optInt("testIntervalSeconds", 180),
         toleranceMs = optInt("toleranceMs", 50),
+        preferredCountryCode = optNullableString("preferredCountryCode"),
         enabled = optBoolean("enabled", true),
     )
 

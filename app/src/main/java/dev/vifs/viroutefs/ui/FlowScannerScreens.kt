@@ -3,6 +3,7 @@ package dev.vifs.viroutefs.ui
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
@@ -42,6 +43,8 @@ import dev.vifs.viroutefs.StatusChip
 import dev.vifs.viroutefs.UiText
 import dev.vifs.viroutefs.WarningText
 import dev.vifs.viroutefs.loadInstalledAppsForRouting
+import dev.vifs.viroutefs.root.RootSocketSnapshot
+import dev.vifs.viroutefs.root.RootSocketSnapshotScanner
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RouteEngine
 import dev.vifs.viroutefs.routing.RouteDecision
@@ -147,6 +150,42 @@ internal data class FlowEventUi(
     }
 }
 
+private fun RootSocketSnapshot.toFlowEvent(context: Context, observedAt: Long): FlowEventUi {
+    val remoteIsUnspecified = remoteAddress in setOf("0.0.0.0", "::", "0:0:0:0:0:0:0:0")
+    val endpoint = if (remoteIsUnspecified || remotePort == 0) {
+        "локальный сокет"
+    } else {
+        remoteAddress
+    }
+    val packages = packageNames.distinct()
+    val appLabel = packages
+        .map(context::applicationLabel)
+        .distinct()
+        .joinToString()
+        .ifBlank { "UID $uid" }
+    val displayPort = if (remotePort > 0) remotePort else localPort
+    return FlowEventUi(
+        appName = appLabel,
+        domain = endpoint,
+        resolvedIp = remoteAddress.takeUnless { remoteIsUnspecified },
+        portProtocol = "$displayPort / $protocol",
+        dnsPolicy = "Root-снимок не содержит DNS-политику",
+        selectedRoute = "Таблица сокетов ядра",
+        routeReason = "Одноразовый root-снимок; маршрут и содержимое пакета не анализировались",
+        riskWarning = null,
+        recommendation = "Сопоставьте этот прямой сокет с одновременным событием VPN или правилом root-файрвола.",
+        status = state,
+        technicalDetails = "local=$localAddress:$localPort remote=$remoteAddress:$remotePort uid=$uid state=$state",
+        sourceLabel = "Root /proc socket snapshot",
+        routeCheck = "Маршрут не вычислялся",
+        appPackages = packages,
+        lifecycle = FlowLifecycle.Snapshot,
+        isBlocked = false,
+        ipVersion = if (remoteAddress.contains(':')) FlowIpVersion.Ipv6 else FlowIpVersion.Ipv4,
+        observedAt = observedAt,
+    )
+}
+
 @Composable
 internal fun FlowScannerScreen(
     padding: PaddingValues,
@@ -171,12 +210,23 @@ internal fun FlowScannerScreen(
     var runtimeDetailsOpen by rememberSaveable { mutableStateOf(false) }
     var pendingCsvExport by remember { mutableStateOf("") }
     var exportMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var rootSockets by remember { mutableStateOf<List<RootSocketSnapshot>>(emptyList()) }
+    var rootSnapshotAt by remember { mutableLongStateOf(0L) }
+    var rootScanBusy by remember { mutableStateOf(false) }
+    var rootScanMessage by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val installedApps = remember(context) { context.loadInstalledAppsForRouting() }
-    val allEvents = remember(vpnState.connectionFlows, vpnState.packetSummaries, config, context) {
+    val rootSocketScanner = remember(context) { RootSocketSnapshotScanner(context.applicationContext) }
+    var installedApps by remember(context) { mutableStateOf<List<InstalledAppUi>>(emptyList()) }
+    var installedAppsLoading by remember(context) { mutableStateOf(true) }
+    LaunchedEffect(context) {
+        installedApps = withContext(Dispatchers.IO) { context.loadInstalledAppsForRouting() }
+        installedAppsLoading = false
+    }
+    val allEvents = remember(vpnState.connectionFlows, vpnState.packetSummaries, rootSockets, rootSnapshotAt, config, context) {
         val previewer = LiveRouteDecisionPreviewer(config)
         vpnState.connectionFlows.map { flow -> flow.toFlowEvent(context, config) } +
-            vpnState.packetSummaries.map { packet -> packet.toFlowEvent(previewer.preview(packet)) }
+            vpnState.packetSummaries.map { packet -> packet.toFlowEvent(previewer.preview(packet)) } +
+            rootSockets.map { socket -> socket.toFlowEvent(context, rootSnapshotAt) }
     }
     val protocolFilter = FlowProtocolFilter.entries
         .firstOrNull { it.name == protocolFilterName }
@@ -263,10 +313,20 @@ internal fun FlowScannerScreen(
         }
     }
 
+    BackHandler(enabled = appPickerOpen || runtimeDetailsOpen || liveDetailsOpen || selectedEvent != null) {
+        when {
+            appPickerOpen -> appPickerOpen = false
+            runtimeDetailsOpen -> runtimeDetailsOpen = false
+            liveDetailsOpen -> liveDetailsOpen = false
+            selectedEvent != null -> selectedEventIndex = null
+        }
+    }
+
     when {
         appPickerOpen -> FlowAppPickerScreen(
             padding = padding,
             apps = installedApps,
+            loading = installedAppsLoading,
             selectedPackage = selectedAppPackage,
             onBack = { appPickerOpen = false },
             onSelect = { packageName ->
@@ -357,12 +417,31 @@ internal fun FlowScannerScreen(
             },
             onClear = {
                 selectedEventIndex = null
+                rootSockets = emptyList()
+                rootSnapshotAt = 0L
+                rootScanMessage = null
                 onClear()
             },
             onPause = onPause,
             onRuntimeEvent = { runtimeDetailsOpen = true },
             onLiveEvent = { liveDetailsOpen = true },
             onEvent = { selectedEventIndex = it },
+            rootScanBusy = rootScanBusy,
+            rootScanMessage = rootScanMessage,
+            onRootSnapshot = {
+                rootScanBusy = true
+                rootScanMessage = null
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) { rootSocketScanner.scan() }
+                    rootScanMessage = result.message
+                    if (result.successful) {
+                        rootSockets = result.sockets
+                        rootSnapshotAt = System.currentTimeMillis()
+                        selectedEventIndex = null
+                    }
+                    rootScanBusy = false
+                }
+            },
         )
     }
 }
@@ -401,8 +480,43 @@ private fun FlowScannerListScreen(
     onRuntimeEvent: () -> Unit,
     onLiveEvent: () -> Unit,
     onEvent: (Int) -> Unit,
+    rootScanBusy: Boolean,
+    rootScanMessage: String?,
+    onRootSnapshot: () -> Unit,
 ) = ScreenList(padding) {
     item { FlowControlCard(text, vpnState, onClear, onPause) }
+    item {
+        CardBlock {
+            Text("Как пользоваться", fontWeight = FontWeight.SemiBold)
+            Text(
+                "1. Нажмите «Выбрать» и укажите приложение. 2. Откройте его и повторите действие, которое не работает. 3. Вернитесь сюда: сверху появятся адрес, выбранное правило и маршрут.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "Сканер показывает только технические сведения о соединениях. Сообщения, пароли и содержимое трафика не читаются.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+    item {
+        CardBlock {
+            Text("Дополнительно для root", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Если часть приложений идёт напрямую и не видна обычному сканеру, root-снимок добавит их активные подключения. Без root эта функция не нужна.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(
+                onClick = onRootSnapshot,
+                enabled = !rootScanBusy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (rootScanBusy) "Ожидаем root-менеджер…" else "Снять root-снимок сокетов")
+            }
+            rootScanMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
+    }
     item {
         CardBlock {
             Row(
@@ -741,6 +855,7 @@ private fun String.toCsvCell(): String =
 private fun FlowAppPickerScreen(
     padding: PaddingValues,
     apps: List<InstalledAppUi>,
+    loading: Boolean,
     selectedPackage: String?,
     onBack: () -> Unit,
     onSelect: (String?) -> Unit,
@@ -823,7 +938,11 @@ private fun FlowAppPickerScreen(
             }
         }
         if (filtered.isEmpty()) {
-            item { CardBlock { Text("Приложения по этому запросу не найдены.") } }
+            item {
+                CardBlock {
+                    Text(if (loading) "Загружаем список приложений…" else "Приложения по этому запросу не найдены.")
+                }
+            }
         }
     }
 }

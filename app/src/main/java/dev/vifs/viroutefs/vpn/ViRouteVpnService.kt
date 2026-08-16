@@ -22,7 +22,11 @@ import dev.vifs.viroutefs.engine.EngineOrchestratorException
 import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
+import dev.vifs.viroutefs.routing.VPN_GATE_AUTOMATIC_GROUP_ID
+import dev.vifs.viroutefs.routing.VpnGateCatalogClient
+import dev.vifs.viroutefs.routing.createAutomaticVpnGateRoute
 import dev.vifs.viroutefs.routing.defaultRouteActivationError
+import dev.vifs.viroutefs.routing.isAutomaticVpnGateEnabled
 import dev.vifs.viroutefs.runtime.tcp.TcpSessionState
 import dev.vifs.viroutefs.R
 import java.io.FileInputStream
@@ -216,9 +220,25 @@ class ViRouteVpnService : VpnService() {
     }
 
     private fun establishTunRuntime(configOverride: RoutingConfig?) {
-        val config = configOverride ?: loadRuntimeConfig().getOrElse { error ->
+        var config = configOverride ?: loadRuntimeConfig().getOrElse { error ->
             failRuntime(error.userSafeEngineMessage("Не удалось загрузить конфигурацию маршрутов."))
             return
+        }
+        if (config.isAutomaticVpnGateEnabled()) {
+            runtimeDetail = "VPNGate: обновляем каталог и выбираем доступные серверы…"
+            publishState(VpnServiceStatus.Starting, runtimeDetail)
+            config = refreshAutomaticVpnGate(config).getOrElse { error ->
+                val existingGroup = config.profileGroups.firstOrNull { it.id == VPN_GATE_AUTOMATIC_GROUP_ID }
+                if (existingGroup == null || existingGroup.memberProfileIds.size < 2) {
+                    failRuntime(
+                        "VPNGate не удалось обновить перед запуском: " +
+                            (error.localizedMessage ?: "каталог недоступен"),
+                    )
+                    return
+                }
+                runtimeDetail = "VPNGate: новый анализ не удался, используем сохранённый набор серверов."
+                config
+            }
         }
         if (runtimeStopping) return
         if (!config.emergencyBlockEnabled) {
@@ -401,6 +421,39 @@ class ViRouteVpnService : VpnService() {
             isDaemon = true
             start()
         }
+    }
+
+    private fun refreshAutomaticVpnGate(config: RoutingConfig): Result<RoutingConfig> = runCatching {
+        val snapshot = VpnGateCatalogClient(applicationContext).fetch(config)
+        val refreshed = createAutomaticVpnGateRoute(
+            config = config,
+            servers = snapshot.servers,
+            excludedCountryCode = detectRuntimeCountryCode(),
+            preferredCountryCode = config.profileGroups
+                .firstOrNull { it.id == VPN_GATE_AUTOMATIC_GROUP_ID }
+                ?.preferredCountryCode,
+        ).config
+        runBlocking {
+            RoutingConfigRepository(applicationContext).save(refreshed)
+        }
+        val serverCount = refreshed.profileGroups
+            .firstOrNull { it.id == VPN_GATE_AUTOMATIC_GROUP_ID }
+            ?.memberProfileIds
+            ?.size
+            ?: 0
+        runtimeDetail = "VPNGate: каталог обновлён, подготовлено серверов: $serverCount"
+        refreshed
+    }
+
+    private fun detectRuntimeCountryCode(): String {
+        val telephony = getSystemService(android.telephony.TelephonyManager::class.java)
+        return listOf(
+            runCatching { telephony?.networkCountryIso }.getOrNull(),
+            runCatching { telephony?.simCountryIso }.getOrNull(),
+            java.util.Locale.getDefault().country,
+        ).firstOrNull { value -> value?.matches(Regex("[A-Za-z]{2}")) == true }
+            ?.uppercase()
+            ?: "RU"
     }
 
     @Suppress("DEPRECATION")
@@ -764,6 +817,7 @@ class ViRouteVpnService : VpnService() {
             activeTcpSessions = activeTcpSessions,
             tcpSessionStateStats = tcpSessionStateStats,
         )
+        val statusChanged = lastState.status != state.status
         rememberState(state)
         val intent = Intent(VpnServiceController.ACTION_STATE_CHANGED)
             .setPackage(packageName)
@@ -801,6 +855,7 @@ class ViRouteVpnService : VpnService() {
                 ArrayList(VpnServiceController.encodeTcpSessionStateStats(tcpSessionStateStats)),
             )
         sendBroadcast(intent)
+        if (statusChanged) NetworkControlTileService.requestRefresh(this)
     }
 
     companion object {

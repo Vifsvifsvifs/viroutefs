@@ -7,7 +7,7 @@ import dev.vifs.viroutefs.vless.VlessProfileConfig
 import dev.vifs.viroutefs.vless.validateVlessProfile
 import java.util.Locale
 
-const val CURRENT_ROUTING_CONFIG_VERSION = 13
+const val CURRENT_ROUTING_CONFIG_VERSION = 16
 const val MOCK_PROFILE_LIMITATION = "Профиль пока не подключает реальный тоннель. Он используется для симуляции маршрутов."
 const val SOCKS5_RUNTIME_STATUS = "SOCKS5 forwarding is available through the local sing-box TUN runtime."
 const val VLESS_ROUTE_DECISION_STATUS = "VLESS forwarding is available through the local sing-box TUN runtime."
@@ -51,7 +51,7 @@ fun RoutingConfig.withDefaultRoute(profileId: String): RoutingConfig = copy(
             rule
         }
     },
-)
+).withSyncedProfileAppRoutingRules()
 
 fun RoutingConfig.withoutProfile(profileId: String): RoutingConfig {
     val updatedGroups = profileGroups.map { group ->
@@ -92,7 +92,7 @@ fun RoutingConfig.withoutProfile(profileId: String): RoutingConfig {
     if (defaultProfileId in removedTargetIds) {
         next = next.withDefaultRoute(RoutingConfigDefaults.SYSTEM_PROFILE_ID)
     }
-    return next
+    return next.withSyncedProfileAppRoutingRules()
 }
 
 fun defaultRouteActivationError(config: RoutingConfig): String? {
@@ -163,6 +163,7 @@ data class ProfileGroup(
     val testUrl: String = "https://www.gstatic.com/generate_204",
     val testIntervalSeconds: Int = 180,
     val toleranceMs: Int = 50,
+    val preferredCountryCode: String? = null,
     val enabled: Boolean = true,
 )
 
@@ -201,6 +202,9 @@ data class TunnelProfile(
     val singBox: SingBoxProfileConfig? = null,
     val sourceSubscriptionId: String? = null,
     val sourceEntryKey: String? = null,
+    val appRoutingMode: ProfileAppRoutingMode = ProfileAppRoutingMode.SelectedApps,
+    val appRoutingPackages: List<String> = emptyList(),
+    val appRoutingNetworks: List<String> = emptyList(),
 ) {
     val warningText: String?
         get() = when (type) {
@@ -209,6 +213,11 @@ data class TunnelProfile(
             TunnelType.L2tpIpSec, TunnelType.Sstp -> "Legacy/corporate compatibility: используйте только при необходимости совместимости."
             else -> null
         }
+}
+
+enum class ProfileAppRoutingMode {
+    SelectedApps,
+    BypassSelected,
 }
 
 data class DnsHostOverride(
@@ -223,7 +232,7 @@ enum class TunnelType(val label: String, val isMockOnly: Boolean) {
     Direct("System", false),
     Block("Block", false),
     ByeDpi("Совместимость TCP/TLS", true),
-    Zapret2("Обработчик пакетов zapret2", true),
+    Zapret2("Адаптация соединений (root)", true),
     WireGuard("WireGuard", true),
     OpenVpn("OpenVPN", true),
     OpenConnectAnyConnect("OpenConnect / AnyConnect", true),
@@ -702,6 +711,11 @@ fun validateRoutingConfig(config: RoutingConfig): List<String> = buildList {
             add("Группа ${group.name}: выбранный профиль не входит в группу.")
         }
         if (group.mode != ProfileGroupMode.Manual) {
+            if (group.preferredCountryCode != null &&
+                !group.preferredCountryCode.matches(Regex("[A-Z]{2}"))
+            ) {
+                add("Группа ${group.name}: код предпочтительной страны должен содержать две заглавные латинские буквы.")
+            }
             if (!group.testUrl.startsWith("https://", ignoreCase = true)) {
                 add("Группа ${group.name}: проверка доступности должна использовать HTTPS.")
             }

@@ -152,6 +152,19 @@ jobs:
         env:
           EXPECTED_XRAY_SHA256: 9bb0b815086395164066b5fa27b1797bf9a0fcc493d1491f02166560604dcaff
           XRAY_COMMIT: 94ffd50060f1cfd5d7482ec90a23a92bdefdff68
+          EXPECTED_ZAPRET2_SHA256: 2e1a0e950e0bc7189b5662e54fdd66d749d51215b167a647f15659554e7b4090
+          ZAPRET2_RELEASE: v1.0.4
+          ZAPRET2_COMMIT: 2c21faa80e1acb71ddceb8b49176f266b7d33f05
+          EXPECTED_TCPDUMP_SHA256: adb46aa539d42efb6d07c1afc42edc39954fd59a46c09561411bb98bb176c4da
+          TCPDUMP_RELEASE: '4.99.6'
+          LIBPCAP_RELEASE: '1.10.6'
+          WIREGUARD_ANDROID_VERSION: '1.0.20260102'
+          WIREGUARD_ANDROID_COMMIT: 09b75c2bd37f749e2a8c85876394854113c74be7
+          WIREGUARD_TOOLS_COMMIT: e2ecaaa739144997ccff89d6ad6ec81698ea6ced
+          WIREGUARD_TOOLS_SOURCE_SHA256: b5f838a044e9daa19eb011524efd813d12997fe5b44c1224a15cde4e99c10f75
+          EXPECTED_WG_SHA256: f68dfc2c95e0326e04bf427b055f729f3a51e840f78c8ad177259d42ab2722bc
+          EXPECTED_WG_QUICK_SHA256: a032456fbd3b8e577f6b4026ae049c4e7c9056cb7511f77c059e059394cb9092
+          EXPECTED_WG_GO_SHA256: 68730e8c81b613113249574e22838fd6ce9b1c4da2be2f5fe7c71d651e32b005
         run: |
           set -euo pipefail
 
@@ -164,15 +177,71 @@ jobs:
           "$ZIPALIGN" -c -P 16 4 "$RELEASE_APK"
           unzip -l "$RELEASE_APK" | grep -q 'lib/arm64-v8a/'
           unzip -l "$RELEASE_APK" | grep -q 'assets/licenses/Xray-core-MPL-2.0.txt'
+          unzip -l "$RELEASE_APK" | grep -q 'assets/licenses/zapret2-MIT.txt'
+          unzip -l "$RELEASE_APK" | grep -q 'assets/licenses/tcpdump-libpcap-BSD.txt'
+          unzip -l "$RELEASE_APK" | grep -q 'assets/licenses/WireGuard-tools-GPL-2.0.txt'
+          unzip -l "$RELEASE_APK" | grep -q 'assets/licenses/WireGuard-go-MIT.txt'
+          unzip -l "$RELEASE_APK" | grep -q 'assets/zapret2/zapret-lib.lua'
+          unzip -l "$RELEASE_APK" | grep -q 'assets/zapret2/zapret-antidpi.lua'
+          unzip -l "$RELEASE_APK" | grep -q 'assets/zapret2/zapret-auto.lua'
           SOURCE_XRAY_SHA256="$(sha256sum app/src/main/jniLibs/arm64-v8a/libxray.so | awk '{print $1}')"
           unzip -p "$RELEASE_APK" 'lib/arm64-v8a/libxray.so' > "$RUNNER_TEMP/libxray-packaged.so"
           PACKAGED_XRAY_SHA256="$(sha256sum "$RUNNER_TEMP/libxray-packaged.so" | awk '{print $1}')"
+          SOURCE_ZAPRET2_SHA256="$(sha256sum app/src/main/jniLibs/arm64-v8a/libzapret2.so | awk '{print $1}')"
+          unzip -p "$RELEASE_APK" 'lib/arm64-v8a/libzapret2.so' > "$RUNNER_TEMP/libzapret2-packaged.so"
+          PACKAGED_ZAPRET2_SHA256="$(sha256sum "$RUNNER_TEMP/libzapret2-packaged.so" | awk '{print $1}')"
+          SOURCE_TCPDUMP_SHA256="$(sha256sum app/src/main/jniLibs/arm64-v8a/libtcpdump.so | awk '{print $1}')"
+          unzip -p "$RELEASE_APK" 'lib/arm64-v8a/libtcpdump.so' > "$RUNNER_TEMP/libtcpdump-packaged.so"
+          PACKAGED_TCPDUMP_SHA256="$(sha256sum "$RUNNER_TEMP/libtcpdump-packaged.so" | awk '{print $1}')"
+          unzip -p "$RELEASE_APK" 'lib/arm64-v8a/libwg.so' > "$RUNNER_TEMP/libwg-packaged.so"
+          PACKAGED_WG_SHA256="$(sha256sum "$RUNNER_TEMP/libwg-packaged.so" | awk '{print $1}')"
+          unzip -p "$RELEASE_APK" 'lib/arm64-v8a/libwg-quick.so' > "$RUNNER_TEMP/libwg-quick-packaged.so"
+          PACKAGED_WG_QUICK_SHA256="$(sha256sum "$RUNNER_TEMP/libwg-quick-packaged.so" | awk '{print $1}')"
+          unzip -p "$RELEASE_APK" 'lib/arm64-v8a/libwg-go.so' > "$RUNNER_TEMP/libwg-go-packaged.so"
+          PACKAGED_WG_GO_SHA256="$(sha256sum "$RUNNER_TEMP/libwg-go-packaged.so" | awk '{print $1}')"
           if [ "$SOURCE_XRAY_SHA256" != "$EXPECTED_XRAY_SHA256" ]; then
             echo "Pinned Xray source hash mismatch: $SOURCE_XRAY_SHA256" >&2
             exit 1
           fi
           if [ "$PACKAGED_XRAY_SHA256" != "$EXPECTED_XRAY_SHA256" ]; then
             echo "Packaged Xray hash mismatch: $PACKAGED_XRAY_SHA256" >&2
+            exit 1
+          fi
+          if [ "$SOURCE_ZAPRET2_SHA256" != "$EXPECTED_ZAPRET2_SHA256" ]; then
+            echo "Pinned zapret2 source hash mismatch: $SOURCE_ZAPRET2_SHA256" >&2
+            exit 1
+          fi
+          if [ "$PACKAGED_ZAPRET2_SHA256" != "$EXPECTED_ZAPRET2_SHA256" ]; then
+            echo "Packaged zapret2 hash mismatch: $PACKAGED_ZAPRET2_SHA256" >&2
+            exit 1
+          fi
+          if [ "$SOURCE_TCPDUMP_SHA256" != "$EXPECTED_TCPDUMP_SHA256" ]; then
+            echo "Pinned tcpdump source hash mismatch: $SOURCE_TCPDUMP_SHA256" >&2
+            exit 1
+          fi
+          if [ "$PACKAGED_TCPDUMP_SHA256" != "$EXPECTED_TCPDUMP_SHA256" ]; then
+            echo "Packaged tcpdump hash mismatch: $PACKAGED_TCPDUMP_SHA256" >&2
+            exit 1
+          fi
+          if [ "$PACKAGED_WG_SHA256" != "$EXPECTED_WG_SHA256" ]; then
+            echo "Packaged WireGuard wg hash mismatch: $PACKAGED_WG_SHA256" >&2
+            exit 1
+          fi
+          if [ "$PACKAGED_WG_QUICK_SHA256" != "$EXPECTED_WG_QUICK_SHA256" ]; then
+            echo "Packaged WireGuard wg-quick hash mismatch: $PACKAGED_WG_QUICK_SHA256" >&2
+            exit 1
+          fi
+          if [ "$PACKAGED_WG_GO_SHA256" != "$EXPECTED_WG_GO_SHA256" ]; then
+            echo "Packaged WireGuard wireguard-go hash mismatch: $PACKAGED_WG_GO_SHA256" >&2
+            exit 1
+          fi
+          WIREGUARD_TOOLS_SOURCE_ARCHIVE="wireguard-tools-${WIREGUARD_TOOLS_COMMIT}.tar.gz"
+          curl --fail --location --retry 3 \
+            --output "$WIREGUARD_TOOLS_SOURCE_ARCHIVE" \
+            "https://github.com/WireGuard/wireguard-tools/archive/${WIREGUARD_TOOLS_COMMIT}.tar.gz"
+          DOWNLOADED_WIREGUARD_TOOLS_SOURCE_SHA256="$(sha256sum "$WIREGUARD_TOOLS_SOURCE_ARCHIVE" | awk '{print $1}')"
+          if [ "$DOWNLOADED_WIREGUARD_TOOLS_SOURCE_SHA256" != "$WIREGUARD_TOOLS_SOURCE_SHA256" ]; then
+            echo "WireGuard tools source archive hash mismatch: $DOWNLOADED_WIREGUARD_TOOLS_SOURCE_SHA256" >&2
             exit 1
           fi
           printf '%s  %s\n' "$SHA256" "$RELEASE_APK" > "$RELEASE_APK.sha256"
@@ -199,6 +268,37 @@ jobs:
                 "commit": "${XRAY_COMMIT}",
                 "sha256": "${PACKAGED_XRAY_SHA256}",
                 "license": "MPL-2.0"
+              },
+              "zapret2": {
+                "release": "${ZAPRET2_RELEASE}",
+                "commit": "${ZAPRET2_COMMIT}",
+                "sha256": "${PACKAGED_ZAPRET2_SHA256}",
+                "license": "MIT",
+                "rootOptional": true,
+                "deviceVerified": false
+              },
+              "tcpdumpLibpcap": {
+                "tcpdumpRelease": "${TCPDUMP_RELEASE}",
+                "libpcapRelease": "${LIBPCAP_RELEASE}",
+                "sha256": "${PACKAGED_TCPDUMP_SHA256}",
+                "license": "BSD-3-Clause",
+                "rootOptional": true,
+                "pageAlignmentKiB": 16,
+                "deviceVerified": false
+              },
+              "wireGuardAndroid": {
+                "version": "${WIREGUARD_ANDROID_VERSION}",
+                "commit": "${WIREGUARD_ANDROID_COMMIT}",
+                "wgSha256": "${PACKAGED_WG_SHA256}",
+                "wgQuickSha256": "${PACKAGED_WG_QUICK_SHA256}",
+                "wireguardGoSha256": "${PACKAGED_WG_GO_SHA256}",
+                "wireguardToolsSourceCommit": "${WIREGUARD_TOOLS_COMMIT}",
+                "wireguardToolsSourceArchive": "${WIREGUARD_TOOLS_SOURCE_ARCHIVE}",
+                "wireguardToolsSourceSha256": "${DOWNLOADED_WIREGUARD_TOOLS_SOURCE_SHA256}",
+                "licenses": ["Apache-2.0", "GPL-2.0", "MIT"],
+                "rootOptional": true,
+                "pageAlignmentKiB": 16,
+                "deviceVerified": false
               }
             }
           }
@@ -221,6 +321,7 @@ jobs:
             ${{ env.RELEASE_APK }}.sha256
             release-manifest.json
             apk-verification.txt
+            wireguard-tools-e2ecaaa739144997ccff89d6ad6ec81698ea6ced.tar.gz
           if-no-files-found: error
 
   publish-release:
@@ -315,6 +416,7 @@ jobs:
             "release-apk/$RELEASE_APK.sha256"
             "release-apk/release-manifest.json"
             "release-apk/apk-verification.txt"
+            "release-apk/wireguard-tools-e2ecaaa739144997ccff89d6ad6ec81698ea6ced.tar.gz"
             --title "$RELEASE_NAME"
             --notes-file release-notes.md
             --target "$GITHUB_SHA"

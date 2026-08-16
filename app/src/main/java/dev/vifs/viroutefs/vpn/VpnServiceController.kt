@@ -279,6 +279,7 @@ internal class VpnServiceController(context: Context) {
             activeTcpSessions = activeTcpSessions,
             tcpSessionStateStats = tcpSessionStateStats,
         )
+        val statusChanged = ViRouteVpnService.lastState.status != state.status
         ViRouteVpnService.rememberState(state)
         val intent = Intent(ACTION_STATE_CHANGED)
             .setPackage(appContext.packageName)
@@ -307,6 +308,7 @@ internal class VpnServiceController(context: Context) {
             .putExtra(EXTRA_ACTIVE_TCP_SESSIONS, activeTcpSessions)
             .putStringArrayListExtra(EXTRA_TCP_SESSION_STATE_STATS, ArrayList(encodeTcpSessionStateStats(tcpSessionStateStats)))
         appContext.sendBroadcast(intent)
+        if (statusChanged) NetworkControlTileService.requestRefresh(appContext)
     }
 
     private fun publishState(state: VpnServiceUiState) {

@@ -19,6 +19,7 @@ import dev.vifs.viroutefs.engine.LocalEngineEndpoint
 import dev.vifs.viroutefs.engine.SingBoxRoutingConfigCompiler
 import dev.vifs.viroutefs.engine.XrayLocalProfile
 import dev.vifs.viroutefs.engine.compileXrayRuntime
+import dev.vifs.viroutefs.engine.resolveXrayServerAddress
 import dev.vifs.viroutefs.engine.routedProfileIds
 import dev.vifs.viroutefs.engine.runtimeProfileGroupHealthTag
 import dev.vifs.viroutefs.engine.validateXrayProfile
@@ -255,10 +256,12 @@ internal class XrayEngineAdapter(
             val ports = reserveLoopbackPorts(payload.profiles.size)
             val runtime = compileXrayRuntime(
                 payload.profiles.zip(ports).map { (profile, port) ->
+                    val vless = requireNotNull(profile.vless)
                     XrayLocalProfile(
                         profileId = profile.id,
                         localSocksPort = port,
-                        profile = requireNotNull(profile.vless),
+                        profile = vless,
+                        resolvedServerAddress = resolveXrayServerAddress(vless.host),
                     )
                 },
             )
@@ -446,18 +449,7 @@ internal class SingBoxEngineAdapter(
         private set
 
     override fun validateProfile(profile: TunnelProfile): List<EngineError> =
-        validateRoutingConfig(
-            RoutingConfig(
-                profiles = listOf(profile),
-                dnsPolicies = emptyList(),
-                rules = emptyList(),
-            ),
-        )
-            .filterNot {
-                it.startsWith("Нужно хотя бы") ||
-                    it.startsWith("Нужен хотя бы") ||
-                    it.contains("DNS-политика")
-            }
+        validateSingBoxEngineProfile(profile)
             .map { details ->
                 error(
                     EngineErrorStage.Validation,
@@ -599,6 +591,17 @@ internal class SingBoxEngineAdapter(
                     .map { it.name },
                 onDnsFallback = onDnsFallback,
                 profileConnectionTestPorts = nativeConfig.profileConnectionTestPorts,
+                openVpnProfileTags = config.profiles
+                    .asSequence()
+                    .filter { profile ->
+                        profile.enabled &&
+                            profile.type == TunnelType.OpenVpn &&
+                            profile.id in config.routedProfileIds() &&
+                            nativeConfig.profileTags.containsKey(profile.id)
+                    }
+                    .associate { profile ->
+                        profile.id to nativeConfig.profileTags.getValue(profile.id)
+                    },
             )
             runner = nextRunner
             state = EngineState.Connecting
@@ -658,6 +661,7 @@ internal class SingBoxEngineAdapter(
             repeat(count) {
                 reservations += ServerSocket(0, 1, InetAddress.getLoopbackAddress())
             }
+
             reservations.map(ServerSocket::getLocalPort)
         } finally {
             reservations.forEach { runCatching { it.close() } }
@@ -691,4 +695,21 @@ internal class SingBoxEngineAdapter(
         const val ID = "sing-box"
     }
 }
+
+internal fun validateSingBoxEngineProfile(profile: TunnelProfile): List<String> =
+    validateRoutingConfig(
+        RoutingConfig(
+            profiles = listOf(profile),
+            dnsPolicies = emptyList(),
+            rules = emptyList(),
+        ),
+    ).filterNot { details ->
+        // This deliberately validates one profile outside the real router.
+        // Ignore requirements that belong to the surrounding RoutingConfig;
+        // they are checked against the complete config before compilation.
+        details.startsWith("Нужно хотя бы") ||
+            details.startsWith("Нужен хотя бы") ||
+            details.startsWith("Должно быть активно ровно одно правило DEFAULT") ||
+            details.contains("DNS-политика")
+    }
 

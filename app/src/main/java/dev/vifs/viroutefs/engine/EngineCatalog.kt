@@ -22,7 +22,7 @@ internal object EngineCatalog {
         integrated(TunnelType.ByeDpi, "Локальный режим совместимости TCP/TLS; это не VPN и не скрывает IP-адрес.", EngineBackend.ByeDpi),
         unavailable(
             TunnelType.Zapret2,
-            "zapret2 v1.0.3 проверен по исходникам и лицензии MIT, но upstream-движок требует NFQUEUE/root. Rootless-адаптера для единого VpnService пока нет.",
+            "Отдельная «Адаптация соединений» на базе zapret2 v1.0.4 встроена в необязательный root-центр. Это системный NFQUEUE-модуль, а не VPN-профиль; до физической проверки он не доступен в списке туннелей.",
             EngineBackend.Zapret2,
         ),
 
@@ -70,7 +70,8 @@ internal object EngineCatalog {
         get() = protocols.filterNot {
             it.type == TunnelType.Direct ||
                 it.type == TunnelType.Block ||
-                it.type == TunnelType.ByeDpi
+                it.type == TunnelType.ByeDpi ||
+                it.type == TunnelType.Zapret2
         }
 
     private fun integrated(type: TunnelType, summary: String, backend: EngineBackend) = ProtocolDescriptor(
@@ -151,7 +152,7 @@ internal enum class EngineBackend(val label: String, val licenseDecision: String
     Xray("Xray-core", "MPL-2.0"),
     StrongSwan("strongSwan", "GPL-2.0-or-later"),
     ByeDpi("Движок совместимости ByeDPI", "MIT"),
-    Zapret2("zapret2", "MIT; v1.0.3 audited, not bundled"),
+    Zapret2("zapret2", "MIT; v1.0.4 bundled for optional root mode, device verification pending"),
     LegacyAdapter("Legacy adapter", "No binary selected"),
     ExternalAdapter("External adapter", "Requires separate audit"),
 }

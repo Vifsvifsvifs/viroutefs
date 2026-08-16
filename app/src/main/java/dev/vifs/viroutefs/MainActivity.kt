@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -71,7 +72,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import dev.vifs.viroutefs.diagnostics.DiagnosticResult
@@ -98,6 +101,7 @@ import dev.vifs.viroutefs.routing.findConflictsForCandidate
 import dev.vifs.viroutefs.routing.findExactRouteConflicts
 import dev.vifs.viroutefs.routing.hasRuntimeConfiguration
 import dev.vifs.viroutefs.routing.isValidIpOrCidr
+import dev.vifs.viroutefs.routing.isManagedProfileAppRoutingRule
 import dev.vifs.viroutefs.routing.moveExplicitRule
 import dev.vifs.viroutefs.routing.parseDestinationPortRanges
 import dev.vifs.viroutefs.routing.parseDomainMatcher
@@ -106,6 +110,7 @@ import dev.vifs.viroutefs.routing.validateRouteEditorDraft
 import dev.vifs.viroutefs.routing.validateDomainMatcher
 import dev.vifs.viroutefs.routing.validateRoutingConfig
 import dev.vifs.viroutefs.routing.withDefaultRoute
+import dev.vifs.viroutefs.routing.withSyncedProfileAppRoutingRules
 import dev.vifs.viroutefs.socks5.Socks5ReadinessSummary
 import dev.vifs.viroutefs.socks5.Socks5TestHistoryStore
 import dev.vifs.viroutefs.socks5.deriveSocks5ReadinessSummary
@@ -116,6 +121,8 @@ import dev.vifs.viroutefs.settings.AppThemeMode
 import dev.vifs.viroutefs.ui.DnsScreen
 import dev.vifs.viroutefs.ui.FlowScannerScreen
 import dev.vifs.viroutefs.ui.InstalledApplicationIcon
+import dev.vifs.viroutefs.ui.SupportQrCode
+import dev.vifs.viroutefs.ui.RootToolsScreen
 import dev.vifs.viroutefs.ui.VpnScreen
 import dev.vifs.viroutefs.ui.theme.ViRouteFsTheme
 import dev.vifs.viroutefs.update.GITHUB_RELEASES_WEB_URL
@@ -127,11 +134,14 @@ import dev.vifs.viroutefs.update.UpdateCheckResult
 import dev.vifs.viroutefs.update.formatBytes
 import dev.vifs.viroutefs.update.UpdateChecker
 import dev.vifs.viroutefs.vpn.VpnServiceController
+import dev.vifs.viroutefs.vpn.NetworkControlTileService
 import dev.vifs.viroutefs.vpn.VpnServiceStatus
 import dev.vifs.viroutefs.vless.VLESS_RUNTIME_LIMITATION
 import dev.vifs.viroutefs.vless.VLESS_ROUTE_PREVIEW_ONLY
 import dev.vifs.viroutefs.vpn.VpnServiceUiState
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -140,10 +150,12 @@ import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     private var incomingProfileImport by mutableStateOf<String?>(null)
+    private var quickTileStartRequested by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         incomingProfileImport = intent.profileImportSource()
+        quickTileStartRequested = intent.action == NetworkControlTileService.ACTION_START_FROM_TILE
         replaceSensitiveIntent()
         val settingsRepository = AppSettingsRepository(applicationContext)
         setContent {
@@ -154,6 +166,8 @@ class MainActivity : ComponentActivity() {
                         settings = settings,
                         incomingProfileImport = incomingProfileImport,
                         onProfileImportConsumed = { incomingProfileImport = null },
+                        quickTileStartRequested = quickTileStartRequested,
+                        onQuickTileStartConsumed = { quickTileStartRequested = false },
                         onSettings = { next ->
                             settings = next
                             settingsRepository.save(next)
@@ -167,6 +181,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         incomingProfileImport = intent.profileImportSource()
+        quickTileStartRequested = intent.action == NetworkControlTileService.ACTION_START_FROM_TILE
         replaceSensitiveIntent()
     }
 
@@ -222,6 +237,8 @@ private fun ViRouteFsApp(
     settings: AppSettings,
     incomingProfileImport: String?,
     onProfileImportConsumed: () -> Unit,
+    quickTileStartRequested: Boolean,
+    onQuickTileStartConsumed: () -> Unit,
     onSettings: (AppSettings) -> Unit,
 ) {
     val context = LocalContext.current
@@ -346,7 +363,9 @@ private fun ViRouteFsApp(
     }
 
     fun updateConfig(newConfig: RoutingConfig, note: String? = null) {
-        val normalizedConfig = newConfig.copy(version = CURRENT_ROUTING_CONFIG_VERSION)
+        val normalizedConfig = newConfig
+            .copy(version = CURRENT_ROUTING_CONFIG_VERSION)
+            .withSyncedProfileAppRoutingRules()
         val reloadActiveVpn = vpnState.status == VpnServiceStatus.RuntimeActive ||
             vpnState.status == VpnServiceStatus.TunPreviewActive ||
             vpnState.status == VpnServiceStatus.TunTestRouteActive
@@ -366,6 +385,55 @@ private fun ViRouteFsApp(
                 .onFailure { error ->
                         message = "Не удалось сохранить конфигурацию: ${error.localizedMessage ?: error::class.java.simpleName}"
                 }
+        }
+    }
+
+    fun applyEasySetupAndStart(newConfig: RoutingConfig, note: String) {
+        val previousConfig = config
+        val normalizedConfig = newConfig
+            .copy(version = CURRENT_ROUTING_CONFIG_VERSION)
+            .withSyncedProfileAppRoutingRules()
+        config = normalizedConfig
+        message = note
+        scope.launch {
+            val saveResult = configSaveMutex.withLock {
+                runCatching { repository.save(normalizedConfig) }
+            }
+            saveResult
+                .onSuccess {
+                    if (vpnState.status in setOf(
+                            VpnServiceStatus.Starting,
+                            VpnServiceStatus.RuntimeActive,
+                            VpnServiceStatus.ServiceActiveNoTun,
+                            VpnServiceStatus.TunPreviewActive,
+                            VpnServiceStatus.TunTestRouteActive,
+                        )
+                    ) {
+                        vpnController.reloadLocalService(false)
+                    } else {
+                        setVpnEnabled(true)
+                    }
+                }
+                .onFailure { error ->
+                    config = previousConfig
+                    message = "Не удалось сохранить автоматическую настройку: ${error.localizedMessage ?: error::class.java.simpleName}"
+                }
+        }
+    }
+
+    LaunchedEffect(quickTileStartRequested, loaded) {
+        if (quickTileStartRequested && loaded) {
+            selectedScreen = AppScreen.Vpn
+            onQuickTileStartConsumed()
+            setVpnEnabled(true)
+        }
+    }
+
+    BackHandler {
+        selectedScreen = when {
+            selectedScreen in moreScreens -> AppScreen.More
+            selectedScreen != AppScreen.Vpn -> AppScreen.Vpn
+            else -> AppScreen.Vpn
         }
     }
 
@@ -416,6 +484,7 @@ private fun ViRouteFsApp(
                 initialImportSource = incomingProfileImport,
                 onProfileImportConsumed = onProfileImportConsumed,
                 onVpnSwitch = ::setVpnEnabled,
+                onEasySetupReady = ::applyEasySetupAndStart,
                 onTunTestRoutePreview = ::setTunTestRoutePreviewEnabled,
                 onClearPacketList = vpnController::clearPacketSummaries,
                 onPausePacketInspector = vpnController::setPacketInspectorPaused,
@@ -454,7 +523,15 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
     var draftRoute by remember { mutableStateOf<RouteRule?>(null) }
     var selectedGroupId by rememberSaveable { mutableStateOf<String?>(null) }
     var creatingGroup by rememberSaveable { mutableStateOf(false) }
-    val installedApps = remember(context) { context.loadInstalledAppsForRouting() }
+    var installedApps by remember(context) { mutableStateOf<List<InstalledAppUi>>(emptyList()) }
+    var installedAppsLoading by remember(context) { mutableStateOf(false) }
+    LaunchedEffect(context, selectedRouteId, creatingRoute) {
+        if (selectedRouteId != null || creatingRoute) {
+            installedAppsLoading = true
+            installedApps = withContext(Dispatchers.IO) { context.loadInstalledAppsForRouting() }
+            installedAppsLoading = false
+        }
+    }
     val historyStore = remember(context) { Socks5TestHistoryStore(context) }
     var readinessByProfile by remember(config.profiles) { mutableStateOf<Map<String, Socks5ReadinessSummary>>(emptyMap()) }
     LaunchedEffect(config.profiles) {
@@ -463,12 +540,26 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
             .associate { it.id to deriveSocks5ReadinessSummary(historyStore.recentForProfile(it.id)) }
     }
     val userRules = config.rules
-        .filter { it.type != RouteRuleType.DEFAULT }
+        .filter { it.type != RouteRuleType.DEFAULT && !it.isManagedProfileAppRoutingRule() }
         .sortedWith(compareBy<RouteRule> { it.priority }.thenBy { it.name }.thenBy { it.id })
     val selectedRoute = userRules.firstOrNull { it.id == selectedRouteId }
     val selectedGroup = config.profileGroups.firstOrNull { it.id == selectedGroupId }
     val conflicts = remember(config.rules) { findExactRouteConflicts(config.rules) }
     val conflictsByRuleId = remember(conflicts) { conflicts.flatMap { conflict -> conflict.ruleIds.map { it to conflict } }.groupBy({ it.first }, { it.second }) }
+
+    BackHandler(enabled = selectedRoute != null || creatingRoute || selectedGroup != null || creatingGroup) {
+        when {
+            selectedRoute != null || creatingRoute -> {
+                selectedRouteId = null
+                creatingRoute = false
+                draftRoute = null
+            }
+            selectedGroup != null || creatingGroup -> {
+                selectedGroupId = null
+                creatingGroup = false
+            }
+        }
+    }
 
     if (selectedRoute != null || creatingRoute) {
         RouteDetailsScreen(
@@ -477,6 +568,7 @@ private fun RoutesScreen(padding: PaddingValues, text: UiText, config: RoutingCo
             rule = selectedRoute ?: draftRoute ?: newRouteDraft(config).also { draftRoute = it },
             config = config,
             installedApps = installedApps,
+            installedAppsLoading = installedAppsLoading,
             isNew = selectedRoute == null,
             onBack = {
                 selectedRouteId = null
@@ -1028,35 +1120,47 @@ data class InstalledAppUi(
     val label: String,
     val packageName: String,
     val isSystem: Boolean,
+    val uid: Int,
 )
 
 @Suppress("DEPRECATION")
 internal fun android.content.Context.loadInstalledAppsForRouting(): List<InstalledAppUi> {
-    val applications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        packageManager.getInstalledApplications(
-            PackageManager.ApplicationInfoFlags.of(0),
-        )
-    } else {
-        packageManager.getInstalledApplications(0)
-    }
-    return applications
-        .asSequence()
-        .filterNot { it.packageName == packageName }
-        .map { info ->
-            InstalledAppUi(
-                label = info.loadLabel(packageManager).toString(),
-                packageName = info.packageName,
-                isSystem = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
-            )
+    installedAppsForRoutingCache?.let { return it }
+    return synchronized(installedAppsForRoutingCacheLock) {
+        installedAppsForRoutingCache ?: run {
+            val applications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getInstalledApplications(
+                    PackageManager.ApplicationInfoFlags.of(0),
+                )
+            } else {
+                packageManager.getInstalledApplications(0)
+            }
+            applications
+                .asSequence()
+                .filterNot { it.packageName == packageName }
+                .map { info ->
+                    InstalledAppUi(
+                        label = info.loadLabel(packageManager).toString(),
+                        packageName = info.packageName,
+                        isSystem = (info.flags and ApplicationInfo.FLAG_SYSTEM) != 0,
+                        uid = info.uid,
+                    )
+                }
+                .distinctBy { it.packageName }
+                .sortedWith(
+                    compareBy<InstalledAppUi> { it.isSystem }
+                        .thenBy { it.label.lowercase(Locale.ROOT) }
+                        .thenBy { it.packageName },
+                )
+                .toList()
+                .also { installedAppsForRoutingCache = it }
         }
-        .distinctBy { it.packageName }
-        .sortedWith(
-            compareBy<InstalledAppUi> { it.isSystem }
-                .thenBy { it.label.lowercase(Locale.ROOT) }
-                .thenBy { it.packageName },
-        )
-        .toList()
+    }
 }
+
+@Volatile
+private var installedAppsForRoutingCache: List<InstalledAppUi>? = null
+private val installedAppsForRoutingCacheLock = Any()
 
 @Composable
 private fun RouteRuleCard(
@@ -1103,6 +1207,7 @@ private fun RouteDetailsScreen(
     rule: RouteRule,
     config: RoutingConfig,
     installedApps: List<InstalledAppUi>,
+    installedAppsLoading: Boolean,
     isNew: Boolean,
     onBack: () -> Unit,
     onConfig: (RoutingConfig, String?) -> Unit,
@@ -1234,6 +1339,7 @@ private fun RouteDetailsScreen(
                     text = text,
                     kind = matcherKind,
                     installedApps = filteredApps,
+                    installedAppsLoading = installedAppsLoading,
                     selectedAppPackages = selectedAppPackages,
                     appSearch = appSearch,
                     matcherText = matcherText,
@@ -1397,6 +1503,7 @@ private fun RouteMatcherEditor(
     text: UiText,
     kind: RouteMatcherKind,
     installedApps: List<InstalledAppUi>,
+    installedAppsLoading: Boolean,
     selectedAppPackages: List<String>,
     appSearch: String,
     matcherText: String,
@@ -1420,7 +1527,9 @@ private fun RouteMatcherEditor(
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (installedApps.isEmpty()) {
+            if (installedAppsLoading) {
+                Text(text.loading, style = MaterialTheme.typography.bodySmall)
+            } else if (installedApps.isEmpty()) {
                 Text(text.noInstalledApps, style = MaterialTheme.typography.bodySmall)
             } else {
                 LazyColumn(
@@ -1543,7 +1652,12 @@ private fun newRouteDraft(config: RoutingConfig): RouteRule = RouteRule(
     type = RouteRuleType.APP,
     targetProfileId = config.defaultProfileId ?: RoutingConfigDefaults.SYSTEM_PROFILE_ID,
     dnsPolicyId = RoutingConfigDefaults.SYSTEM_DNS_ID,
-    priority = (config.rules.maxOfOrNull { it.priority } ?: 1000) + 10,
+    priority = (
+        config.rules
+            .filterNot(RouteRule::isManagedProfileAppRoutingRule)
+            .maxOfOrNull { it.priority }
+            ?: 1000
+        ) + 10,
     matchers = emptyList(),
     appMatchers = emptyList(),
     reason = routeReason(RouteMatcherKind.App),
@@ -1663,7 +1777,7 @@ private fun routeReason(kind: RouteMatcherKind): String = when (kind) {
 private fun routeTechnicalDetails(kind: RouteMatcherKind): String = "Matcher type: ${kind.name}. Exact duplicate conflicts are validated locally before save. Active VPN rules are enforced by the fail-closed local runtime."
 
 private fun routeRecommendedAction(targetProfileId: String): String = if (targetProfileId == RoutingConfigDefaults.BLOCK_PROFILE_ID) {
-    "Traffic matching this rule should be blocked when runtime enforcement is implemented."
+    "Traffic matching this rule is blocked by the active fail-closed runtime."
 } else {
     "Keep the target profile available; explicit rules are fail-closed and must not silently fall back."
 }
@@ -1779,14 +1893,32 @@ private fun SettingsScreen(
     var updateChecking by remember { mutableStateOf(false) }
     val apkDownloader = remember(context) { UpdateApkDownloader(context.applicationContext) }
     var supportExpanded by rememberSaveable { mutableStateOf(false) }
+    var supportMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var helpExpanded by rememberSaveable { mutableStateOf(false) }
     var beginnerExpanded by rememberSaveable { mutableStateOf(false) }
     var adminExpanded by rememberSaveable { mutableStateOf(false) }
     var developerExpanded by rememberSaveable { mutableStateOf(false) }
+    var showRootTools by rememberSaveable { mutableStateOf(false) }
     val donationUrl = remember {
         BuildConfig.DONATION_URL.trim().takeIf { url ->
             url.startsWith("https://", ignoreCase = true)
         }
+    }
+    val clipboardManager = LocalClipboardManager.current
+    fun openSupportLink(url: String) {
+        supportMessage = runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }.fold(
+            onSuccess = { null },
+            onFailure = { text.supportLinkOpenFailed },
+        )
+    }
+    if (showRootTools) {
+        RootToolsScreen(
+            padding = padding,
+            onBack = { showRootTools = false },
+        )
+        return
     }
     ScreenList(padding) {
         item {
@@ -1840,6 +1972,21 @@ private fun SettingsScreen(
             }
         }
         item { CompactCard(text, text.version, "ViRouteFS ${BuildConfig.VERSION_NAME}", "versionCode ${BuildConfig.VERSION_CODE}") }
+        item {
+            CardBlock {
+                Text("Расширенные возможности устройства", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Необязательные функции для KernelSU/Magisk/APatch. Без root весь базовый функционал ViRouteFS остаётся доступным.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(
+                    onClick = { showRootTools = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Открыть root-центр")
+                }
+            }
+        }
         item {
             UpdateSettingsCard(
                 text = text,
@@ -1948,14 +2095,54 @@ private fun SettingsScreen(
                 Text(text.supportShort, style = MaterialTheme.typography.bodySmall)
                 if (supportExpanded) {
                     Text(text.supportDonationDisclaimer, style = MaterialTheme.typography.bodySmall)
-                    val links = buildList {
-                        donationUrl?.let { add(text.voluntarySupport to it) }
-                        add("GitHub" to "https://github.com/Vifsvifsvifs/viroutefs")
-                    }
-                    links.forEach { (label, url) -> OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }) { Text(label) } }
-                    if (donationUrl == null) {
+                    if (donationUrl != null) {
+                        Text(
+                            text.supportQrHint,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        SupportQrCode(
+                            url = donationUrl,
+                            contentDescription = text.supportQrContentDescription,
+                            onClick = { openSupportLink(donationUrl) },
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        )
+                        OutlinedButton(
+                            onClick = { openSupportLink(donationUrl) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(text.voluntarySupport) }
+                        TextButton(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(donationUrl))
+                                supportMessage = text.supportLinkCopied
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(text.copySupportLink) }
+                        Text(
+                            donationUrl,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { openSupportLink(donationUrl) },
+                        )
+                    } else {
                         Text(text.supportLinkNotConfigured, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    supportMessage?.let { feedback ->
+                        Text(
+                            feedback,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Vifsvifsvifs/viroutefs")),
+                            )
+                        },
+                    ) { Text("GitHub") }
                 }
             }
         }
@@ -2356,7 +2543,7 @@ internal class UiText(private val language: AppLanguage) {
     val usedByRoutes = t("Используется маршрутами", "Used by routes", "路由使用")
     val hostOverrides = t("Host overrides", "Host overrides", "主机覆盖")
     val hostOverridesSubtitle = t("Локальные hosts-подстановки рабочего DNS-маршрутизатора.", "Local hosts-like mappings for the active DNS router.", "工作 DNS 路由器的本地主机映射。")
-    val hostOverridesShort = t("Локальная hosts-like подстановка. Реальный DNS-движок применит её позже.", "Local hosts-like mapping. Real DNS engine will apply it later.", "本地 hosts 类映射。真实 DNS 引擎稍后会应用。")
+    val hostOverridesShort = t("Локальная hosts-подстановка с высшим DNS-приоритетом.", "Local hosts-like mapping with the highest DNS priority.", "具有最高 DNS 优先级的本地主机映射。")
     val addHostOverride = t("Добавить запись", "Add override", "添加覆盖")
     val ipAddress = t("IP", "IP", "IP")
     val noteOptional = t("Заметка (необязательно)", "Note (optional)", "备注（可选）")
@@ -2474,7 +2661,7 @@ Packets are dropped after counting""",
     val projectPurposeDetails = t("Приложение не предназначено и не продвигается как средство обхода блокировок. Используйте его только законно, с разрешёнными сетями и VPN-провайдерами. Дополнительный режим совместимости с DPI не является VPN, не шифрует трафик и не скрывает IP-адрес.", "The app is not intended or marketed as an access-restriction circumvention tool. Use it lawfully and only with authorized networks and VPN providers. The optional DPI compatibility mode is not a VPN, does not encrypt traffic, and does not hide the IP address.", "本应用不用于或宣传为规避访问限制的工具。请仅在合法且获授权的网络和 VPN 服务中使用。可选 DPI 兼容模式不是 VPN，不加密流量，也不隐藏 IP 地址。")
     val licenseSummaryTitle = t("Лицензия GPL-3.0-or-later", "GPL-3.0-or-later license", "GPL-3.0-or-later 许可证")
     val licenseSummaryShort = t("Проект остаётся свободным ПО под GPL-3.0-or-later.", "The project remains free software under GPL-3.0-or-later.", "项目仍是 GPL-3.0-or-later 下的自由软件。")
-    val licenseSummaryDetails = t("Вы можете изучать, изменять и распространять код при соблюдении GPL. В APK включены тексты GPL-3.0, лицензии sing-box, MPL-2.0 для Xray-core, MIT-лицензии ByeDPI и Apache-2.0 для AndroidX/CameraX/ZXing/SnakeYAML Engine; точные версии, хэши и скрипты воспроизводимой сборки находятся в репозитории.", "You may study, modify, and redistribute the code under the GPL. The APK includes GPL-3.0, the sing-box license, MPL-2.0 for Xray-core, the ByeDPI MIT license, and Apache-2.0 for AndroidX/CameraX/ZXing/SnakeYAML Engine; exact versions, hashes, and reproducible build scripts are in the repository.", "可按 GPL 条款研究、修改和再分发代码。APK 内含 GPL-3.0、sing-box 许可证、Xray-core 的 MPL-2.0、ByeDPI MIT 许可证以及 AndroidX/CameraX/ZXing/SnakeYAML Engine 的 Apache-2.0；精确版本、哈希和可复现构建脚本位于代码仓库中。")
+    val licenseSummaryDetails = t("Вы можете изучать, изменять и распространять код при соблюдении GPL. В APK включены тексты GPL-3.0, лицензии sing-box, MPL-2.0 для Xray-core, MIT-лицензии ByeDPI и zapret2, BSD-лицензия tcpdump/libpcap, набор Apache-2.0/GPL-2.0/MIT для WireGuard и Apache-2.0 для AndroidX/CameraX/ZXing/SnakeYAML Engine; точные версии, хэши и скрипты воспроизводимой сборки находятся в репозитории.", "You may study, modify, and redistribute the code under the GPL. The APK includes GPL-3.0, the sing-box license, MPL-2.0 for Xray-core, the MIT licenses for ByeDPI and zapret2, the BSD license for tcpdump/libpcap, the WireGuard Apache-2.0/GPL-2.0/MIT license set, and Apache-2.0 for AndroidX/CameraX/ZXing/SnakeYAML Engine; exact versions, hashes, and reproducible build scripts are in the repository.", "可按 GPL 条款研究、修改和再分发代码。APK 内含 GPL-3.0、sing-box 许可证、Xray-core 的 MPL-2.0、ByeDPI 与 zapret2 的 MIT 许可证、tcpdump/libpcap 的 BSD 许可证、WireGuard 的 Apache-2.0/GPL-2.0/MIT 许可证集，以及 AndroidX/CameraX/ZXing/SnakeYAML Engine 的 Apache-2.0；精确版本、哈希和可复现构建脚本位于代码仓库中。")
     val currentBetaLimitations = t("Границы beta", "Beta boundaries", "Beta 限制")
     val betaLimitationsShort = t("Нужна проверка на реальном arm64-телефоне. OpenVPN/OpenConnect и живые события Flow Scanner подключены, но IKEv2/IPsec и устаревшие L2TP/PPTP/SSTP ещё требуют отдельных Android-движков.", "Real arm64 device testing is still required. OpenVPN/OpenConnect and live Flow Scanner events are connected, while IKEv2/IPsec and legacy L2TP/PPTP/SSTP still need separate Android engines.", "仍需在真实 arm64 设备上测试。OpenVPN/OpenConnect 和实时 Flow Scanner 事件已接入，而 IKEv2/IPsec 与旧版 L2TP/PPTP/SSTP 仍需要单独的 Android 引擎。")
     val betaLimitationsDetails = t("Beta можно включать без VPN: System использует обычный мобильный интернет или Wi‑Fi, а отдельные правила направляют выбранный трафик в VPN, Block или режим совместимости TCP/TLS. APK содержит sing-box 1.14 alpha для большинства протоколов и отдельный локальный Xray-core для VLESS/XHTTP. Flow Scanner показывает метаданные без содержимого пакетов и расшифровки HTTPS. Все внешние туннели ещё требуют физической проверки.", "The beta can start without a VPN: System uses normal mobile data or Wi-Fi, while explicit rules send selected traffic to a VPN, Block, or TCP/TLS Compatibility. The APK contains sing-box 1.14 alpha for most protocols and an app-private Xray-core process for VLESS/XHTTP. Flow Scanner shows metadata without packet payloads or HTTPS decryption. Every external tunnel still requires physical verification.", "Beta 无需 VPN 即可启动：System 使用普通移动数据或 Wi-Fi，明确规则可将选定流量发送到 VPN、Block 或 TCP/TLS 兼容模式。APK 对多数协议使用 sing-box 1.14 alpha，并为 VLESS/XHTTP 内置独立的本地 Xray-core 进程。Flow Scanner 仅显示元数据，不记录数据包内容，也不解密 HTTPS。所有外部隧道仍需真机验证。")
@@ -2491,6 +2678,11 @@ Packets are dropped after counting""",
     val supportShort = t("Добровольная поддержка без покупки функций и преимуществ.", "Voluntary support without purchasing features or benefits.", "自愿支持，不购买任何功能或权益。")
     val supportDonationDisclaimer = t("Номер банковской карты в приложение не встраивается и не сохраняется. Кнопка открывает только настроенную владельцем HTTPS-страницу оплаты; приложение не обрабатывает платёжные данные.", "No bank card number is embedded or stored. The button only opens an owner-configured HTTPS payment page; the app does not process payment data.", "应用不会嵌入或保存银行卡号。按钮仅打开所有者配置的 HTTPS 支付页面，应用不处理支付数据。")
     val voluntarySupport = t("Добровольно поддержать", "Voluntary support", "自愿支持")
+    val supportQrHint = t("Это добровольная поддержка, а не покупка. Отсканируйте QR камерой другого телефона или нажмите на него.", "This is voluntary support, not a purchase. Scan the QR code with another phone or tap it.", "这是自愿支持，并非购买。请用另一台手机扫描二维码，或直接点按二维码。")
+    val supportQrContentDescription = t("QR-код добровольной поддержки", "Voluntary support QR code", "自愿支持二维码")
+    val copySupportLink = t("Скопировать ссылку поддержки", "Copy support link", "复制支持链接")
+    val supportLinkCopied = t("Ссылка поддержки скопирована.", "Support link copied.", "支持链接已复制。")
+    val supportLinkOpenFailed = t("Не удалось открыть ссылку. Скопируйте её и откройте вручную.", "The link could not be opened. Copy it and open it manually.", "无法打开链接。请复制后手动打开。")
     val supportLinkNotConfigured = t("Безопасная платёжная ссылка пока не настроена в сборке.", "No secure payment link is configured in this build.", "此版本尚未配置安全支付链接。")
     val updates = t("Обновления", "Updates", "更新")
     val updateChannelBeta = t("Канал обновлений: Beta", "Update channel: Beta", "更新频道：Beta")

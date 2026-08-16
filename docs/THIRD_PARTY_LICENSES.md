@@ -9,10 +9,12 @@ This file records actual APK inputs separately from future candidates.
 ### sing-box libbox
 
 - Upstream: https://github.com/SagerNet/sing-box
-- Tag: `v1.14.0-alpha.50`
-- Commit: `3fcfadd5ee45c460115243b55d48b438279aeacd`
+- Tag: `v1.14.0-beta.13`
+- Commit: `2dea956ea11ed9fdc47dc69fba56bea71c69ea9b`
 - Artifact: `app/libs/libbox.aar`
-- SHA-256: `f3729b42c247c257adc2c7d03b1134ed7139b6f77da174f69f036d4fa4c7b685`
+- sing-openvpn commit: `103eb5fe5eb69b8e747971eaaf0185a6618b7da7`
+- Local patch: `tools/patches/sing-openvpn-stage-errors.patch` (connection-stage context, bounded fragmented key-method reads, and legacy server-reply compatibility)
+- SHA-256: `0ed6bd1942866237ad210417392ff0f6633d7a149d16cdea742e7b359e7977fa`
 - native ELF alignment: 16 KiB
 - License: upstream `GPL-3.0-or-later` notice plus its additional naming/association condition
 - Rebuild: `tools/build-libbox.ps1`
@@ -46,6 +48,74 @@ The copyright and MIT permission notice are included in `app/src/main/assets/lic
 
 The exact MPL-2.0 text from the pinned Xray-core revision is included in `app/src/main/assets/licenses/Xray-core-MPL-2.0.txt`. The runtime configuration is removed when the child process stops.
 
+### zapret2
+
+- Upstream: https://github.com/bol-van/zapret2
+- Release: `v1.0.4`
+- Commit/tag target: `2c21faa80e1acb71ddceb8b49176f266b7d33f05`
+- Upstream release archive SHA-256: `5760b6d41c09459fff00b4a6fec5437a471a00aac15f734723ede149cd26c709`
+- Artifact: `app/src/main/jniLibs/arm64-v8a/libzapret2.so`
+- Artifact SHA-256: `2e1a0e950e0bc7189b5662e54fdd66d749d51215b167a647f15659554e7b4090`
+- License: MIT
+- Re-fetch and verification: `tools/fetch-zapret2.ps1`
+
+The Android arm64 `nfqws2` executable and the standard Lua runtime files are
+bundled only for the optional, disabled-by-default root module named
+**Адаптация соединений**. They are not used by the ordinary `VpnService` path.
+The upstream MIT notice is included in
+`app/src/main/assets/licenses/zapret2-MIT.txt`.
+
+### tcpdump and libpcap
+
+- Upstream: https://github.com/the-tcpdump-group/tcpdump and https://github.com/the-tcpdump-group/libpcap
+- tcpdump release: `4.99.6`
+- libpcap release: `1.10.6`
+- Official source archive SHA-256: `40a8cefd45f0d2a06827e6658efb830d484868c449ad80f7efb33516af44f3da` (tcpdump) and `ec97d1206bdd19cb6bdd043eaa9f0037aa732262ec68e070fd7c7b5f834d5dfc` (libpcap)
+- Artifact: `app/src/main/jniLibs/arm64-v8a/libtcpdump.so`
+- Artifact SHA-256: `adb46aa539d42efb6d07c1afc42edc39954fd59a46c09561411bb98bb176c4da`
+- Native ELF load alignment: 16 KiB
+- License: BSD 3-Clause
+- Rebuild and verification: `tools/build-tcpdump.ps1`
+
+The static libpcap and tcpdump command are built from the official release
+archives with Android NDK `27.0.12077973`. Crypto, SMB, remote capture,
+Bluetooth, netmap, D-Bus and RDMA integrations are disabled. The result is
+used only by the optional, explicit root PCAP screen. ViRouteFS supplies fixed
+capture modes rather than accepting user shell or BPF text, caps captures at
+25,000 packets and less than 4 MiB, and exports them only through an Android
+system file picker. The exact BSD notice is included in
+`app/src/main/assets/licenses/tcpdump-libpcap-BSD.txt`.
+
+### WireGuard Android tunnel library and command tools
+
+- Official upstream: https://git.zx2c4.com/wireguard-android
+- Maven coordinate: `com.wireguard.android:tunnel:1.0.20260102`
+- Maven AAR SHA-256: `2b9c16db026496123e4db695d26d03d1958a201096c7c4c89b21077dc70f3119`
+- Signed upstream tag: `1.0.20260102`
+- Tagged commit: `09b75c2bd37f749e2a8c85876394854113c74be7`
+- wireguard-tools source commit: `e2ecaaa739144997ccff89d6ad6ec81698ea6ced`
+- wireguard-tools source archive SHA-256: `b5f838a044e9daa19eb011524efd813d12997fe5b44c1224a15cde4e99c10f75`
+- Bundled Android ABI: `arm64-v8a`
+- Native commands inside the AAR: `libwg.so`, `libwg-quick.so`, and `libwg-go.so`
+- Licenses: Apache-2.0 for the Android tunnel/config library, GPL-2.0 for the
+  separately executed WireGuard command tools, and MIT for wireguard-go
+
+The library is used only by the explicit, disabled-by-default **Системный
+WireGuard (root)** screen. ViRouteFS converts an already saved WireGuard
+profile into a bounded wg-quick configuration, validates it with the official
+parser, and invokes only a fixed allow-list of commands. It does not call the
+upstream persistent root shell or its Magisk policy update. The recovery copy
+is encrypted with Android Keystore and is removed only after an addressed
+`wg-quick down` succeeds. The existing sing-box/VpnService WireGuard path
+remains available without root.
+
+The Apache-2.0 text is included as
+`app/src/main/assets/licenses/Apache-2.0.txt`, the complete GPL-2.0 text as
+`app/src/main/assets/licenses/WireGuard-tools-GPL-2.0.txt`, and the wireguard-go
+MIT notice as `app/src/main/assets/licenses/WireGuard-go-MIT.txt`.
+The exact wireguard-tools source archive is attached to every GitHub release
+that contains these GPL-2.0 commands.
+
 ### Android libraries
 
 AndroidX, Jetpack Compose, Kotlin coroutines and their exact Maven coordinates are declared in `app/build.gradle.kts`. They are primarily Apache-2.0 components. Their upstream notices and dependency metadata must remain available with any public distribution.
@@ -74,9 +144,7 @@ user-specified Java class is constructed.
 - AndroidLibXrayLite (the wrapper was used only as an API/build reference and is not shipped);
 - separate OpenVPN 2 or OpenVPN 3 libraries (OpenVPN client support is supplied by bundled sing-box);
 - strongSwan;
-- WireGuard Android tunnel library;
 - Tor executable;
-- zapret2 (`v1.0.3` was audited under MIT, but its NFQUEUE/root execution model is not bundled);
 - separate OpenConnect, ZeroTier and SoftEther adapters (OpenConnect client support is supplied by bundled sing-box);
 - Naive/Cronet.
 

@@ -8,20 +8,20 @@ The Android app uses one `VpnService`. App, domain, IP and CIDR rules select a l
 
 | Component | Role | Upstream license | Exact build | Decision |
 | --- | --- | --- | --- | --- |
-| sing-box | TUN, routing, DNS, Direct/Block, OpenVPN, OpenConnect, VLESS, SOCKS5, VMess, Trojan, Shadowsocks, Hysteria v1/v2, Snell, TUIC, AnyTLS, HTTP(S), SSH, WireGuard and Tailscale/Headscale | GPL-3.0-or-later plus upstream condition prohibiting derivative branding or implied association | `v1.14.0-alpha.50`, commit `3fcfadd5ee45c460115243b55d48b438279aeacd`; `with_openvpn` and `with_openconnect`; 16 KiB-aligned `libbox.aar` SHA-256 `f3729b42c247c257adc2c7d03b1134ed7139b6f77da174f69f036d4fa4c7b685` | Bundled. Product name remains ViRouteFS. Preserve exact license, source pointer and reproducible build script. |
+| sing-box | TUN, routing, DNS, Direct/Block, OpenVPN, OpenConnect, VLESS, SOCKS5, VMess, Trojan, Shadowsocks, Hysteria v1/v2, Snell, TUIC, AnyTLS, HTTP(S), SSH, WireGuard and Tailscale/Headscale | GPL-3.0-or-later plus upstream condition prohibiting derivative branding or implied association | `v1.14.0-beta.13`, commit `2dea956ea11ed9fdc47dc69fba56bea71c69ea9b`; sing-openvpn `103eb5fe5eb69b8e747971eaaf0185a6618b7da7` plus `tools/patches/sing-openvpn-stage-errors.patch`; 16 KiB-aligned `libbox.aar` SHA-256 `fa3ab570d6c00b2f76a72877322e9ee699f9bef73c84ea4656d35a999e1ee452` | Bundled. The local patch adds bounded connection-stage context, reads fragmented key-method messages as a TLS byte stream, and accepts legacy server replies that end after the required options string. Product name remains ViRouteFS. Preserve exact licenses, source pointers and reproducible build script. |
 | Xray-core | VLESS/XHTTP client behind localhost SOCKS endpoints; it does not own the Android TUN | MPL-2.0 | commit `94ffd50060f1cfd5d7482ec90a23a92bdefdff68`; Android arm64 PIE `libxray.so` SHA-256 `9bb0b815086395164066b5fa27b1797bf9a0fcc493d1491f02166560604dcaff`; 64 KiB ELF load alignment | Bundled as a separate app-private child process to avoid a second Gomobile runtime in the sing-box process. Upstream source is unmodified and reproducible with `tools/build-xray.ps1`. |
 | ByeDPI | Implements the user-facing **Совместимость TCP/TLS** app-private SOCKS5 route | MIT | commit `ba532298de7b28cfe854aea83d061369d13ca290`; 16 KiB-aligned `libbyedpi.so` SHA-256 `abae93da6e426da5bbe5611f53a550eccb021d7be88b2c13865461024c4862d1` | Bundled for arm64. Keep the upstream name in licenses and technical details. Never describe it as encryption, IP hiding, anonymity or a VPN. |
+| zapret2 | Implements the optional user-facing **Адаптация соединений (root)** system module; it is not a VPN profile | MIT | `v1.0.4`, commit/tag target `2c21faa80e1acb71ddceb8b49176f266b7d33f05`; upstream archive SHA-256 `5760b6d41c09459fff00b4a6fec5437a471a00aac15f734723ede149cd26c709`; Android arm64 `nfqws2` stored as `libzapret2.so`, SHA-256 `2e1a0e950e0bc7189b5662e54fdd66d749d51215b167a647f15659554e7b4090` | Bundled but disabled by default. Requires an explicit root request, IPv4/IPv6 iptables and NFQUEUE queue-bypass. Runtime integration is local-only until physical KernelSU verification. |
+| WireGuard Android tunnel library | Explicit root-only system WireGuard backend; the existing sing-box/VpnService WireGuard path remains the rootless fallback | Apache-2.0 library; separately executed wireguard-tools commands are GPL-2.0; wireguard-go is MIT | Maven Central `com.wireguard.android:tunnel:1.0.20260102`, official signed tag/commit `09b75c2bd37f749e2a8c85876394854113c74be7`; arm64 only | Bundled but disabled by default. Fixed root command allow-list, encrypted rollback configuration, no Magisk policy mutation, no boot persistence, physical device verification pending. |
 | AndroidX, Jetpack Compose, Kotlin coroutines | Android application/runtime libraries | Primarily Apache-2.0 | Maven coordinates are pinned in `app/build.gradle.kts` | Bundled. Preserve dependency notices and metadata with distributed source. |
 
-The APK contains `GPL-3.0.txt`, the exact sing-box license notice, the Xray-core MPL-2.0 text and the ByeDPI MIT notice under `assets/licenses/`.
+The APK contains `GPL-3.0.txt`, the exact sing-box license notice, the Xray-core MPL-2.0 text, the ByeDPI and zapret2 MIT notices, and the WireGuard Apache-2.0/GPL-2.0/MIT license set under `assets/licenses/`.
 
 ## Approved integration paths, not bundled
 
 | Component | Purpose | License path | Current decision |
 | --- | --- | --- | --- |
 | strongSwan Android | IKEv2/IPsec, IPsec XAuth and IPsec PSK | GPL-2.0-or-later | Planned only after adaptation into the single-router architecture. |
-| zapret2 | Optional packet-processing compatibility adapter | MIT; audited at `v1.0.3`, commit `b78b52c4cd7f843da3ff0848a3430afbd401bdf2` | Not bundled. Upstream Android execution expects NFQUEUE/root; a separate rootless adapter inside the existing `VpnService` is required. |
-| WireGuard Android tunnel library | Optional fallback WireGuard adapter | Apache-2.0 | Not needed while the bundled sing-box WireGuard endpoint satisfies the architecture. |
 | Tor | Local Tor outbound | Requires a separately audited Android Tor executable and its license set | sing-box configuration support alone is not sufficient; disabled until the executable is bundled and tested. |
 | ZeroTier, SoftEther | Additional enterprise/mesh adapters | No binary selected | Planned or research only. |
 
@@ -46,8 +46,9 @@ Every distributed APK must be accompanied by this repository revision or an equi
 2. `tools/build-libbox.ps1` and its exact sing-box commit;
 3. `tools/build-xray.ps1` and its exact Xray-core commit;
 4. `tools/build-byedpi.ps1` and its exact ByeDPI commit;
-5. Gradle files, hashes and license notices;
-6. any local modifications needed to reproduce the native artifacts.
+5. `tools/fetch-zapret2.ps1`, its pinned upstream archive and per-file hashes;
+6. Gradle files, hashes and license notices;
+7. any local modifications needed to reproduce the native artifacts.
 
 Primary sources:
 

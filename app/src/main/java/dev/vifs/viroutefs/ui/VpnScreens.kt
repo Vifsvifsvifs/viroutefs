@@ -6,6 +6,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.graphics.graphicsLayer
@@ -44,6 +45,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
@@ -74,10 +77,12 @@ import androidx.core.content.ContextCompat
 import dev.vifs.viroutefs.CardBlock
 import dev.vifs.viroutefs.Details
 import dev.vifs.viroutefs.Header
+import dev.vifs.viroutefs.InstalledAppUi
 import dev.vifs.viroutefs.ScreenList
 import dev.vifs.viroutefs.StatusChip
 import dev.vifs.viroutefs.UiText
 import dev.vifs.viroutefs.WarningText
+import dev.vifs.viroutefs.loadInstalledAppsForRouting
 import dev.vifs.viroutefs.engine.EngineCatalog
 import dev.vifs.viroutefs.engine.FeatureReadiness
 import dev.vifs.viroutefs.engine.ProtocolDescriptor
@@ -90,13 +95,19 @@ import dev.vifs.viroutefs.routing.RoutingConfig
 import dev.vifs.viroutefs.routing.RoutingConfigBackup
 import dev.vifs.viroutefs.routing.RoutingConfigDefaults
 import dev.vifs.viroutefs.routing.RoutingConfigRepository
+import dev.vifs.viroutefs.routing.VPN_GATE_AUTOMATIC_APP_RULE_ID
+import dev.vifs.viroutefs.routing.VPN_GATE_AUTOMATIC_GROUP_ID
 import dev.vifs.viroutefs.routing.ImportDuplicateResolution
 import dev.vifs.viroutefs.routing.ProfileImportPreview
+import dev.vifs.viroutefs.routing.ProfileAppRoutingMode
 import dev.vifs.viroutefs.routing.RouteRuleType
 import dev.vifs.viroutefs.routing.SingBoxProfileConfig
 import dev.vifs.viroutefs.routing.TunnelProfile
 import dev.vifs.viroutefs.routing.TunnelType
+import dev.vifs.viroutefs.routing.importOpenVpnAuthUserPass
+import dev.vifs.viroutefs.routing.importOpenVpnPkcs12
 import dev.vifs.viroutefs.routing.importOpenVpnProfile
+import dev.vifs.viroutefs.routing.isValidIpOrCidr
 import dev.vifs.viroutefs.routing.applyProfileImport
 import dev.vifs.viroutefs.routing.defaultRouteActivationError
 import dev.vifs.viroutefs.routing.previewProfileImport
@@ -104,13 +115,22 @@ import dev.vifs.viroutefs.routing.singBoxProfileTemplate
 import dev.vifs.viroutefs.routing.singBoxProtocolSchema
 import dev.vifs.viroutefs.routing.validateSingBoxProfile
 import dev.vifs.viroutefs.routing.withDefaultRoute
+import dev.vifs.viroutefs.routing.hasAutomaticVpnGate
+import dev.vifs.viroutefs.routing.isAutomaticVpnGateEnabled
+import dev.vifs.viroutefs.routing.isAutomaticVpnGateProfile
+import dev.vifs.viroutefs.routing.packagesAssignedToOtherVpnTargets
+import dev.vifs.viroutefs.routing.withAutomaticVpnGateEnabled
+import dev.vifs.viroutefs.routing.withProfileAppRouting
 import dev.vifs.viroutefs.routing.withoutProfile
+import dev.vifs.viroutefs.routing.withoutAutomaticVpnGate
+import dev.vifs.viroutefs.routing.isManagedProfileAppRoutingRule
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_NOTICE
 import dev.vifs.viroutefs.runtime.tcp.DEV_TCP_BRIDGE_SECRET_NOTICE
 import dev.vifs.viroutefs.runtime.tcp.DevTcpBridgeSnapshot
 import dev.vifs.viroutefs.runtime.tcp.TcpSessionId
 import dev.vifs.viroutefs.runtime.tcp.TcpSessionState
 import dev.vifs.viroutefs.runtime.tcp.VlessDevTcpBridge
+import dev.vifs.viroutefs.root.RootKernelWireGuardController
 import dev.vifs.viroutefs.socks5.Socks5DiagnosticResult
 import dev.vifs.viroutefs.socks5.Socks5DiagnosticState
 import dev.vifs.viroutefs.socks5.Socks5DiagnosticTestType
@@ -176,6 +196,7 @@ internal fun VpnScreen(
     initialImportSource: String?,
     onProfileImportConsumed: () -> Unit,
     onVpnSwitch: (Boolean) -> Unit,
+    onEasySetupReady: (RoutingConfig, String) -> Unit,
     @Suppress("UNUSED_PARAMETER") onTunTestRoutePreview: (Boolean) -> Unit,
     @Suppress("UNUSED_PARAMETER") onClearPacketList: () -> Unit,
     @Suppress("UNUSED_PARAMETER") onPausePacketInspector: (Boolean) -> Unit,
@@ -184,6 +205,9 @@ internal fun VpnScreen(
     var selectedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
     var addSocks5 by rememberSaveable { mutableStateOf(false) }
     var addVless by rememberSaveable { mutableStateOf(false) }
+    var showVpnGate by rememberSaveable { mutableStateOf(false) }
+    var showEasySetup by rememberSaveable { mutableStateOf(false) }
+    var showAddVpnSheet by rememberSaveable { mutableStateOf(false) }
     var addSingBoxTypeName by rememberSaveable { mutableStateOf<String?>(null) }
     var showProfileImport by rememberSaveable { mutableStateOf(!initialImportSource.isNullOrBlank()) }
     var showConfigBackup by rememberSaveable { mutableStateOf(false) }
@@ -203,8 +227,11 @@ internal fun VpnScreen(
             RoutingConfigDefaults.SYSTEM_PROFILE_ID,
             RoutingConfigDefaults.BLOCK_PROFILE_ID,
             RoutingConfigDefaults.BYEDPI_PROFILE_ID,
-        ) && (!it.mockOnly || it.type == TunnelType.Socks5 || it.type == TunnelType.VLESS || it.singBox != null)
+        ) && !it.isAutomaticVpnGateProfile() &&
+            (!it.mockOnly || it.type == TunnelType.Socks5 || it.type == TunnelType.VLESS || it.singBox != null)
     }
+    val hasAutomaticVpnGate = config.hasAutomaticVpnGate()
+    val visibleProfileCount = userProfiles.size + if (hasAutomaticVpnGate) 1 else 0
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val readinessReport = remember(config) { evaluateReleaseReadiness(config) }
@@ -226,6 +253,27 @@ internal fun VpnScreen(
     var devBridgeMessage by rememberSaveable { mutableStateOf<String?>(null) }
     val profileTestController = remember(context) { VpnServiceController(context.applicationContext) }
     var profileTests by remember { mutableStateOf<Map<String, ProfileTunnelTestReport>>(emptyMap()) }
+
+    BackHandler(
+        enabled = showProfileImport || showConfigBackup || showVpnGate || showEasySetup ||
+            addSocks5 || addVless || addSingBoxType != null || selectedProfile != null || showAddVpnSheet,
+    ) {
+        when {
+            showAddVpnSheet -> showAddVpnSheet = false
+            showProfileImport -> {
+                showProfileImport = false
+                profileImportSource = ""
+                onProfileImportConsumed()
+            }
+            showConfigBackup -> showConfigBackup = false
+            showVpnGate -> showVpnGate = false
+            showEasySetup -> showEasySetup = false
+            addSocks5 -> addSocks5 = false
+            addVless -> addVless = false
+            addSingBoxType != null -> addSingBoxTypeName = null
+            selectedProfile != null -> selectedProfileId = null
+        }
+    }
 
     fun testProfile(profile: TunnelProfile) {
         if (profileTests[profile.id]?.running == true) return
@@ -312,6 +360,29 @@ internal fun VpnScreen(
         return
     }
 
+    if (showVpnGate) {
+        VpnGateScreen(
+            padding = padding,
+            config = config,
+            onBack = { showVpnGate = false },
+            onConfig = onConfig,
+        )
+        return
+    }
+
+    if (showEasySetup) {
+        EasySetupScreen(
+            padding = padding,
+            config = config,
+            onBack = { showEasySetup = false },
+            onReady = { next, message ->
+                showEasySetup = false
+                onEasySetupReady(next, message)
+            },
+        )
+        return
+    }
+
     if (addSocks5) {
         Socks5ProfileEditorScreen(
             padding = padding,
@@ -364,7 +435,6 @@ internal fun VpnScreen(
         return
     }
 
-    var showAddVpnSheet by remember { mutableStateOf(false) }
     val addVpnSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     if (showAddVpnSheet) {
@@ -387,6 +457,10 @@ internal fun VpnScreen(
                     showAddVpnSheet = false
                     addVless = true
                 },
+                onOpenVpnGate = {
+                    showAddVpnSheet = false
+                    showVpnGate = true
+                },
                 onAddSingBox = { type ->
                     showAddVpnSheet = false
                     addSingBoxTypeName = type.name
@@ -402,14 +476,17 @@ internal fun VpnScreen(
                 serviceLabel = vpnState.label(text),
                 serviceDetail = vpnState.detail,
                 onToggle = { onVpnSwitch(!vpnState.switchChecked) },
+                onEasySetup = { showEasySetup = true },
             )
         }
         item {
             PrimaryInternetCard(
                 config = config,
                 activationError = defaultRouteActivationError(config),
-                ruleCount = config.rules.count { it.enabled && it.type != RouteRuleType.DEFAULT },
-                profileCount = userProfiles.size,
+                ruleCount = config.rules.count {
+                    it.enabled && it.type != RouteRuleType.DEFAULT && !it.isManagedProfileAppRoutingRule()
+                },
+                profileCount = visibleProfileCount,
                 onAddVpn = { showAddVpnSheet = true },
                 onUseSystem = {
                     onConfig(
@@ -497,11 +574,20 @@ internal fun VpnScreen(
         }
         item {
             ProfilesHeader(
-                profileCount = userProfiles.size,
+                profileCount = visibleProfileCount,
                 onAdd = { showAddVpnSheet = true },
             )
         }
-        if (userProfiles.isEmpty()) {
+        if (hasAutomaticVpnGate) {
+            item {
+                ManagedVpnGateCard(
+                    config = config,
+                    onOpenSetup = { showEasySetup = true },
+                    onConfig = onConfig,
+                )
+            }
+        }
+        if (visibleProfileCount == 0) {
             item {
                 CardBlock {
                     Text("VPN-профили не добавлены", fontWeight = FontWeight.SemiBold)
@@ -580,6 +666,7 @@ private fun NetworkControlHero(
     serviceLabel: String,
     serviceDetail: String?,
     onToggle: () -> Unit,
+    onEasySetup: () -> Unit,
 ) {
     val containerColor by animateColorAsState(
         targetValue = if (active) Color(0xFF132A1D) else MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -666,6 +753,13 @@ private fun NetworkControlHero(
                         fontWeight = FontWeight.Bold,
                     )
                 }
+            }
+
+            OutlinedButton(
+                onClick = onEasySetup,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Настрой всё за меня")
             }
 
             StatusStrip(
@@ -1599,7 +1693,13 @@ private suspend fun readProfileImportFile(
     context: Context,
     uri: Uri,
     maxBytes: Int = 2 * 1024 * 1024,
-): String = withContext(Dispatchers.IO) {
+): String = readProfileImportBytes(context, uri, maxBytes).toString(Charsets.UTF_8)
+
+private suspend fun readProfileImportBytes(
+    context: Context,
+    uri: Uri,
+    maxBytes: Int = 2 * 1024 * 1024,
+): ByteArray = withContext(Dispatchers.IO) {
     val input = context.contentResolver.openInputStream(uri)
         ?: error("Android не предоставил доступ к выбранному файлу.")
     input.use { stream ->
@@ -1613,7 +1713,80 @@ private suspend fun readProfileImportFile(
             require(total <= maxBytes) { "Файл слишком большой. Максимум — 2 МБ." }
             output.write(buffer, 0, read)
         }
-        output.toString(Charsets.UTF_8.name())
+        output.toByteArray()
+    }
+}
+
+@Composable
+private fun ManagedVpnGateCard(
+    config: RoutingConfig,
+    onOpenSetup: () -> Unit,
+    onConfig: (RoutingConfig, String?) -> Unit,
+) {
+    val group = config.profileGroups.firstOrNull { it.id == VPN_GATE_AUTOMATIC_GROUP_ID } ?: return
+    val enabled = config.isAutomaticVpnGateEnabled()
+    val selectedAppCount = config.rules
+        .firstOrNull { it.id == VPN_GATE_AUTOMATIC_APP_RULE_ID }
+        ?.appMatchers
+        ?.size
+        ?: 0
+    CardBlock {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text("VPNGate • автоматически", fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (selectedAppCount > 0) {
+                        "Через VPNGate: $selectedAppCount приложений"
+                    } else {
+                        "Сначала выберите приложения"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = { checked ->
+                    if (checked && selectedAppCount == 0) {
+                        onOpenSetup()
+                    } else {
+                        onConfig(
+                            config.withAutomaticVpnGateEnabled(checked),
+                            if (checked) {
+                                "VPNGate включён только для выбранных приложений. При запуске каталог будет проверен заново."
+                            } else {
+                                "Автоматический VPNGate выключен; обычный интернет System сохранён."
+                            },
+                        )
+                    }
+                },
+            )
+        }
+        Text(
+            "Внутри подготовлено серверов: ${group.memberProfileIds.size}. Они скрыты из общего списка. Только выбранные приложения используют VPNGate; остальные всегда идут через обычный интернет System.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = onOpenSetup, modifier = Modifier.weight(1f)) {
+                Text("Приложения")
+            }
+            TextButton(
+                onClick = {
+                    onConfig(
+                        config.withoutAutomaticVpnGate(),
+                        "Автоматический VPNGate и все его внутренние серверы удалены одним действием.",
+                    )
+                },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text("Удалить")
+            }
+        }
     }
 }
 
@@ -1648,6 +1821,7 @@ private fun AddVpnTypeSheet(
     onImport: (String) -> Unit,
     onAddSocks5: () -> Unit,
     onAddVless: () -> Unit,
+    onOpenVpnGate: () -> Unit,
     onAddSingBox: (TunnelType) -> Unit,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -1700,6 +1874,25 @@ private fun AddVpnTypeSheet(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Text("Бесплатные VPNGate", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Добровольческие OpenVPN-серверы. Каталог загружается только вручную, а выбранный профиль добавляется выключенным.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                FilledTonalButton(onClick = onOpenVpnGate, modifier = Modifier.fillMaxWidth()) {
+                    Text("Открыть VPNGate")
+                }
+            }
+        }
         FilledTonalButton(
             onClick = {
                 val source = clipboard.getText()?.text.orEmpty().trim()
@@ -2025,7 +2218,11 @@ private fun CompactNetworkProfileCard(
     onTest: () -> Unit,
     onOpen: () -> Unit,
 ) {
-    val routeCount = config.rules.count { it.targetProfileId == profile.id && it.type != RouteRuleType.DEFAULT }
+    val routeCount = config.rules.count {
+        it.targetProfileId == profile.id &&
+            it.type != RouteRuleType.DEFAULT &&
+            !it.isManagedProfileAppRoutingRule()
+    }
     val context = LocalContext.current
     val historyStore = remember(context) { Socks5TestHistoryStore(context) }
     var readiness by remember(profile.id) { mutableStateOf<Socks5ReadinessSummary?>(null) }
@@ -2100,6 +2297,220 @@ private fun CompactNetworkProfileCard(
 }
 
 @Composable
+private fun ProfileAppRoutingCard(
+    profile: TunnelProfile,
+    config: RoutingConfig,
+    onConfig: (RoutingConfig, String?) -> Unit,
+) {
+    val context = LocalContext.current
+    var installedApps by remember(context) { mutableStateOf<List<InstalledAppUi>>(emptyList()) }
+    var appsLoading by remember(context) { mutableStateOf(true) }
+    LaunchedEffect(context) {
+        installedApps = withContext(Dispatchers.IO) { context.loadInstalledAppsForRouting() }
+        appsLoading = false
+    }
+    var expanded by rememberSaveable(profile.id) { mutableStateOf(false) }
+    var search by rememberSaveable(profile.id) { mutableStateOf("") }
+    var mode by remember(profile.id, profile.appRoutingMode) {
+        mutableStateOf(profile.appRoutingMode)
+    }
+    var selectedPackages by remember(profile.id, profile.appRoutingPackages) {
+        mutableStateOf(profile.appRoutingPackages.toSet())
+    }
+    var networksText by remember(profile.id, profile.appRoutingNetworks) {
+        mutableStateOf(profile.appRoutingNetworks.joinToString("\n"))
+    }
+    val packagesUsedByOtherProfiles = remember(config.profiles, config.profileGroups, config.rules, profile.id) {
+        config.packagesAssignedToOtherVpnTargets(profile.id)
+    }
+    val availableApps = remember(installedApps, packagesUsedByOtherProfiles, selectedPackages) {
+        installedApps.filter { app ->
+            app.packageName !in packagesUsedByOtherProfiles || app.packageName in selectedPackages
+        }
+    }
+    val filteredApps = remember(availableApps, search) {
+        val query = search.trim().lowercase()
+        availableApps.filter { app ->
+            query.isBlank() ||
+                app.label.lowercase().contains(query) ||
+                app.packageName.lowercase().contains(query)
+        }.sortedWith(
+            compareByDescending<InstalledAppUi> { it.packageName in selectedPackages }
+                .thenBy { it.isSystem }
+                .thenBy { it.label.lowercase() }
+                .thenBy { it.packageName },
+        )
+    }
+    val selectedInstalledCount = availableApps.count { it.packageName in selectedPackages }
+    val parsedNetworks = remember(networksText) {
+        networksText
+            .split(Regex("[,;\\s]+"))
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+    }
+    val invalidNetworks = remember(parsedNetworks) { parsedNetworks.filterNot(::isValidIpOrCidr) }
+
+    CardBlock {
+        Text("Приложения", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Text(
+            when (mode) {
+                ProfileAppRoutingMode.SelectedApps ->
+                    "Через этот VPN пойдут только выбранные приложения. Остальные сохранят основной маршрут."
+                ProfileAppRoutingMode.BypassSelected ->
+                    "Галки инвертируются: отмеченные приложения обходят этот VPN через System, неотмеченные используют VPN."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = mode == ProfileAppRoutingMode.SelectedApps,
+                onClick = { mode = ProfileAppRoutingMode.SelectedApps },
+                label = { Text("Через VPN") },
+            )
+            FilterChip(
+                selected = mode == ProfileAppRoutingMode.BypassSelected,
+                onClick = { mode = ProfileAppRoutingMode.BypassSelected },
+                label = { Text("Режим обхода") },
+            )
+        }
+        Text(
+            "Выбрано: $selectedInstalledCount из ${availableApps.size}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (packagesUsedByOtherProfiles.isNotEmpty()) {
+            Text(
+                "Скрыто как уже назначенные другим VPN: ${packagesUsedByOtherProfiles.size}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (appsLoading) {
+            Text(
+                "Загружаем список приложений…",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(
+                onClick = { selectedPackages = availableApps.mapTo(linkedSetOf()) { it.packageName } },
+            ) { Text("Выбрать все") }
+            TextButton(onClick = { selectedPackages = emptySet() }) { Text("Снять все") }
+        }
+        OutlinedButton(
+            onClick = { expanded = !expanded },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (expanded) "Скрыть список" else "Выбрать приложения")
+        }
+        Text("Сети через этот VPN", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
+        OutlinedTextField(
+            value = networksText,
+            onValueChange = { networksText = it },
+            label = { Text("IP или CIDR") },
+            placeholder = { Text("10.0.0.0/24") },
+            supportingText = {
+                Text("По одной сети на строку или через запятую. Это правило выше списка приложений и режима обхода.")
+            },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 2,
+            isError = invalidNetworks.isNotEmpty(),
+        )
+        invalidNetworks.forEach { network -> WarningText("Некорректная сеть: $network") }
+        if (expanded) {
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                label = { Text("Поиск приложений") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(filteredApps, key = InstalledAppUi::packageName) { app ->
+                    val selected = app.packageName in selectedPackages
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selectedPackages = if (selected) {
+                                    selectedPackages - app.packageName
+                                } else {
+                                    selectedPackages + app.packageName
+                                }
+                            },
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (selected) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainer
+                            },
+                        ),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            InstalledApplicationIcon(
+                                packageName = app.packageName,
+                                contentDescription = null,
+                                modifier = Modifier.size(40.dp),
+                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(app.label, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    app.packageName,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (app.isSystem) StatusChip("Системное")
+                            if (selected) StatusChip("Выбрано")
+                        }
+                    }
+                }
+            }
+        }
+        if (mode == ProfileAppRoutingMode.BypassSelected) {
+            WarningText(
+                "После сохранения «${profile.name}» станет основным маршрутом. Отмеченные приложения останутся на обычном интернете телефона, но указанные выше сети всё равно пойдут через этот VPN.",
+            )
+        }
+        Button(
+            onClick = {
+                val next = config.withProfileAppRouting(
+                    profileId = profile.id,
+                    mode = mode,
+                    packageNames = selectedPackages,
+                    networks = parsedNetworks,
+                )
+                onConfig(
+                    next,
+                    when (mode) {
+                        ProfileAppRoutingMode.SelectedApps ->
+                            "Список приложений для «${profile.name}» сохранён: через VPN — ${selectedPackages.size}."
+                        ProfileAppRoutingMode.BypassSelected ->
+                            "Режим обхода для «${profile.name}» сохранён: через System — ${selectedPackages.size}."
+                    },
+                )
+            },
+            enabled = invalidNetworks.isEmpty(),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Сохранить выбор приложений")
+        }
+    }
+}
+
+@Composable
 private fun NetworkProfileDetailsScreen(
     padding: PaddingValues,
     text: UiText,
@@ -2146,7 +2557,9 @@ private fun NetworkProfileDetailsScreen(
         return
     }
     val dns = config.dnsPolicies.firstOrNull { it.id == profile.dnsPolicyId }
-    val usedRuleNames = config.rules.filter { it.targetProfileId == profile.id }.map { it.name }
+    val usedRuleNames = config.rules
+        .filter { it.targetProfileId == profile.id && !it.isManagedProfileAppRoutingRule() }
+        .map { it.name }
     val protectedProfile = profile.type in listOf(TunnelType.Direct, TunnelType.Block, TunnelType.ByeDpi)
     val canDelete = !protectedProfile && usedRuleNames.isEmpty()
 
@@ -2171,6 +2584,11 @@ private fun NetworkProfileDetailsScreen(
                     OutlinedButton(onClick = { onConfig(config.withDefaultRoute(profile.id), text.defaultChanged) }) { Text(text.makeDefault) }
                 }
                 StatusChip("DNS: ${dns?.name ?: text.noDns}")
+            }
+        }
+        if (!protectedProfile) {
+            item {
+                ProfileAppRoutingCard(profile = profile, config = config, onConfig = onConfig)
             }
         }
         item {
@@ -2242,6 +2660,10 @@ private fun SingBoxProfileEditorScreen(
     val schema = requireNotNull(singBoxProtocolSchema(type))
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val kernelWireGuardActive = profile != null && type == TunnelType.WireGuard &&
+        remember(context, profile.id) {
+            RootKernelWireGuardController(context.applicationContext).activeProfileId() == profile.id
+        }
     var name by rememberSaveable(profile?.id ?: "new-${type.name}") {
         mutableStateOf(profile?.name ?: type.label)
     }
@@ -2259,6 +2681,12 @@ private fun SingBoxProfileEditorScreen(
     }
     var openVpnPassword by rememberSaveable(profile?.id ?: "new-${type.name}-password") {
         mutableStateOf(openVpnRoot(optionsJson).optString("password"))
+    }
+    var openVpnPkcs12Password by remember(profile?.id ?: "new-${type.name}-pkcs12-password") {
+        mutableStateOf("")
+    }
+    var importedOpenVpnRoutes by remember(profile?.id ?: "new-${type.name}-imported-routes") {
+        mutableStateOf<List<String>?>(null)
     }
     var errors by remember(profile?.id ?: "new-${type.name}-errors") {
         mutableStateOf(emptyList<String>())
@@ -2317,6 +2745,101 @@ private fun SingBoxProfileEditorScreen(
                 !it.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----")
         }
     }
+    val openVpnAuthUserPassLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val imported = withContext(Dispatchers.IO) {
+                runCatching {
+                    val bytes = readProfileImportBytes(context, uri)
+                    try {
+                        importOpenVpnAuthUserPass(bytes)
+                    } finally {
+                        bytes.fill(0)
+                    }
+                }
+            }
+            imported.onSuccess { credentials ->
+                openVpnUsername = credentials.username
+                openVpnPassword = credentials.password
+                var updated = updateOpenVpnCredential(optionsJson, "username", credentials.username)
+                updated = updateOpenVpnCredential(updated, "password", credentials.password)
+                optionsJson = updated
+                errors = emptyList()
+                nativeCheckMessage =
+                    "Файл auth-user-pass прочитан: логин и пароль добавлены. Содержимое файла не выводилось; при сохранении профиль защищается Android Keystore."
+            }.onFailure { error ->
+                nativeCheckMessage =
+                    "Не удалось прочитать auth-user-pass: ${error.localizedMessage ?: "неизвестная ошибка"}"
+            }
+        }
+    }
+    val openVpnPkcs12Launcher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val password = openVpnPkcs12Password.toCharArray()
+        scope.launch {
+            val imported = try {
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        val bytes = readProfileImportBytes(context, uri)
+                        try {
+                            importOpenVpnPkcs12(
+                                bytes = bytes,
+                                password = password,
+                            )
+                        } finally {
+                            bytes.fill(0)
+                        }
+                    }
+                }
+            } finally {
+                password.fill('\u0000')
+            }
+            openVpnPkcs12Password = ""
+            imported.onSuccess { material ->
+                val hadCertificateAuthority = openVpnRoot(optionsJson)
+                    .optJSONObject("tls")
+                    .hasOpenVpnMaterial("certificate")
+                var updated = updateOpenVpnTlsMaterial(
+                    optionsJson,
+                    "client_certificate",
+                    material.clientCertificatePem,
+                )
+                updated = updateOpenVpnTlsMaterial(
+                    updated,
+                    "client_key",
+                    material.clientKeyPem,
+                )
+                if (!hadCertificateAuthority && material.certificateAuthorityPem != null) {
+                    updated = updateOpenVpnTlsMaterial(
+                        updated,
+                        "certificate",
+                        material.certificateAuthorityPem,
+                    )
+                }
+                optionsJson = updated
+                errors = emptyList()
+                nativeCheckMessage = buildString {
+                    append("Файл .p12/.pfx открыт: клиентский сертификат и ключ добавлены")
+                    append(" (сертификатов в цепочке: ${material.certificateCount}).")
+                    if (!hadCertificateAuthority && material.certificateAuthorityPem != null) {
+                        append(" CA-сертификат из цепочки также добавлен.")
+                    }
+                    if (material.warnings.isNotEmpty()) {
+                        append(" Проверьте предупреждение: ${material.warnings.joinToString(" ")}")
+                    }
+                    append(" Пароль контейнера не сохранён.")
+                }
+            }.onFailure { error ->
+                nativeCheckMessage =
+                    "Не удалось открыть .p12/.pfx. Проверьте пароль и сам файл: " +
+                    (error.localizedMessage ?: "неизвестная ошибка")
+            }
+        }
+    }
     val openVpnImportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
     ) { uri ->
@@ -2333,6 +2856,7 @@ private fun SingBoxProfileEditorScreen(
             }
             imported.onSuccess { result ->
                 optionsJson = result.optionsJson
+                importedOpenVpnRoutes = result.routes
                 openVpnRoot(result.optionsJson).let { root ->
                     openVpnUsername = root.optString("username")
                     openVpnPassword = root.optString("password")
@@ -2349,7 +2873,9 @@ private fun SingBoxProfileEditorScreen(
         }
     }
     val usedRules = profile?.let { current ->
-        config.rules.filter { it.targetProfileId == current.id }.map { it.name }
+        config.rules
+            .filter { it.targetProfileId == current.id && !it.isManagedProfileAppRoutingRule() }
+            .map { it.name }
     }.orEmpty()
     val openVpnTls = remember(optionsJson) {
         openVpnRoot(optionsJson).optJSONObject("tls")
@@ -2375,6 +2901,9 @@ private fun SingBoxProfileEditorScreen(
             platformNotes = "Проверенный ${schema.kind.name.lowercase()} sing-box ${schema.engineType}.",
             dnsPolicyId = dnsPolicyId,
             singBox = draft,
+            appRoutingMode = profile?.appRoutingMode ?: ProfileAppRoutingMode.SelectedApps,
+            appRoutingPackages = profile?.appRoutingPackages.orEmpty(),
+            appRoutingNetworks = importedOpenVpnRoutes ?: profile?.appRoutingNetworks.orEmpty(),
         )
         val nextProfiles = if (profile == null) {
             config.profiles + nextProfile
@@ -2485,6 +3014,17 @@ private fun SingBoxProfileEditorScreen(
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                     )
+                    OutlinedButton(
+                        onClick = { openVpnAuthUserPassLauncher.launch(OPENVPN_AUTH_USER_PASS_MIME_TYPES) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Выбрать auth-user-pass / pass.txt")
+                    }
+                    Text(
+                        "Стандартный файл должен содержать две строки: логин и пароль. Они не показываются в сообщениях или журнале.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
             item {
@@ -2493,6 +3033,25 @@ private fun SingBoxProfileEditorScreen(
                     Text(
                         "Поддерживаются текстовые PEM-файлы .pem/.crt/.cer/.key размером до 2 МБ. Зашифрованный закрытый ключ без отдельной поддержки passphrase не принимается.",
                         style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = openVpnPkcs12Password,
+                        onValueChange = { openVpnPkcs12Password = it },
+                        label = { Text("Пароль .p12/.pfx (не сохраняется)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                    )
+                    OutlinedButton(
+                        onClick = { openVpnPkcs12Launcher.launch(OPENVPN_PKCS12_MIME_TYPES) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Выбрать .p12 / .pfx")
+                    }
+                    Text(
+                        "Контейнер открывается только на устройстве. ViRouteFS извлекает сертификат и ключ в профиль, защищённый Android Keystore; пароль и исходный файл не сохраняются.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     OpenVpnMaterialPicker(
                         label = "CA-сертификат",
@@ -2604,6 +3163,9 @@ private fun SingBoxProfileEditorScreen(
         }
         if (profile != null) {
             item {
+                ProfileAppRoutingCard(profile = profile, config = config, onConfig = onConfig)
+            }
+            item {
                 CardBlock {
                     if (config.defaultProfileId == profile.id) {
                         StatusChip(text.defaultProfile)
@@ -2617,8 +3179,11 @@ private fun SingBoxProfileEditorScreen(
                     if (usedRules.isNotEmpty()) {
                         WarningText(text.profileUsedMessage(usedRules.joinToString(" • ")))
                     }
+                    if (kernelWireGuardActive) {
+                        WarningText("Сначала остановите этот профиль в разделе «Системный WireGuard (root)».")
+                    }
                     OutlinedButton(
-                        enabled = usedRules.isEmpty(),
+                        enabled = usedRules.isEmpty() && !kernelWireGuardActive,
                         onClick = {
                             onConfig(
                                 config.withoutProfile(profile.id),
@@ -2708,6 +3273,19 @@ private val OPENVPN_PEM_MIME_TYPES = arrayOf(
     "application/x-x509-ca-cert",
     "text/plain",
     "application/octet-stream",
+)
+
+private val OPENVPN_PKCS12_MIME_TYPES = arrayOf(
+    // Several Android document providers hide .p12/.pfx files even when they report the
+    // standard PKCS#12 MIME type. Let the user pick any document and validate the actual
+    // PKCS#12 contents locally instead of relying on a vendor-specific MIME filter.
+    "*/*",
+)
+
+private val OPENVPN_AUTH_USER_PASS_MIME_TYPES = arrayOf(
+    "text/plain",
+    "application/octet-stream",
+    "*/*",
 )
 
 private val OPENVPN_PRIVATE_KEY_PATTERN = Regex(
@@ -3160,6 +3738,9 @@ private fun VlessProfileEditorScreen(
                             },
                             dnsPolicyId = dnsPolicyId,
                             vless = readyVless,
+                            appRoutingMode = profile?.appRoutingMode ?: ProfileAppRoutingMode.SelectedApps,
+                            appRoutingPackages = profile?.appRoutingPackages.orEmpty(),
+                            appRoutingNetworks = profile?.appRoutingNetworks.orEmpty(),
                         )
                         val nextProfiles = if (profile == null) config.profiles + nextProfile else config.profiles.map { if (it.id == profile.id) nextProfile else it }
                         onConfig(
@@ -3176,6 +3757,9 @@ private fun VlessProfileEditorScreen(
             }
         }
         if (profile != null) {
+            item {
+                ProfileAppRoutingCard(profile = profile, config = config, onConfig = onConfig)
+            }
             item {
                 CardBlock {
                     OutlinedButton(
@@ -3381,6 +3965,9 @@ private fun Socks5ProfileEditorScreen(
                             platformNotes = "SOCKS5 outbound compiled into the local sing-box TUN runtime. Manual diagnostics remain opt-in.",
                             dnsPolicyId = dnsPolicyId,
                             socks5 = nextSocks5,
+                            appRoutingMode = profile?.appRoutingMode ?: ProfileAppRoutingMode.SelectedApps,
+                            appRoutingPackages = profile?.appRoutingPackages.orEmpty(),
+                            appRoutingNetworks = profile?.appRoutingNetworks.orEmpty(),
                         )
                         val nextProfiles = if (profile == null) config.profiles + nextProfile else config.profiles.map { if (it.id == profile.id) nextProfile else it }
                         onConfig(config.copy(profiles = nextProfiles), "SOCKS5 profile saved for the local VPN runtime. Manual diagnostics remain opt-in.")
@@ -3439,6 +4026,9 @@ private fun Socks5ProfileEditorScreen(
             }
         }
         if (profile != null) {
+            item {
+                ProfileAppRoutingCard(profile = profile, config = config, onConfig = onConfig)
+            }
             item {
                 CardBlock {
                     Text("Recent local SOCKS5 test history", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
